@@ -35,9 +35,7 @@ export function createEnvelope() {
       type: 'flat',
       pitchDeg: 15,
       direction: 'auto',
-      // 0 сохраняет геометрию существующих проектов; вынос выбирается
-      // явно в компактной панели крыши.
-      overhang: 0,
+      overhang: 600,
       drainage: 'auto',
     },
     // null означает, что пользователь ещё не задал положение ±0.000.
@@ -93,7 +91,8 @@ export function normalizeEnvelope(raw) {
       type: enumValue(roof.type, ROOF_TYPES, defaults.roof.type),
       pitchDeg: clamp(roof.pitchDeg, 1, 60, defaults.roof.pitchDeg),
       direction: enumValue(roof.direction, ROOF_DIRECTIONS, defaults.roof.direction),
-      overhang: clamp(roof.overhang, 0, 2000, defaults.roof.overhang),
+      // В файлах до появления свеса по умолчанию крыша шла по грани стены.
+      overhang: clamp(roof.overhang, 0, 2000, 0),
       drainage: ['auto', 'internal', 'external', 'off'].includes(roof.drainage)
         ? roof.drainage : defaults.roof.drainage,
     },
@@ -166,14 +165,17 @@ export function hasBuildingDatum(project, house = null) {
 export function envelopeHasUserInput(raw) {
   if (!raw || typeof raw !== 'object') return false;
   const envelope = normalizeEnvelope(raw);
+  const defaults = createEnvelope();
+  // Пустой дом прежней версии (свес 0) также остаётся пустым после открытия.
+  if (envelope.roof.overhang === 0) defaults.roof.overhang = 0;
   return envelope.zeroAboveGround != null
     || envelope.groundReferenceZ != null
     || envelope.roofMode !== 'linked'
     || envelope.roofThickness !== DEFAULT_AUTO_ROOF_THICKNESS
-    || JSON.stringify(envelope.roof) !== JSON.stringify(createEnvelope().roof)
+    || JSON.stringify(envelope.roof) !== JSON.stringify(defaults.roof)
     || envelope.foundation.enabled !== true
-    || JSON.stringify(envelope.foundation) !== JSON.stringify(createEnvelope().foundation)
-    || JSON.stringify(envelope.entrance) !== JSON.stringify(createEnvelope().entrance)
-    || JSON.stringify(envelope.slabs) !== JSON.stringify(createEnvelope().slabs)
-    || JSON.stringify(envelope.earthworks) !== JSON.stringify(createEnvelope().earthworks);
+    || JSON.stringify(envelope.foundation) !== JSON.stringify(defaults.foundation)
+    || JSON.stringify(envelope.entrance) !== JSON.stringify(defaults.entrance)
+    || JSON.stringify(envelope.slabs) !== JSON.stringify(defaults.slabs)
+    || JSON.stringify(envelope.earthworks) !== JSON.stringify(defaults.earthworks);
 }

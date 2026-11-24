@@ -1,6 +1,6 @@
 // Печатные листы A3 (альбомный): план каждого этажа в стандартном масштабе,
 // рамка, штамп и экспликация помещений; генплан — если есть граница участка.
-// PDF — все листы альбомом, PNG — лист текущего этажа (или генплан).
+// PDF — весь альбом или выбранный лист; PNG — один лист.
 // Разрезы участка (site.landscape.sections), отмеченные «на лист», — свои
 // листы после генплана: SVG разреза в масштабе по ширине поля, столбиком.
 // Это автолисты (sheetPlan); листы пользователя (project.sheets, видовые
@@ -493,7 +493,8 @@ export async function buildOneSheetPdf(project, key) {
   await loadSheetImages(spec, project);
   const sheet = renderSheet(project, spec, index + 1, specs.length);
   const size = specSize(spec);
-  return buildImagePdf([{ jpeg: jpegBytes(sheet), widthPx: sheet.width, heightPx: sheet.height, widthMm: size.w, heightMm: size.h }], { title: project.name });
+  const title = `${project.name} — Лист ${sheetNumber(spec, index)} — ${sheetTitle(project, spec)}`;
+  return buildImagePdf([{ jpeg: jpegBytes(sheet), widthPx: sheet.width, heightPx: sheet.height, widthMm: size.w, heightMm: size.h }], { title });
 }
 
 // Один лист PNG: генплан в режиме «Участок», иначе текущий этаж; при

@@ -368,6 +368,83 @@ export function roomsBaseRects(project, levelId, roomIds) {
     .flatMap((r) => roomRects(r).map((p) => box(p, isOpenRoom(r) ? 0 : t)));
 }
 
+// Автоматическая кровля принадлежит наружному объёму. Вложенные комнаты
+// уже находятся под крышей своего хозяина, площадки и шахты её не создают.
+export function canHaveLinkedRoof(room) {
+  return Boolean(room && !room.parentId && !isOpenRoom(room) && !isShaft(room));
+}
+
+export function setLinkedRoofEnabled(project, levelId, roomIds, enabled) {
+  const level = project?.levels?.find((l) => l.id === levelId);
+  if (!level || typeof enabled !== 'boolean') return false;
+  const ids = new Set(typeof roomIds === 'string' ? [roomIds] : roomIds);
+  let changed = false;
+  for (const room of level.rooms) {
+    if (!ids.has(room.id) || !canHaveLinkedRoof(room) || enabled === (room.linkedRoof !== false)) continue;
+    if (enabled) delete room.linkedRoof;
+    else room.linkedRoof = false;
+    changed = true;
+  }
+  return changed;
+}
+
+// Единый скат для прилегающих комнат, отдельные объекты для разных корпусов.
+// Обход отрезков по X ограничивает сравнения близкими прямоугольниками;
+// касание только в вершине не образует общий скат.
+function linkedGroupsOfLevel(project, level) {
+  const exterior = Number(project.settings?.exterior) || DEFAULT_EXTERIOR;
+  const rooms = (level.rooms || []).filter((room) => canHaveLinkedRoof(room) && room.linkedRoof !== false);
+  const parents = rooms.map((_, i) => i);
+  const root = (i) => {
+    while (i !== parents[i]) {
+      parents[i] = parents[parents[i]];
+      i = parents[i];
+    }
+    return i;
+  };
+  const footprints = rooms.map((room) => roomRects(room).map((rect) => box(rect, exterior)));
+  const sorted = footprints.flatMap((rects, owner) => rects.map((rect) => ({ ...rect, owner })))
+    .sort((a, b) => a.x0 - b.x0);
+  for (let i = 0; i < sorted.length; i++) {
+    const a = sorted[i];
+    for (let j = i + 1; j < sorted.length && sorted[j].x0 <= a.x1; j++) {
+      const b = sorted[j];
+      if (a.owner === b.owner) continue;
+      const dx = Math.min(a.x1, b.x1) - b.x0;
+      const dy = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+      if (dy >= 0 && (dx > 0 || dy > 0)) parents[root(b.owner)] = root(a.owner);
+    }
+  }
+  const groups = new Map();
+  rooms.forEach((room, i) => {
+    if (!footprints[i].length) return;
+    const key = root(i);
+    if (!groups.has(key)) groups.set(key, { rooms: [], baseRects: [] });
+    const group = groups.get(key);
+    group.rooms.push(room);
+    group.baseRects.push(...footprints[i]);
+  });
+  return [...groups.values()].map(({ rooms: members, baseRects }) => {
+    members.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const anchor = members[0];
+    // Длина первой части отделяет идентификаторы, даже если в них есть двоеточие.
+    const id = 'auto-roof:' + level.id.length + ':' + level.id + ':' + anchor.id;
+    return { id, levelId: level.id, roofSource: 'linked', roomIds: members.map((room) => room.id), baseRects,
+      name: 'Связанная крыша · ' + (anchor.name || level.name || level.id) };
+  });
+}
+
+export function linkedRoofGroups(project, levelId = null) {
+  if (project?.envelope?.roofMode === 'manual') return [];
+  const levels = (project?.levels || []).filter((level) => levelId == null || level.id === levelId);
+  return levels.flatMap((level) => linkedGroupsOfLevel(project, level));
+}
+
+export function linkedRoofById(project, id, levelId = null) {
+  if (typeof id !== 'string' || !id.startsWith('auto-roof:')) return null;
+  return linkedRoofGroups(project, levelId).find((roof) => roof.id === id) || null;
+}
+
 // Контур по помещениям (стартовая форма новой крыши, перенос старых файлов).
 export function roomsOutline(project, levelId, roomIds) {
   return rectsOutline(roomsBaseRects(project, levelId, roomIds));

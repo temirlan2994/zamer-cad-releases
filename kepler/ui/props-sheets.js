@@ -59,7 +59,8 @@ export function renderSheetsPanel(panel) {
     </ol>` : `
     <p class="empty-hint" id="sheetsEmpty">Листов нет: «+ Лист» — свой лист; автолисты появятся, когда будут комнаты на этаже или граница участка.</p>`}
     <div class="prop-actions">
-      <button type="button" class="primary" id="sheetsPdfBtn" ${specs.length ? '' : 'disabled'}>Скачать PDF — все листы</button>
+      <button type="button" class="primary" id="sheetsPdfBtn" ${specs.length ? '' : 'disabled'}>PDF всего альбома</button>
+      <button type="button" id="sheetsPdfSelected" ${selected ? '' : 'hidden'}>PDF выбранного листа</button>
       <button type="button" id="sheetsPngBtn" ${specs.length ? '' : 'disabled'}>${selected ? 'PNG — выбранный лист' : `PNG — лист текущего ${state.modeName === 'plan' ? 'этажа' : 'генплана'}`}</button>
     </div>
     <h3>Оформление</h3>
@@ -81,6 +82,7 @@ export function renderSheetsPanel(panel) {
       });
       const png = panel.querySelector('#sheetsPngBtn');
       if (png) png.textContent = 'PNG — выбранный лист';
+      panel.querySelector('#sheetsPdfSelected').hidden = false;
     });
     li.addEventListener('dblclick', (e) => {
       if (e.target.closest('[data-sheet-open], [data-sheet-del]')) return;
@@ -97,6 +99,7 @@ export function renderSheetsPanel(panel) {
   panel.querySelectorAll('[data-sheet-del]').forEach((b) => b.addEventListener('click', () => deleteUserSheet(b.dataset.sheetDel)));
   panel.querySelector('#sheetsAddBtn').addEventListener('click', () => addUserSheet());
   panel.querySelector('#sheetsPdfBtn')?.addEventListener('click', () => handleExport('sheet-pdf'));
+  panel.querySelector('#sheetsPdfSelected').addEventListener('click', () => downloadSheetPdf(state.sheetSel));
   panel.querySelector('#sheetsPngBtn')?.addEventListener('click', () => {
     if (state.sheetSel) downloadSheetPng(state.sheetSel);
     else handleExport('sheet-png');
@@ -142,14 +145,14 @@ export function renderSheetProps(panel) {
     </div>` : ''}
     <div class="prop-actions">
       <button type="button" class="primary" id="sheetPropOpen">${open ? 'Закрыть лист' : 'Открыть лист'}</button>
+      <button type="button" id="sheetPropPdfOne">PDF этого листа</button>
       <button type="button" id="sheetPropPng">PNG — этот лист</button>
-      <button type="button" id="sheetPropPdf">Скачать PDF — все листы</button>
     </div>
     <p class="hint">Автолист: масштаб и раскладка — по чертежу. Свою раскладку видов — на листе «+ Лист» во вкладке «Листы».</p>
     ${open ? '' : '<button type="button" class="link" id="sheetPropBack">← Свойства вида</button>'}`;
   panel.querySelector('#sheetPropOpen').addEventListener('click', () => (open ? closeSheet({ restoreView: true }) : openSheet(key)));
   panel.querySelector('#sheetPropPng').addEventListener('click', () => downloadSheetPng(key));
-  panel.querySelector('#sheetPropPdf').addEventListener('click', () => handleExport('sheet-pdf'));
+  panel.querySelector('#sheetPropPdfOne').addEventListener('click', () => downloadSheetPdf(key));
   panel.querySelector('#sheetPropLsScreen')?.addEventListener('change', (e) => {
     setSheetStylePref(e.target.checked ? 'screen' : 'drawing');
     notifyViewChange();
@@ -179,14 +182,13 @@ function renderUserSheetProps(panel, key, found) {
     ${sheet.viewports.length ? `<ul class="sheet-vp-list" id="sheetVpList">
       ${(() => {
     const nums = viewportNumbers(sheet);
-    return sheet.viewports.map((vp) => `<li><b class="sheet-vp-no">${escapeHtml(nums.get(vp.id))}</b><span>${escapeHtml(viewportTitle(project, vp))}</span><em>1:${vp.scale}${vp.crop && !vp.crop.off ? ' · обрезан' : ''}</em></li>`).join('');
+    return sheet.viewports.map((vp) => `<li><b class="sheet-vp-no">${escapeHtml(nums.get(vp.id))}</b><span>${escapeHtml(viewportTitle(project, vp))}</span><em>${vp.cam?.projection === 'perspective' ? 'Перспектива' : `1:${vp.scale}`}${vp.crop && !vp.crop.off ? ' · обрезан' : ''}</em></li>`).join('');
   })()}
     </ul>` : '<p class="hint" id="sheetVpEmpty">Пусто. Откройте лист и перетащите вид из вкладки «Виды» (на телефоне — «На лист…» в «Свойствах» вида).</p>'}
     <div class="prop-actions">
       <button type="button" class="primary" id="sheetPropOpen">${open ? 'Закрыть лист' : 'Открыть лист'}</button>
-      <button type="button" id="sheetPropPdfOne">PDF — этот лист</button>
+      <button type="button" id="sheetPropPdfOne">PDF этого листа</button>
       <button type="button" id="sheetPropPng">PNG — этот лист</button>
-      <button type="button" id="sheetPropPdf">Скачать PDF — все листы</button>
       <button type="button" class="danger" id="sheetPropDelete">Удалить лист</button>
     </div>
     ${open ? '<p class="hint">Клик по виду — выбрать; тяните — сдвиг (шаг 5 мм, Shift — свободно); Delete — убрать с листа. Колесо — масштаб листа.</p>' : '<button type="button" class="link" id="sheetPropBack">← Свойства вида</button>'}`;
@@ -198,7 +200,6 @@ function renderUserSheetProps(panel, key, found) {
   panel.querySelector('#sheetPropOpen').addEventListener('click', () => (open ? closeSheet({ restoreView: true }) : openSheet(key)));
   panel.querySelector('#sheetPropPdfOne').addEventListener('click', () => downloadSheetPdf(key));
   panel.querySelector('#sheetPropPng').addEventListener('click', () => downloadSheetPng(key));
-  panel.querySelector('#sheetPropPdf').addEventListener('click', () => handleExport('sheet-pdf'));
   panel.querySelector('#sheetPropDelete').addEventListener('click', () => deleteUserSheet(id));
   panel.querySelector('#sheetPropBack')?.addEventListener('click', () => { state.sheetSel = null; notifyViewChange(); });
 }
@@ -213,12 +214,12 @@ function renderViewportProps(panel, found) {
   const no = viewportNo(hit.sheet, vp);
   const cropOn = Boolean(vp.crop && !vp.crop.off);
   const deg = (r) => Math.round((r * 180) / Math.PI);
-  const camText = vp.cam ? `из 3D · азимут ${deg(vp.cam.yaw)}°, наклон ${deg(vp.cam.pitch)}°${vp.cam.roof ? ', с крышей' : ''}` : 'аксонометрия по умолчанию';
+  const camText = vp.cam ? `из 3D · азимут ${deg(vp.cam.yaw)}°, наклон ${deg(vp.cam.pitch)}°${vp.cam.roof ? ', с крышей' : ''}${vp.cam.projection === 'perspective' ? ' · перспектива' : ''}` : 'аксонометрия по умолчанию';
   panel.innerHTML = `
     <h2 id="vpPropsTitle">${escapeHtml(desc?.name || 'Вид удалён')}</h2>
     <p class="subtitle" id="vpPropsSub">Лист ${escapeHtml(hit.sheet.no)}, вид ${escapeHtml(no)} — ${escapeHtml(hit.sheet.name)}</p>
     <div class="prop-block" id="vpProps">
-      <div class="prop-row"><span>Масштаб</span><strong id="vpScaleVal">1:${vp.scale}</strong></div>
+      <div class="prop-row"><span>${vp.cam?.projection === 'perspective' ? 'Масштаб в плоскости цели' : 'Масштаб'}</span><strong id="vpScaleVal">1:${vp.scale}</strong></div>
       <div class="elev-scale" id="vpScale" role="radiogroup" aria-label="Масштаб вида на листе">
         ${scales.map((s) => `<button type="button" role="radio" data-vp-scale="${s}" aria-checked="${s === vp.scale}"${s === vp.scale ? ' class="active"' : ''}>1:${s}</button>`).join('')}
       </div>
@@ -238,7 +239,7 @@ function renderViewportProps(panel, found) {
     <h3>Камера</h3>
     <div class="prop-block" id="vpCamBlock">
       ${prow('Камера', escapeHtml(camText), 'vpCamText')}
-      <button type="button" id="vpCam" title="Взять углы и крышу из окна 3D-вида">Обновить из 3D</button>
+      <button type="button" id="vpCam" title="Сохранить ракурс, кадр и видимые слои из 3D">Обновить из 3D</button>
       ${vp.cam ? '<button type="button" class="link" id="vpCamReset">Аксонометрия по умолчанию</button>' : ''}
     </div>` : ''}
     <div class="prop-actions">

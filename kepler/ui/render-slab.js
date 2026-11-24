@@ -6,6 +6,7 @@
 import {
   slabHandlePoints, slabOpeningArea, slabOpeningPolygon, slabOpeningSourceLevel, slabOpenings,
 } from '../core/slab-openings.js';
+import { atriumRails } from '../core/atrium.js';
 import { state } from './state.js';
 
 export const SLAB_HANDLE = 9; // px — сторона квадрата ручки
@@ -48,12 +49,25 @@ export function drawSlabOpenings(ctx, { st = state, p2s, tokens, print = false }
     }
     ctx.restore();
   }
-  for (const o of slabOpenings(project, project.activeLevel)) {
+  const holes = slabOpenings(project, project.activeLevel);
+  for (const o of holes) {
     const selected = o.id === sel;
     const hovered = !selected && st.hover?.type === 'slab' && st.hover.id === o.id;
     const color = selected ? tokens.accent : hovered ? tokens.hover : tokens.line;
     const polygon = slabOpeningPolygon(o);
     const P = polygon.map((p) => p2s(p.x, p.y));
+    const rails = atriumRails(project, project.activeLevel, o, holes, st.walls);
+    if (rails.length) {
+      ctx.save();
+      ctx.strokeStyle = selected ? tokens.accent : tokens.line;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (const edge of rails) {
+        const a = p2s(edge.a.x, edge.a.y); const b = p2s(edge.b.x, edge.b.y);
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      }
+      ctx.stroke(); ctx.restore();
+    }
     ctx.save();
     path(ctx, P);
     ctx.fillStyle = selected ? 'rgba(31, 117, 255, 0.045)' : 'rgba(70, 125, 160, 0.035)';
@@ -82,7 +96,8 @@ export function drawSlabOpenings(ctx, { st = state, p2s, tokens, print = false }
     let label = null;
     if (wpx > 70) {
       const source = slabOpeningSourceLevel(project, project.activeLevel, o);
-      const text = `Проём${source ? ` · виден «${source.name}»` : ' в перекрытии'}`;
+      const title = o.atrium ? 'Второй свет' : 'Проём';
+      const text = `${title}${source ? ` · виден «${source.name}»` : ' в перекрытии'}`;
       const size = o.outline?.length
         ? `${(slabOpeningArea(o) / 1e6).toFixed(2).replace('.', ',')} м² · ${P.length} вершин`
         : `${Math.round(o.w)} × ${Math.round(o.h)}`;

@@ -25,6 +25,20 @@ function oneStorey() {
   return project;
 }
 
+test('свес новой крыши сохраняется, старые дома сохраняют свои габариты', () => {
+  const project = createProject();
+  assert.equal(project.envelope.roof.overhang, 600);
+  assert.equal(hasContent(project), false);
+  const raw = JSON.parse(serializeProject(project));
+  assert.equal(deserializeProject(JSON.stringify(raw)).envelope.roof.overhang, 600);
+  delete raw.envelope.roof.overhang;
+  const legacy = deserializeProject(JSON.stringify(raw));
+  assert.equal(legacy.envelope.roof.overhang, 0);
+  assert.equal(hasContent(legacy), false);
+  raw.envelope.roof.overhang = 350;
+  assert.equal(deserializeProject(JSON.stringify(raw)).envelope.roof.overhang, 350);
+});
+
 test('±0.000 над плоской землёй создаёт единые цоколь и фундамент', () => {
   const project = oneStorey();
   project.envelope.zeroAboveGround = 1000;
@@ -74,7 +88,12 @@ test('связанная крыша включается режимом обол
     o: { x: room.x + room.w / 2, y: room.y + room.h / 2, z: 10000 },
     d: { x: 0, y: 0, z: -1 },
   });
-  assert.equal(hit?.type, 'room', 'видимая автокровля не блокирует выбор интерьера');
+  assert.equal(hit?.type, 'roof', 'крыша выбирается над комнатой');
+  assert.equal(hit.id, tops[0].autoRoofId);
+  const interior = buildHouseMesh(project, { roof: false, roofs: false });
+  assert.equal(pickObject({ faces: pickFaces(interior) }, {
+    o: { x: room.x + room.w / 2, y: room.y + room.h / 2, z: 10000 }, d: { x: 0, y: 0, z: -1 },
+  })?.type, 'room', 'при скрытой крыше можно выбрать комнату');
 
   project.envelope.roofMode = 'manual';
   assert.equal(buildHouseMesh(project, { roof: true, roofs: false }).some((face) => face.autoRoofId), false);

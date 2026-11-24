@@ -56,6 +56,7 @@ describe('Крыши-плиты: план крыши, правка контур�
       const m = await import('./core/model.js');
       const store = await import('./ui/store.js');
       const p = m.createProject('Крыши');
+      p.envelope.roofMode = 'manual'; // пользователь строит независимые плиты вручную
       const a = m.createRoom('living', 0, 0, 6000, 4000); a.id = 'a';
       const b = m.createRoom('kitchen', 6000, 0, 4000, 4000); b.id = 'b';
       p.rooms.push(a, b);
@@ -77,7 +78,7 @@ describe('Крыши-плиты: план крыши, правка контур�
   it('K на плане этажа — «План крыши» с инструментом; клик по помещению — крыша по его форме, без связи', async () => {
     const { page } = app;
     assert.ok(await page.isVisible('#roofToolBtn'));
-    assert.match(await page.textContent('#tbTip-roof'), /План крыши/);
+    assert.match(await page.textContent('#tbTip-roof'), /связанную крышу/);
     await page.keyboard.press('KeyK');
     assert.equal(await st(page, () => window.__kepler.state.roofPlan), true);
     assert.equal(await st(page, () => window.__kepler.state.tool?.kind), 'roof');
@@ -303,7 +304,8 @@ describe('Крыши-плиты: план крыши, правка контур�
       const el = buildElevation(p, 'N');
       const roofU = el.polys.filter((q) => q.kind === 'roof').flatMap((q) => q.pts.map((t) => t.u));
       const wallU = el.polys.filter((q) => q.kind === 'wall').flatMap((q) => q.pts.map((t) => t.u));
-      const auto = buildHouseMesh(p, { roof: true }).filter((f) => f.kind === 'roof' && !f.roofId && f.normal.z > 0.5);
+      back.envelope.roofMode = 'linked';
+      const auto = buildHouseMesh(back, { roof: true }).filter((f) => f.kind === 'roof' && f.roofSource === 'linked' && f.normal.z > 0.5);
       return {
         same: JSON.stringify(back.roofs) === JSON.stringify(p.roofs),
         // Крыша над кухней (вынос 1200) — с одного края фасада.
@@ -316,9 +318,10 @@ describe('Крыши-плиты: план крыши, правка контур�
     assert.ok(res.over >= 1199, `вынос на фасаде: ${res.over}`);
     assert.ok(res.tint);
     assert.equal(res.auto, 0, 'все помещения под крышами — автоплит нет');
-    await with3dLayers(page, () => page.click('#v3Roof'));
-    assert.equal((await d3(page)).roofFaces > 0, true);
-    await with3dLayers(page, () => page.click('#v3Roof'));
+    await with3dLayers(page, () => page.uncheck('#v3Roof'));
+    assert.equal((await d3(page)).roofFaces, 0);
+    await with3dLayers(page, () => page.check('#v3Roof'));
+    assert.ok((await d3(page)).roofFaces > 0);
   });
 
   it('ломать как стену: часть ребра — уступ, клик — излом, свободная вершина — косая грань; контур по точкам; 3D', async () => {

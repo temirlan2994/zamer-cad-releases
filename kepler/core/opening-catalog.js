@@ -61,6 +61,7 @@ export const OPENING_PRESETS = [
   W('wide', 'win-2100x1500', 'Окно 2100×1500', 'fixed', 2100, 1500, 900, 'трёхстворчатое гостиная'),
   W('wide', 'win-2400x1500', 'Окно 2400×1500', 'fixed', 2400, 1500, 900, 'трёхстворчатое гостиная ленточное'),
   W('panoramic', 'french-900', 'Французское', 'french', 900, 2300, 50, 'балконное высокое'),
+  W('panoramic', 'corner-glazing', 'Угловой витраж', 'panoramic', 2400, 2400, 100, 'угловое окно угол два фасада стойка простенок'),
   W('panoramic', 'pano-1800', 'Витраж 1800', 'panoramic', 1800, 2400, 100, 'в пол глухой'),
   W('panoramic', 'pano-2400', 'Панорамное 2400×2100', 'panoramic', 2400, 2100, 100, 'в пол гостиная'),
   W('panoramic', 'pano-3000', 'Панорамное 3000×2400', 'panoramic', 3000, 2400, 100, 'в пол витраж терраса'),
@@ -93,7 +94,7 @@ export function searchOpeningPresets(kind, query) {
 // Параметры инструмента из пресета; окно не выше этажа (над проёмом ≥ 400 мм).
 export function presetToOpening(preset, levelHeight = 3000) {
   const out = {
-    ...(preset.kind === 'door' ? { presetId: preset.id } : {}),
+    ...(preset.kind === 'door' || preset.id === 'corner-glazing' ? { presetId: preset.id } : {}),
     type: preset.type, width: preset.width, height: preset.height,
     sill: preset.kind === 'door' ? 0 : preset.sill,
     ...(preset.kind === 'door' && preset.cat === 'entrance' ? { entryRole: 'main' } : {}),
@@ -107,6 +108,7 @@ export function presetToOpening(preset, levelHeight = 3000) {
 export function presetMatches(preset, params, levelHeight = 3000) {
   if (!params) return false;
   const p = presetToOpening(preset, levelHeight);
+  if (preset.id === 'corner-glazing' || params.presetId === 'corner-glazing') return preset.id === params.presetId;
   return p.type === (params.type || (preset.kind === 'door' ? 'single' : 'standard'))
     && p.width === params.width && p.height === params.height
     && (preset.kind === 'door' || p.sill === params.sill);

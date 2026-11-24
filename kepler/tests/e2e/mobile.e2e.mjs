@@ -369,6 +369,7 @@ describe('телефон 390×844: мобильная раскладка', () =>
 
   it('повторный выбор 3D сохраняет вид, план открывается своей вкладкой', async () => {
     const { page } = app;
+    await pickWorkspaceView(page, 'model', 'landscape');
     await page.tap('#view3dBtn');
     await page.waitForSelector('#view3d', { state: 'visible' });
     assert.equal(await page.getAttribute('#view3dBtn', 'aria-selected'), 'true');
@@ -377,7 +378,14 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await page.tap('#mobileBar [data-sheet="rooms"]');
     await page.waitForSelector('#furnitureItems .furniture-chip', { state: 'visible' });
     assert.equal(await has(page, 'sheet-library'), true);
+    assert.equal(await page.getAttribute('#mobileBar [data-sheet="rooms"]', 'aria-pressed'), 'true');
     await page.tap('#mobileBar [data-sheet="rooms"]');
+    assert.equal(await has(page, 'sheet-library'), false);
+    assert.equal(await page.getAttribute('#mobileBar [data-sheet="rooms"]', 'aria-pressed'), 'false');
+    await page.tap('#mobileBar [data-sheet="draw"]');
+    assert.ok(await page.locator('#mobileDraw [data-draw-family="openings"]').isVisible());
+    assert.equal(await page.locator('#mobileDraw [data-draw="section"]').count(), 0);
+    await page.tap('#mobileDraw [data-done]');
     await page.tap('#view3dBtn');
     assert.equal(await page.isVisible('#view3d'), true);
     await page.tap('#modePlanBtn');

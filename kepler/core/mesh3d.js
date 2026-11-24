@@ -11,29 +11,36 @@
 //   ref? — у стен и их стёкол: { type: 'wall', key, wallId, level, face } }
 
 import { isOpenRoom, isRoundItem, isShaft, isStructural, roomColors } from './catalog.js';
-import { northInBuilding, toLocal, toWorld } from './building.js';
-import { levelProject, roomCeiling, sortedLevels } from './model.js';
-import { openingHeight } from './opening-preset.js';
+import { toLocal, toWorld } from './building.js';
+import { levelProject, sortedLevels } from './model.js';
+import { openingHeight, openingSill } from './opening-preset.js';
 import { neighborRectCorners } from './site.js';
-import { landscapeFaces } from './mesh3d-landscape.js';
+import { cutLandscapeGround, landscapeFaces } from './mesh3d-landscape.js';
+import { objectOutline } from './landscape.js';
 import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
+import { levelWindowOpenings } from './spanning-windows.js';
+import { wallZRange } from './wall-z-range.js';
 import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js';
 import { gridAxis, mergeCells } from './ortho-grid.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
+import { facadeParts } from './facade.js';
 import { furniture3d } from './furniture3d.js';
 import { COFFEE_TABLE_DUO } from './furniture-design.js';
 import { roomContainsPoint, roomRects } from './room-shape.js';
 import { stairAppearance, stairBuild, stairLayout } from './stairs.js';
 import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
+import { atriumRails } from './atrium.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR_3D, massBox } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
 import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
-import { slopedRoofFaces } from './linked-roof.js';
+import { clipLinkedRoofFaces, freeDrainageEdges, slopedRoofFaces } from './linked-roof.js';
+import { linkedRoofRegions } from './linked-roof-regions.js';
+export { linkedRoofRegions };
 import { deriveFoundation } from './foundation-system.js';
 import { deriveEntrances } from './entrance.js';
 import {
-  FASCIA_T, edgeSide, expandRects, explicitRoofRects, gridEdges, materialColor, offsetOutline, outlineNormals, ringSpec,
+  FASCIA_T, edgeSide, expandRects, gridEdges, materialColor, offsetOutline, outlineNormals, ringSpec,
   roofCutRects, roofIsSlanted, roofRects, roofSlabOutline, roofZ, sideDist, triangulate,
 } from './roofs.js';
 
@@ -44,6 +51,8 @@ export const WINDOW_FRAME_COLOR = '#353a3f';
 const STAIR_COLOR = '#c9c2b7';
 
 const v = (x, y, z) => ({ x, y, z });
+
+export { wallZRange };
 
 // Коробка без нижней грани: верх + 4 стороны (нормали наружу).
 export function boxFaces(x0, y0, x1, y1, z0, z1, color, kind) {
@@ -133,11 +142,12 @@ function paneFace(band, orient, a0, a1, z0, z1, color, alpha, kind) {
 // Профиль лежит внутри проёма, поэтому не перекрывает стену и корректно
 // выглядит и снаружи, и из помещения.
 function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
+  if (opening.spanFrameBand) band = opening.spanFrameBand;
   const faces = [];
   const width = a1 - a0;
   const height = z1 - z0;
   if (width < 1 || height < 1) return faces;
-  const frame = Math.max(35, Math.min(70, width / 7, height / 7));
+  const frame = Math.max(35, Math.min(70, width / 7, (opening.spanPart ? opening.spanTop : height) / 7));
   const cross = orient === 'h' ? band.h : band.w;
   const depth = Math.max(30, Math.min(80, cross * 0.55));
   const mid = orient === 'h' ? band.y + band.h / 2 : band.x + band.w / 2;
@@ -146,6 +156,7 @@ function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
   const color = opening?.frameColor === 'black' ? '#17191c'
     : opening?.frameColor === 'bronze' ? '#5a4a3c' : WINDOW_FRAME_COLOR;
   const addBox = (lo, hi, bottom, top) => {
+    if (top <= bottom || hi <= lo) return;
     const list = orient === 'h'
       ? boxFaces(lo, cross0, hi, cross1, bottom, top, color, 'window-frame')
       : boxFaces(cross0, lo, cross1, hi, bottom, top, color, 'window-frame');
@@ -155,17 +166,28 @@ function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
     ...paneFace(band, orient, a0, a1, z0, z1, GLASS_COLOR, 0.38, 'glass'),
     openingId: opening.id, ref,
   });
-  addBox(a0, a1, z0, z0 + frame);
-  addBox(a0, a1, z1 - frame, z1);
-  addBox(a0, a0 + frame, z0 + frame, z1 - frame);
-  addBox(a1 - frame, a1, z0 + frame, z1 - frame);
+  const bottomRail = opening.spanPart === 'upper' ? 0 : frame;
+  const topRail = opening.spanPart === 'lower' ? 0 : Math.min(frame, height - bottomRail);
+  if (bottomRail) addBox(a0, a1, z0, z0 + bottomRail);
+  if (topRail) addBox(a0, a1, z1 - topRail, z1);
+  const cornerPost = opening.cornerWing && opening.corner.joint !== 'pier';
+  if (!cornerPost || !opening.cornerAtStart) addBox(a0, a0 + frame, z0 + bottomRail, z1 - topRail);
+  if (!cornerPost || opening.cornerAtStart) addBox(a1 - frame, a1, z0 + bottomRail, z1 - topRail);
+  if (opening.cornerJunction) {
+    const junction = opening.cornerJunction;
+    const x = junction.x + junction.w / 2;
+    const y = junction.y + junction.h / 2;
+    const half = depth / 2;
+    faces.push(...boxFaces(x - half, y - half, x + half, y + half, z0, z1, color, 'window-frame')
+      .map((face) => ({ ...face, openingId: opening.id, ref })));
+  }
   const type = opening.type || 'standard';
   let sashes = 1;
   if (type === 'lift-slide' || type === 'sliding') sashes = Math.max(2, Math.round(width / 1600));
   else if (!['awning', 'clerestory'].includes(type)) sashes = Math.max(1, Math.round(width / (type === 'panoramic' ? 1200 : 800)));
   for (let i = 1; i < sashes; i += 1) {
     const x = a0 + (width * i) / sashes;
-    addBox(x - frame / 2, x + frame / 2, z0 + frame, z1 - frame);
+    addBox(x - frame / 2, x + frame / 2, z0 + bottomRail, z1 - topRail);
   }
   if (type === 'awning' || type === 'clerestory') {
     const z = z0 + height * 0.55;
@@ -298,36 +320,6 @@ function wallOutlineEdges(band, orient, start, end, z0, z1, holes, { joinedStart
 
 const SOLID_KINDS = new Set(['own', 'shared', 'manual']);
 
-// Высота стены в 3D от пола этажа (мм): base.offset — низ; top.level —
-// отметка другого этажа + offset; top.height — от низа; иначе — на всю
-// высоту этажа (до перекрытия). Ручная стена — из объекта (level.walls),
-// стена комнаты — из wallOverrides[key]. lp — проект на этаже стены.
-export function wallZRange(lp, rec, levelHeight) {
-  const src = rec?.kind === 'manual'
-    ? (lp.walls || []).find((w) => w.id === rec.wallId)
-    : lp.wallOverrides?.[rec?.key];
-  const z0 = Number(src?.base?.offset) || 0;
-  const top = src?.top;
-  const levels = lp.levels || [];
-  const topLevel = top?.level ? levels.find((l) => l.id === top.level) : null;
-  let z1 = levelHeight;
-  if (topLevel) {
-    const own = levels.find((l) => l.id === lp.activeLevel);
-    z1 = (Number(topLevel.elevation) || 0) - (Number(own?.elevation) || 0) + (Number(top.offset) || 0);
-  } else if (Number(top?.height) > 0) z1 = z0 + Number(top.height);
-  else if (rec?.rooms?.length) {
-    const level = levels.find((l) => l.id === lp.activeLevel);
-    const heights = rec.rooms
-      .map((id) => lp.rooms?.find((room) => room.id === id))
-      .filter(Boolean)
-      // Связанная комната оставляет стену на полной конструктивной высоте
-      // этажа; индивидуальная чистая высота реально опускает её верх.
-      .map((room) => room.ceiling ? roomCeiling(room, level) : levelHeight);
-    if (heights.length) z1 = Math.max(...heights);
-  }
-  return { z0, z1: Math.max(z0 + 1, z1) };
-}
-
 // Тела стен этажа для 3D и выбора (core/pick3d.js): записи с прямоугольниками
 // и своей высотой, проёмы-пустоты (низ/верх от пола этажа; верх проёма — не
 // выше верха его стены − 50). В v1 высота — этажа (свои отметки — только v2).
@@ -343,17 +335,18 @@ export function levelWallSolids(lp, walls, height) {
   }
   const byWall = new Map(recs.map((q, i) => [q.wall, i]));
   const voids = [];
-  for (const o of lp.openings) {
+  for (const o of levelWindowOpenings(lp, walls)) {
     const placed = openingRect(lp, o, walls);
     if (!placed || placed.wall.hidden) continue;
     const r = placed.rect;
     const ri = byWall.get(placed.wall) ?? recs.findIndex((q) => q.wall.key === placed.wall.key);
-    const wallTop = ri >= 0 ? recs[ri].z1 : height;
-    const bottom = o.kind === 'door' ? 0 : Math.max(0, o.sill ?? 900);
     const level = (lp.levels || []).find((l) => l.id === lp.activeLevel);
-    const top = Math.min(wallTop - 50, bottom + openingHeight(o, level));
+    const wallTop = ri >= 0 ? recs[ri].z1 : height;
+    const bottom = openingSill(o, level);
+    const top = Math.min(wallTop, bottom + openingHeight(o, level));
     if (top <= bottom || r.w < 0.5 || r.h < 0.5) continue;
-    voids.push({ r, bottom, top, kind: o.kind, wall: placed.wall, rec: ri, id: o.id });
+    if (o.cornerJunction) voids.push({ r: o.cornerJunction, bottom, top, kind: 'corner-junction', wall: null, rec: -1 });
+    voids.push({ r, bottom, top, kind: o.kind, wall: placed.wall, rec: ri, id: o.id, opening: o });
   }
   const level = (lp.levels || []).find((l) => l.id === lp.activeLevel);
   const elevation = Number(level?.elevation) || 0;
@@ -390,7 +383,7 @@ function wallRef(wall, levelId, face) {
 // область слоя меняется. Внутренних граней между кусками одной высоты нет;
 // рёбра — только по контуру и кромкам проёмов. Каждая грань — со ссылкой ref
 // на свою стену (клетка помнит запись-владельца).
-function levelWallsV2(lp, walls, z0, height, levelId) {
+function levelWallsV2(lp, walls, z0, height, levelId, apertures) {
   const faces = [];
   // Косые ручные стены живут полигональными телами и не входят в
   // ортогональную сетку ниже. Выдавливаем их точный плановый контур.
@@ -404,13 +397,16 @@ function levelWallsV2(lp, walls, z0, height, levelId) {
     });
   }
   const { recs, voids } = levelWallSolids(lp, walls, height);
+  if (apertures) {
+    for (const q of voids) if (q.wall) apertures.push({ rect: q.r, orient: q.wall.orient, z0: z0 + q.bottom, z1: z0 + q.top });
+  }
   if (!recs.length || height < 0.5) return faces;
   for (const q of voids) {
     if (q.kind !== 'window') continue;
     const orient = q.wall.orient;
     const a0 = orient === 'h' ? q.r.x : q.r.y;
     const a1 = a0 + (orient === 'h' ? q.r.w : q.r.h);
-    const opening = lp.openings.find((o) => o.id === q.id);
+    const opening = q.opening;
     if (opening) faces.push(...windowAssemblyFaces(q.wall.band, orient, a0, a1,
       z0 + q.bottom, z0 + q.top, opening, wallRef(q.wall, levelId, 'glass')));
   }
@@ -581,21 +577,22 @@ function levelWallsV2(lp, walls, z0, height, levelId) {
 }
 
 // Стены этажа с проёмами.
-function levelWalls(lp, z0, height, levelId, preparedWalls = null) {
+function levelWalls(lp, z0, height, levelId, preparedWalls = null, apertures = null) {
   const faces = [];
   const walls = preparedWalls || deriveWalls(lp);
-  if (walls.some((w) => w.rects) || lp.massVoids?.length) return levelWallsV2(lp, walls, z0, height, levelId);
+  if (walls.some((w) => w.rects) || lp.massVoids?.length || lp.openings?.some((o) => o.corner)) return levelWallsV2(lp, walls, z0, height, levelId, apertures);
   const cuts = new Map(); // стена → [{ a0, a1, bottom, top, kind }]
-  for (const o of lp.openings) {
+  for (const o of levelWindowOpenings(lp, walls)) {
     const placed = openingRect(lp, o, walls);
     if (!placed) continue;
     const r = placed.rect;
     const along = placed.wall.orient === 'h' ? [r.x, r.x + r.w] : [r.y, r.y + r.h];
-    const bottom = o.kind === 'door' ? 0 : Math.max(0, o.sill ?? 900);
     const level = (lp.levels || []).find((l) => l.id === lp.activeLevel);
-    const top = Math.min(height - 50, bottom + openingHeight(o, level));
+    const bottom = openingSill(o, level);
+    const top = Math.min(height, bottom + openingHeight(o, level));
+    if (apertures && !placed.wall.hidden) apertures.push({ rect: r, orient: placed.wall.orient, z0: z0 + bottom, z1: z0 + top });
     if (!cuts.has(placed.wall)) cuts.set(placed.wall, []);
-    cuts.get(placed.wall).push({ a0: along[0], a1: along[1], bottom, top, kind: o.kind, id: o.id });
+    cuts.get(placed.wall).push({ a0: along[0], a1: along[1], bottom, top, kind: o.kind, id: o.id, opening: o });
   }
   for (const run of wallRuns(walls, cuts)) {
     const { band: b, orient, start, end, holes } = run;
@@ -610,7 +607,7 @@ function levelWalls(lp, z0, height, levelId, preparedWalls = null) {
       if (h.bottom > 0) addPiece(a0, a1, z0, z0 + h.bottom);
       if (h.top < height) addPiece(a0, a1, z0 + h.top, z0 + height);
       if (h.kind === 'window') {
-        const opening = lp.openings.find((o) => o.id === h.id);
+        const opening = h.opening;
         const ref = run.members?.[0] ? wallRef(run.members[0], levelId, 'glass') : null;
         if (opening) faces.push(...windowAssemblyFaces(b, orient, a0, a1,
           z0 + h.bottom, z0 + h.top, opening, ref));
@@ -634,10 +631,10 @@ function levelWalls(lp, z0, height, levelId, preparedWalls = null) {
 
 // Слой стен одного этажа (для быстрой пересборки при правке в 3D): грани
 // помечены wallsOf = id этажа.
-export function buildLevelWalls(project, levelId, preparedWalls = null) {
+export function buildLevelWalls(project, levelId, preparedWalls = null, apertures = null) {
   const level = (project.levels || []).find((l) => l.id === levelId);
   if (!level) return [];
-  const faces = levelWalls(levelProject(project, levelId), level.elevation, level.height, levelId, preparedWalls);
+  const faces = levelWalls(levelProject(project, levelId), level.elevation, level.height, levelId, preparedWalls, apertures);
   for (const f of faces) f.wallsOf = levelId;
   return faces;
 }
@@ -689,40 +686,57 @@ export const RAILING_COLOR = '#6f6a63';
 // сверху, стойки; «Поручни» — ещё две промежуточные планки, «Балясины» —
 // частые стойки, «Стекло» — полупрозрачное полотно. Ось перил — посередине
 // полосы перил плана. Грани: kind 'railing', railing { roomId, id }, level.
-export function railingFaces(lp, z0, levelId) {
+function railingSegmentFaces(seg, z0) {
   const faces = [];
-  const T = 50; // сечение поручня и стоек, мм
-  for (const { room, seg } of projectRailings(lp)) {
-    const axis = seg.edge - seg.outward * (RAILING_INSET / 2);
-    const a = seg.a; const b = seg.b;
-    if (b - a < 1) continue;
-    const top = z0 + seg.height;
-    const tag = (list) => list.map((f) => ({ ...f, railing: { roomId: room.id, id: seg.id }, level: levelId }));
-    const bar = (lo, hi, zLo, zHi, color = RAILING_COLOR, t = T) => (seg.orient === 'h'
-      ? boxFaces(lo, axis - t / 2, hi, axis + t / 2, zLo, zHi, color, 'railing')
-      : boxFaces(axis - t / 2, lo, axis + t / 2, hi, zLo, zHi, color, 'railing'));
-    faces.push(...tag(bar(a, b, top - T, top)));
-    const len = b - a;
-    const step = seg.type === 'balusters' ? 150 : seg.type === 'glass' ? 1500 : 1200;
-    const n = Math.max(1, Math.round(len / step));
-    for (let i = 0; i <= n; i += 1) {
-      const c = Math.min(b - T / 2, Math.max(a + T / 2, a + (len * i) / n));
-      const t = seg.type === 'balusters' && i > 0 && i < n ? 25 : T;
-      faces.push(...tag(bar(c - t / 2, c + t / 2, z0, top - T, RAILING_COLOR, t)));
+  const T = 50;
+  const axis = seg.edge - seg.outward * (RAILING_INSET / 2);
+  const a = seg.a; const b = seg.b;
+  if (b - a < 1) return faces;
+  const top = z0 + seg.height;
+  const bar = (lo, hi, zLo, zHi, color = RAILING_COLOR, t = T) => (seg.orient === 'h'
+    ? boxFaces(lo, axis - t / 2, hi, axis + t / 2, zLo, zHi, color, 'railing')
+    : boxFaces(axis - t / 2, lo, axis + t / 2, hi, zLo, zHi, color, 'railing'));
+  faces.push(...bar(a, b, top - T, top));
+  const len = b - a;
+  const step = seg.type === 'balusters' ? 150 : seg.type === 'glass' ? 1500 : 1200;
+  const n = Math.max(1, Math.round(len / step));
+  for (let i = 0; i <= n; i += 1) {
+    const c = Math.min(b - T / 2, Math.max(a + T / 2, a + (len * i) / n));
+    const t = seg.type === 'balusters' && i > 0 && i < n ? 25 : T;
+    faces.push(...bar(c - t / 2, c + t / 2, z0, top - T, RAILING_COLOR, t));
+  }
+  if (seg.type === 'rails') {
+    for (const k of [1 / 3, 2 / 3]) {
+      const z = z0 + (seg.height - T) * k;
+      faces.push(...bar(a, b, z - 15, z + 15, RAILING_COLOR, 30));
     }
-    if (seg.type === 'rails') {
-      for (const k of [1 / 3, 2 / 3]) {
-        const z = z0 + (seg.height - T) * k;
-        faces.push(...tag(bar(a, b, z - 15, z + 15, RAILING_COLOR, 30)));
+  } else if (seg.type === 'glass') {
+    const zLo = z0 + 100; const zHi = top - T;
+    const pts = seg.orient === 'h'
+      ? [v(a, axis, zLo), v(b, axis, zLo), v(b, axis, zHi), v(a, axis, zHi)]
+      : [v(axis, a, zLo), v(axis, b, zLo), v(axis, b, zHi), v(axis, a, zHi)];
+    faces.push({
+      pts, normal: seg.orient === 'h' ? v(0, 1, 0) : v(1, 0, 0), color: GLASS_COLOR, alpha: 0.35, kind: 'railing', twoSided: true,
+    });
+  }
+  return faces;
+}
+
+export function railingFaces(lp, z0, levelId, preparedWalls = null) {
+  const faces = projectRailings(lp).flatMap(({ room, seg }) =>
+    railingSegmentFaces(seg, z0).map((f) => ({ ...f, railing: { roomId: room.id, id: seg.id }, level: levelId })));
+  if (!lp.levels?.find((l) => l.id === levelId)?.slabOpenings?.some((o) => o.atrium?.railing)) return faces;
+  const holes = slabOpenings(lp, levelId);
+  for (const hole of holes) {
+    for (const { a, b } of atriumRails(lp, levelId, hole, holes, preparedWalls)) {
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const x = (b.x - a.x) / len; const y = (b.y - a.y) / len;
+      const rotate = (p) => v(p.x * x - p.y * y, p.x * y + p.y * x, p.z);
+      const local = { orient: 'h', a: 0, b: len, edge: 0, outward: 1, height: 1100, type: 'glass' };
+      for (const f of railingSegmentFaces(local, z0)) {
+        const pts = f.pts.map(rotate).map((p) => v(a.x + p.x, a.y + p.y, p.z));
+        faces.push({ ...f, pts, normal: rotate(f.normal), slabOpeningId: hole.id, level: levelId });
       }
-    } else if (seg.type === 'glass') {
-      const zLo = z0 + 100; const zHi = top - T;
-      const pts = seg.orient === 'h'
-        ? [v(a, axis, zLo), v(b, axis, zLo), v(b, axis, zHi), v(a, axis, zHi)]
-        : [v(axis, a, zLo), v(axis, b, zLo), v(axis, b, zHi), v(axis, a, zHi)];
-      faces.push(...tag([{
-        pts, normal: seg.orient === 'h' ? v(0, 1, 0) : v(1, 0, 0), color: GLASS_COLOR, alpha: 0.35, kind: 'railing', twoSided: true,
-      }]));
     }
   }
   return faces;
@@ -1241,14 +1255,31 @@ function levelFootprint(lp, offset) {
 // перекрытии верхнего (над лестницами — авто, ручные; core/slab-openings.js).
 function slabCuts(lower, upper) {
   const cuts = [];
+  if (lower.openings.some((opening) => opening.span?.levelId === upper.activeLevel)) {
+    const walls = deriveWalls(upper);
+    for (const opening of levelWindowOpenings(upper, walls)) {
+      if (opening.spanPart !== 'upper') continue;
+      const { rect, wall } = openingRect(upper, opening, walls);
+      // Вырез доходит до внешней грани выступающей плиты.
+      const margin = Math.max(0, (upper.settings?.exterior || 250) - wall.thickness) + SLAB_OUTSET;
+      const h = wall.orient === 'h';
+      const outward = opening.spanOutward;
+      cuts.push({
+        x0: rect.x - (!h && outward < 0 ? margin : 0),
+        x1: rect.x + rect.w + (!h && outward > 0 ? margin : 0),
+        y0: rect.y - (h && outward < 0 ? margin : 0),
+        y1: rect.y + rect.h + (h && outward > 0 ? margin : 0),
+      });
+    }
+  }
   const linkedOpenings = slabOpenings(upper, upper.activeLevel);
   // Новая лестница создаёт точный связанный проём. Полный legacy-вырез
   // отключаем только у того лестничного помещения, внутри которого находится
   // именно этот проём. Иначе одна новая лестница ошибочно отменяла бы вырезы
   // всех остальных старых stairs-room на этаже.
   const hasLinkedOpening = (room) => linkedOpenings.some((opening) => (
-    opening.stairId
-    && roomContainsPoint(room, opening.x + opening.w / 2, opening.y + opening.h / 2)
+    (opening.stairId && roomContainsPoint(room, opening.x + opening.w / 2, opening.y + opening.h / 2))
+    || (opening.atrium && [opening.atrium.upperRoomId, opening.atrium.roomId].includes(room.id))
   ));
   for (const lp of [lower, upper]) {
     for (const r of lp.rooms.filter((room) => isShaft(room)
@@ -1355,54 +1386,50 @@ export function slabFaces(grid, z0, z1, color, kind, { bottom = false } = {}) {
   return faces;
 }
 
-// Автокровля этажа: верхняя свободная часть получает выбранный скат, а
-// открытые части под следующим этажом остаются плоскими террасами — так скат
-// не входит в стены верхнего объёма. Контур следует за планом автоматически.
-function autoRoofFaces(lp, above, z, own = [], envelope, topmost = true, localDirection = 'auto', groundAt = null) {
-  const t = lp.settings?.exterior || 250;
-  const roof = envelope.roof;
-  const overhang = topmost ? roof.overhang : 0;
-  const footprint = overhang ? expandRects(levelFootprint(lp, t), overhang) : levelFootprint(lp, t);
-  const grid = regionGrid([footprint], [...(above ? levelFootprint(above, t) : []), ...own]);
-  const id = `auto-roof:${lp.activeLevel}`;
-  const type = topmost ? roof.type : 'flat';
+// Одна наружная оболочка для соседних помещений. Внутренних швов между
+// ними нет; верхние этажи и ручная кровля уже вырезаны из общего пятна.
+function autoRoofFaces(region, groundAt) {
+  const { grid, id, levelId, z, thickness, roofType: type } = region;
+  const meta = { autoRoofId: id, roofId: id, roofSource: 'linked', level: levelId };
   let faces;
   if (type === 'flat') {
-    faces = slabFaces(grid, z, z + envelope.roofThickness, ROOF_COLOR, 'roof', { bottom: true }).map((face) => ({
+    faces = slabFaces(grid, z, z + thickness, ROOF_COLOR, 'roof', { bottom: true }).map((face) => ({
       ...face,
       kind: face.normal.z < -0.5 ? 'roof-soffit' : face.kind,
       roofSurface: face.normal.z > 0.5 ? 'top' : (face.normal.z < -0.5 ? 'bottom' : 'edge'),
-      roofThickness: envelope.roofThickness,
+      roofThickness: thickness,
       roofType: 'flat', pitchDeg: 0, roofDirection: 'auto',
-      autoRoofId: id, roofSource: 'linked', level: lp.activeLevel,
+      ...meta,
       ...(face.normal.z > 0.5 ? { cutZ0: z } : {}),
     }));
     faces.drainageEdges = gridEdges(grid).map((edge) => ({
-      a: { ...edge.a, z: z + envelope.roofThickness }, b: { ...edge.b, z: z + envelope.roofThickness },
-      normal: edge.n, kind: 'roof-drain', autoRoofId: id, roofSource: 'linked', level: lp.activeLevel,
+      a: { ...edge.a, z: z + thickness }, b: { ...edge.b, z: z + thickness },
+      normal: edge.n, kind: 'roof-drain', ...meta,
     }));
   } else {
-    faces = slopedRoofFaces(grid, {
-      type, pitchDeg: roof.pitchDeg, direction: localDirection,
-      thickness: envelope.roofThickness, z, color: ROOF_COLOR,
+    faces = slopedRoofFaces(region.slopeGrid, {
+      type, pitchDeg: region.pitchDeg, direction: region.direction,
+      thickness: thickness, z, color: ROOF_COLOR,
       kind: 'roof', soffitKind: 'roof-soffit',
-      drainage: topmost && roof.drainage !== 'off' && roof.drainage !== 'internal',
-      autoRoofId: id, roofSource: 'linked', level: lp.activeLevel,
+      drainage: region.drainage === 'external' || region.drainage === 'auto',
+      ...meta,
     });
   }
   // Наружный водоотвод — настоящая производная геометрия, а не отметка в
   // данных крыши. Изменение уклона сразу переносит желоба и стояки.
-  if (topmost && (roof.drainage === 'auto' || roof.drainage === 'external')) {
+  const drainage = faces.drainageEdges || [];
+  if (region.oblique.length || region.slopeGrid !== grid) faces = clipLinkedRoofFaces(faces, region);
+  if (region.drainage === 'auto' || region.drainage === 'external') {
     const gutters = [];
     const down = new Map();
-    for (const edge of faces.drainageEdges || []) {
+    for (const edge of freeDrainageEdges(drainage, region)) {
       const z0 = Math.min(edge.a.z, edge.b.z) - 90;
       const z1 = Math.max(edge.a.z, edge.b.z) - 10;
       const horizontal = Math.abs(edge.a.x - edge.b.x) >= Math.abs(edge.a.y - edge.b.y);
       const box = horizontal
         ? boxFaces(Math.min(edge.a.x, edge.b.x), edge.a.y - 45, Math.max(edge.a.x, edge.b.x), edge.a.y + 45, z0, z1, '#55626a', 'roof-drain')
         : boxFaces(edge.a.x - 45, Math.min(edge.a.y, edge.b.y), edge.a.x + 45, Math.max(edge.a.y, edge.b.y), z0, z1, '#55626a', 'roof-drain');
-      gutters.push(...box.map((face) => ({ ...face, autoRoofId: id, roofSource: 'linked', level: lp.activeLevel, roofDrain: 'gutter' })));
+      gutters.push(...box.map((face) => ({ ...face, ...meta, roofDrain: 'gutter' })));
       for (const point of [edge.a, edge.b]) {
         const key = `${Math.round(point.x)}:${Math.round(point.y)}`;
         if (!down.has(key) || down.get(key).z < point.z) down.set(key, point);
@@ -1415,7 +1442,7 @@ function autoRoofFaces(lp, above, z, own = [], envelope, topmost = true, localDi
       if (top - bottom <= 0.5) continue;
       gutters.push(...boxFaces(point.x - 45, point.y - 45, point.x + 45, point.y + 45,
         bottom, top, '#55626a', 'roof-drain')
-        .map((face) => ({ ...face, autoRoofId: id, roofSource: 'linked', level: lp.activeLevel, roofDrain: 'downpipe' })));
+        .map((face) => ({ ...face, ...meta, roofDrain: 'downpipe' })));
     }
     faces.push(...gutters);
   }
@@ -1424,30 +1451,15 @@ function autoRoofFaces(lp, above, z, own = [], envelope, topmost = true, localDi
 
 // Только производная кровля без сборки стен, полов, мебели и участка.
 // Используется 3D и планом кровли, чтобы оба вида показывали один результат.
-export function linkedRoofFaces(project) {
-  const envelope = envelopeOf(project);
-  if (envelope.roofMode !== 'linked') return [];
-  const levels = sortedLevels(project);
-  const lps = levels.map((level) => levelProject(project, level.id));
+export function linkedRoofFaces(project, regions = linkedRoofRegions(project)) {
+  if (!regions.length) return [];
   // Стояк заканчивается у реальной поверхности земли в локальных осях дома.
   // Без топосъёмки terrainHeightFn использует заданную отметку ±0.000.
   const groundAt = terrainHeightFn(project) || (() => {
     const zero = resolvedZeroAboveGround(project);
     return zero == null ? 0 : -zero;
   });
-  const direction = envelope.roof.direction === 'auto' ? 'auto' : (() => {
-    const offset = { n: 0, e: 90, s: 180, w: 270 }[envelope.roof.direction] || 0;
-    const local = (northInBuilding(project.site?.north, project.building) + offset + 360) % 360;
-    return ['n', 'e', 's', 'w'][Math.round(local / 90) % 4];
-  })();
-  return levels.flatMap((level, index) => {
-    const above = lps.slice(index + 1)
-      .find((candidate) => levelFootprint(candidate, candidate.settings?.exterior || 250).length);
-    return autoRoofFaces(
-      lps[index], above, level.elevation + level.height,
-      explicitRoofRects(project, level.id), envelope, !above, direction, groundAt,
-    );
-  });
+  return regions.flatMap((region) => autoRoofFaces(region, groundAt));
 }
 
 const FOUNDATION_COLOR = '#8d8982';
@@ -1813,6 +1825,20 @@ function groundSlabFaces(lp, z, thickness) {
     }));
 }
 
+// Плита относится к этажу над ней. Её геометрия общая у модели дома и разреза участка.
+export function floorSlabFaces(project, levels = sortedLevels(project), lps = levels.map((l) => levelProject(project, l.id)), shown = null) {
+  const { slabs } = envelopeOf(project);
+  if (!slabs.enabled) return [];
+  const ground = lps.findIndex((lp) => levelFootprint(lp, lp.settings?.exterior || 250).length);
+  return levels.flatMap((level, k) => {
+    if (shown && !shown.has(level.id)) return [];
+    if (k === ground) {
+      return groundSlabFaces(lps[k], level.elevation, Math.min(800, Math.max(120, Number(slabs.groundThickness) || SLAB_T)));
+    }
+    return k > 0 ? interfloorFaces(lps[k - 1], lps[k], level.elevation) : [];
+  });
+}
+
 const GROUND_LOW = [0xb9, 0xc9, 0xa6];
 const GROUND_HIGH = [0xd9, 0xd2, 0xb4];
 const hex = (rgb) => `#${rgb.map((c) => Math.round(c).toString(16).padStart(2, '0')).join('')}`;
@@ -1829,6 +1855,7 @@ export function terrainHeightFn(project, scale = 1) {
     flat.minRel = -zero;
     flat.maxRel = -zero;
     flat.flat = true;
+    flat.siteDatum = -zero;
     return flat;
   }
   const house = houseTerrain(project, model);
@@ -1845,6 +1872,7 @@ export function terrainHeightFn(project, scale = 1) {
     const z = interpolateZ(model, w.x, w.y, { clamp: true });
     return rel(z ?? floorZ);
   };
+  fn.siteDatum = rel(reference);
   fn.minRel = rel(model.minZ);
   fn.maxRel = rel(model.maxZ);
   return fn;
@@ -1911,28 +1939,37 @@ function plinthFaces(project, hz) {
   return faces;
 }
 
-function siteFaces(project, { terrainScale = 1 } = {}) {
-  const faces = [];
+function siteFaces(project, { terrainScale = 1, landscape = true } = {}) {
+  let faces = [];
   const site = project.site;
   const b = project.building;
   const local = (p) => toLocal(b, p);
   const hz = terrainHeightFn(project, terrainScale);
   const zAt = (p) => (hz ? hz(p.x, p.y) : 0);
-  const pts = [...(site?.boundary || []).map(local)];
-  for (const level of project.levels) for (const r of level.rooms) pts.push(v(r.x, r.y, 0), v(r.x + r.w, r.y + r.h, 0));
-  for (const n of site?.neighbors || []) pts.push(...neighborRectCorners(n).map(local));
-  if (site?.terrain?.points?.length) for (const p of site.terrain.points) pts.push(local(p));
-  if (!pts.length) return faces;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const include = ({ x, y }) => {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  };
+  for (const p of site?.boundary || []) include(local(p));
+  for (const level of project.levels) for (const r of level.rooms) {
+    include(r);
+    include({ x: r.x + r.w, y: r.y + r.h });
+  }
+  for (const n of site?.neighbors || []) for (const p of neighborRectCorners(n)) include(local(p));
+  for (const p of site?.terrain?.points || []) include(local(p));
+  for (const o of site?.landscape?.objects || []) {
+    for (const p of objectOutline(o, 8)) include(local(p));
+  }
+  if (!Number.isFinite(minX)) return faces;
   const pad = 15000;
-  const minX = Math.min(...pts.map((p) => p.x)) - pad;
-  const maxX = Math.max(...pts.map((p) => p.x)) + pad;
-  const minY = Math.min(...pts.map((p) => p.y)) - pad;
-  const maxY = Math.max(...pts.map((p) => p.y)) + pad;
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
   if (hz && !hz.flat) faces.push(...terrainGround(minX, minY, maxX, maxY, hz));
   else {
     const groundZ = hz ? hz(0, 0) : 0;
     faces.push({ pts: [v(minX, minY, groundZ - 5), v(maxX, minY, groundZ - 5), v(maxX, maxY, groundZ - 5), v(minX, maxY, groundZ - 5)], normal: v(0, 0, 1), color: '#cfd8c4', kind: 'ground' });
   }
+  if (landscape) faces = cutLandscapeGround(faces, project, hz);
   if (site?.boundary?.length >= 3) {
     // Граница — тонкая полоса чуть над землёй (иначе мерцает при отдалении).
     // На рельефе ребро режется на куски ≤ 2 м, чтобы полоса шла по земле.
@@ -1987,8 +2024,8 @@ function siteFaces(project, { terrainScale = 1 } = {}) {
 // фасады, разрезы, листы).
 // levels — какие этажи показывать: 'all' (по умолчанию), 'upto' — до
 // активного (project.activeLevel) включительно, 'only' — только активный;
-// кровля (флажок roof) — только когда видны все этажи, иначе она закрыла бы
-// показанный верхний этаж.
+// связанная кровля (флажок roof) принадлежит своему этажу. При скрытии
+// этажа сверху вырез под ним сохраняется.
 export function shownLevelIds(project, mode = 'all') {
   const levels = sortedLevels(project);
   if (mode !== 'upto' && mode !== 'only') return levels.map((l) => l.id);
@@ -2000,12 +2037,40 @@ export function shownLevelIds(project, mode = 'all') {
 // прозрачной становится только выбранная, см. faceAlpha в ui/view3d.js): 6 граней kind
 // 'mass' с massId и face ('top' | 'bottom' | 'px' | 'nx' | 'py' | 'ny').
 // Только для окна 3D (опция masses у buildHouseMesh).
-export function massFaces(masses, { alpha = 1, voids = [] } = {}) {
+export function massFaces(masses, { alpha = 1, voids = [], apertures = [] } = {}) {
   const out = [];
   for (const m of masses || []) {
     const b = massBox(m);
     const color = m.color || MASS_COLOR_3D;
     const cuts = (voids || []).map(massBox).filter((cut) => boxOverlap3d(b, cut));
+    if (m.facadeKind) {
+      if (['slats', 'stone'].includes(m.facadeKind)) {
+        const alongX = m.rotation % 180 === 0;
+        for (const hole of apertures) {
+          if ((hole.orient === 'h') !== alongX) continue;
+          const r = hole.rect;
+          const lo = alongX ? r.y : r.x;
+          const hi = lo + (alongX ? r.h : r.w);
+          const near = alongX ? b.y0 : b.x0;
+          const far = alongX ? b.y1 : b.x1;
+          if (near > hi + 2 || far < lo - 2) continue;
+          cuts.push({ x0: alongX ? r.x : b.x0, x1: alongX ? r.x + r.w : b.x1,
+            y0: alongX ? b.y0 : r.y, y1: alongX ? b.y1 : r.y + r.h, z0: hole.z0, z1: hole.z1 });
+        }
+      }
+      for (const part of facadeParts(m)) {
+        const meta = () => ({ massId: m.id, facadeKind: m.facadeKind, alpha, flat: m.facadeKind === 'light' });
+        const relevant = cuts.filter((cut) => boxOverlap3d(part, cut));
+        if (relevant.length) out.push(...orthoCutFaces([part], relevant, { color: part.color, kind: 'mass', meta }));
+        else {
+          const { x0, y0, x1, y1, z0, z1 } = part;
+          const sides = boxFaces(x0, y0, x1, y1, z0, z1, part.color, 'mass');
+          sides.push({ pts: [v(x0,y0,z0), v(x0,y1,z0), v(x1,y1,z0), v(x1,y0,z0)], normal: v(0,0,-1), color: part.color, kind: 'mass' });
+          for (const side of sides) out.push({ ...side, ...meta(), noEdges: true });
+        }
+      }
+      continue;
+    }
     if (cuts.length) {
       out.push(...orthoCutFaces([{ ...b, mass: m }], cuts, {
         color, kind: 'mass', meta: () => ({ massId: m.id, alpha }),
@@ -2050,7 +2115,7 @@ export function shownRoofs(project, mode = 'all') {
 
 export function buildHouseMesh(project, {
   roof = false, site = false, terrainScale = 1, landscape = true, furniture = false, levels: levelMode = 'all',
-  masses = false, roofs = true,
+  masses = false, facades = true, facadeApertures = [], roofs = true,
 } = {}) {
   const faces = [];
   const levels = sortedLevels(project);
@@ -2060,45 +2125,39 @@ export function buildHouseMesh(project, {
   // Одна 3D-сборка использует одни и те же стены для тела дома и входной
   // группы. Карта устраняет второй deriveWalls() у занятого нижнего этажа.
   const wallsByLevel = new Map();
-  const groundLevelIndex = lps.findIndex((lp) => levelFootprint(lp, lp.settings?.exterior || 250).length);
+  const collectApertures = facades && project.masses?.some((m) => m.facadeKind);
   levels.forEach((level, k) => {
     if (!shown.has(level.id)) return;
     const lp = lps[k];
     const walls = deriveWalls(lp);
     wallsByLevel.set(level.id, walls);
     faces.push(...levelFloors(lp, level.elevation, level.id));
-    faces.push(...railingFaces(lp, level.elevation, level.id));
-    faces.push(...buildLevelWalls(project, level.id, walls));
+    faces.push(...railingFaces(lp, level.elevation, level.id, walls));
+    faces.push(...buildLevelWalls(project, level.id, walls, collectApertures ? facadeApertures : null));
     faces.push(...levelStructures(lp, level.elevation, level.height, level.id));
     faces.push(...levelStairs(lp, level.elevation, level.height, level.id, k < levels.length - 1));
     if (furniture) faces.push(...furnitureFaces(lp, level.elevation, level.height, level.id));
   });
-  if (envelope.slabs.enabled && groundLevelIndex >= 0 && shown.has(levels[groundLevelIndex].id)) {
-    const thickness = Math.min(800, Math.max(120, Number(envelope.slabs.groundThickness) || SLAB_T));
-    faces.push(...groundSlabFaces(lps[groundLevelIndex], levels[groundLevelIndex].elevation, thickness));
-  }
-  // Перекрытие под этажом k — его основание: показывается вместе с ним.
-  for (let k = 1; k < levels.length; k += 1) {
-    // У нижнего занятого этажа это уже ground slab; не дублируем её вторым
-    // совпадающим телом, если в файле перед ним остался пустой уровень.
-    if (envelope.slabs.enabled && k !== groundLevelIndex && shown.has(levels[k].id)) {
-      faces.push(...interfloorFaces(lps[k - 1], lps[k], levels[k].elevation));
-    }
-  }
+  faces.push(...floorSlabFaces(project, levels, lps, shown));
   const foundation = foundationFaces(project);
   if (foundation.some((face) => shown.has(face.level))) faces.push(...foundation.filter((face) => shown.has(face.level)));
   const entrances = entranceFaces(project, { wallsByLevel });
   if (entrances.some((face) => shown.has(face.level))) faces.push(...entrances.filter((face) => shown.has(face.level)));
-  if (roof && envelope.roofMode === 'linked' && shown.size === levels.length) {
-    faces.push(...linkedRoofFaces(project));
+  if (roof && envelope.roofMode === 'linked') {
+    const regions = linkedRoofRegions(project).filter((r) => shown.has(r.levelId));
+    faces.push(...linkedRoofFaces(project, regions));
   }
   // Крыши-плиты (core/roofs.js) — над показанными этажами; как и автокровля,
   // не закрывают показанный верхний этаж: только когда показан и этаж выше.
   if (roofs && project.roofs?.length) faces.push(...roofFaces(project, shownRoofs(project, levelMode)));
-  if (site) faces.push(...siteFaces(project, { terrainScale }));
+  if (site) faces.push(...siteFaces(project, { terrainScale, landscape }));
   // Благоустройство (core/mesh3d-landscape.js): деревья, покрытия, вода, постройки.
   if (site && landscape) faces.push(...landscapeFaces(project, terrainHeightFn(project, terrainScale)));
-  if (masses) faces.push(...massFaces(project.masses, { voids: project.massVoids || [] }));
+  if (masses || facades) {
+    const list = (project.masses || []).filter((m) => m.facadeKind ? facades && (levelMode === 'all' || levels.some((l) =>
+      shown.has(l.id) && m.z0 < l.elevation + l.height && m.z0 + m.h > l.elevation)) : masses);
+    faces.push(...massFaces(list, { voids: project.massVoids || [], apertures: facadeApertures }));
+  }
   // Часть масс под землёй (рельеф и слой «Участок») — бледно сквозь землю.
   if (masses && site && project.masses?.length) faces.push(...massGroundFaces(project.masses, terrainHeightFn(project, terrainScale)));
   return faces;

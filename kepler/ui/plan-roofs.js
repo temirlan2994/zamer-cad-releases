@@ -6,12 +6,57 @@
 // листах/печати (выкл).
 
 import {
-  roofFromRooms, roofHandles, roofOutlineHandles, roofOverRoom, roofSlabEdges,
+  roofFromRooms, roofHandles, roofOutlineHandles, roofOverRoom, roofSlabEdges, roofSlabOutline, roofZ,
 } from '../core/roofs.js';
+import { linkedRoofFaces, linkedRoofRegions } from '../core/mesh3d.js';
+import { intersection } from '../core/geom/clip.js';
+import { roomPolygon } from '../core/room-shape.js';
 import { state } from './state.js';
 
 export const roofs = () => (Array.isArray(state.project?.roofs) ? state.project.roofs : []);
 export const roofById = (id) => roofs().find((r) => r.id === id) || null;
+// Ручные контуры редактируются вершинами. Для выбора связанной крыши
+// используем фактическую открытую поверхность с вырезами от верхних этажей.
+let linkedView = null;
+export function planLinkedRoofs() {
+  const project = state.project;
+  if (!linkedView || linkedView.project !== project || linkedView.walls !== state.walls ||
+      linkedView.manual !== project?.roofs) {
+    linkedView = { project, walls: state.walls, manual: project?.roofs,
+      regions: project ? linkedRoofRegions(project) : [], faces: null, roomCoverage: new Map() };
+  }
+  return linkedView.regions;
+}
+export function planLinkedRoofFaces() {
+  const regions = planLinkedRoofs();
+  return linkedView.faces ??= linkedRoofFaces(state.project, regions)
+    .filter((face) => face.kind === 'roof' && (face.roofSurface === 'top' || face.normal.z > 0.5));
+}
+// Тот же порядок снизу вверх для рисунка и попадания луча плана.
+export function planRoofStack() {
+  const regions = planLinkedRoofs();
+  if (!linkedView.stack) {
+    const height = (roof) => roofZ(state.project, roof)?.z1 || 0;
+    linkedView.stack = [...regions, ...roofs()].sort((a, b) => height(a) - height(b));
+  }
+  return linkedView.stack;
+}
+
+export const visibleRoofById = (id) => roofById(id) ||
+  (typeof id === 'string' && id.startsWith('auto-roof:') ? planLinkedRoofs().find((r) => r.id === id) : null);
+export function roomRoofCoverage(room) {
+  const regions = planLinkedRoofs();
+  if (linkedView.roomCoverage.has(room)) return linkedView.roomCoverage.get(room);
+  const levelId = state.project.activeLevel;
+  const footprint = roomPolygon(room);
+  const linked = regions.find((r) => r.levelId === levelId && r.roomIds.includes(room.parentId || room.id) &&
+    intersection(r.outline, footprint).length);
+  const manual = roofOverRoom(state.project, levelId, room) || roofs().findLast((r) => r.levelId === levelId &&
+    intersection(roofSlabOutline(state.project, r), footprint).length);
+  const coverage = { linked, manual };
+  linkedView.roomCoverage.set(room, coverage);
+  return coverage;
+}
 export const selectedRoof = () => (state.selection?.type === 'roof' ? roofById(state.selection.id) : null);
 
 // Открыт «План крыши»: режим «План» с флагом state.roofPlan.

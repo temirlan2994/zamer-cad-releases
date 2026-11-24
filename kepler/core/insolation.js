@@ -14,6 +14,7 @@
 // солнцу не перекрыт соседним домом или другой частью этого же дома.
 // Точка расчёта — середина окна снаружи на уровне подоконника.
 
+import { levelWindowOpenings } from './spanning-windows.js';
 import { isOpenRoom } from './catalog.js';
 import { rectCornersWorld, toWorld } from './building.js';
 import { castsShadow } from './landscape-shadow.js';
@@ -22,7 +23,7 @@ import {
 } from './landscape.js';
 import { massBox } from './masses.js';
 import { levelProject, sortedLevels } from './model.js';
-import { openingHeight } from './opening-preset.js';
+import { openingHeight, openingSill } from './opening-preset.js';
 import {
   roofIsSlanted, roofRects, roofSlabOutline, roofZ, triangulate,
 } from './roofs.js';
@@ -438,7 +439,7 @@ export function windowsOf(project, options = {}) {
       walls = deriveWalls(lp);
       wallsByLevel?.set(level.id, walls);
     }
-    for (const o of lp.openings) {
+    for (const o of levelWindowOpenings(lp, walls)) {
       if (o.kind !== 'window') continue;
       const placed = openingRect(lp, o, walls);
       if (!placed) continue;
@@ -461,7 +462,7 @@ export function windowsOf(project, options = {}) {
       const p = toWorld(project.building, atLocal);
       const wallSpan = Math.max(0, Number(placed.wall?.to) - Number(placed.wall?.from));
       const width = Math.max(0, Math.min(Number(o.width) || 0, wallSpan || Infinity));
-      const sill = Math.max(0, Number(o.sill ?? 900) || 0);
+      const sill = openingSill(o, level);
       const wallHeight = Math.max(0, (Number(level.height) || 3000) - sill);
       const height = Math.max(0, Math.min(openingHeight(o, level), wallHeight));
       const elevation = Number(level.elevation) || 0;

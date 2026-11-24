@@ -51,12 +51,13 @@ describe('выбор проектов при запуске', () => {
   before(async () => { app = await startApp(); });
   after(async () => { await app?.close(); });
 
-  it('у нового пользователя примеры показывают снимки планов', async () => {
+  it('у нового пользователя примеры показывают снимки домов', async () => {
     const { page } = app;
     assert.equal(await page.isHidden('#startRecentSection'), true);
-    assert.equal(await page.$$eval('#startTemplates .startup-project-card', (nodes) => nodes.length), 4);
+    assert.equal(await page.$$eval('#startTemplates .startup-project-card', (nodes) => nodes.length), 5);
     const images = page.locator('#startTemplates .project-preview-image');
-    assert.equal(await images.count(), 4);
+    assert.equal(await images.count(), 5);
+    assert.match(await page.locator('[data-template="garden-villa"] img').getAttribute('src'), /assets\/garden-villa\.png$/);
     for (const image of await images.all()) {
       await image.scrollIntoViewIfNeeded();
       await image.evaluate((node) => node.decode());
@@ -310,4 +311,66 @@ describe('стартовые окна на телефоне', () => {
     assert.equal(Math.round(cards[0].width), Math.round(cards[1].width));
     assert.deepEqual(chooser.errors, []);
   });
+});
+
+it('F5 сохраняет последнюю локальную правку, когда в облако пришёл задержанный старый снимок', async () => {
+  const app = await startApp();
+  const { page } = app;
+  try {
+    await useTestAccount(page, () => 'delayed-cloud-editor');
+    await reloadEditor(page);
+    await page.click('#startNew');
+    await page.waitForSelector('#startScreen', { state: 'hidden' });
+    const captured = await page.evaluate(async () => {
+      const { getBackend } = await import('./ui/cloud.js');
+      const { mutate, flushAutosave, AUTOSAVE_AT_KEY } = await import('./ui/store.js');
+      const { getScopedItem } = await import('./ui/storage-scope.js');
+      const { state } = window.__kepler;
+      const { db } = await getBackend();
+      // Первая передача ждёт аренду редактора. За это время пользователь
+      // успевает отредактировать план и потерять соединение.
+      const original = db.runTransaction.bind(db);
+      let unblock, entered;
+      const gate = new Promise((resolve) => { unblock = resolve; });
+      const started = new Promise((resolve) => { entered = resolve; });
+      db.runTransaction = async (...args) => {
+        db.runTransaction = original;
+        entered();
+        await gate;
+        return original(...args);
+      };
+      mutate(() => { state.project.name = 'Первая правка'; });
+      flushAutosave({ cloudImmediate: true });
+      const first = getScopedItem(AUTOSAVE_AT_KEY);
+      await started;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+      mutate(() => { state.project.name = 'Вторая правка'; });
+      flushAutosave();
+      const second = getScopedItem(AUTOSAVE_AT_KEY);
+      unblock();
+      return { first, second, pid: state.pid };
+    });
+    assert.ok(captured.first < captured.second);
+    await page.waitForFunction(async (pid) => {
+      const { getBackend } = await import('./ui/cloud.js');
+      const { getProject } = await import('./core/storage.js');
+      const { db, root } = await getBackend();
+      return (await getProject(db, root, pid))?.name === 'Первая правка';
+    }, captured.pid);
+    await reloadEditor(page);
+    const result = await readModel(page);
+    assert.equal(result.pid, captured.pid);
+    assert.equal(result.name, 'Вторая правка');
+    await page.waitForFunction(async ({ pid, second }) => {
+      const { getBackend } = await import('./ui/cloud.js');
+      const { getProject } = await import('./core/storage.js');
+      const { db, root } = await getBackend();
+      const meta = await getProject(db, root, pid);
+      return meta?.name === 'Вторая правка' && meta.draftUpdatedAt === second;
+    }, captured);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.close();
+  }
 });

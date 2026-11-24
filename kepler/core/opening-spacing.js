@@ -8,6 +8,8 @@
 // Б3, вставки копии и т. п.); не помещающиеся — удаляет.
 // windowsOnSharedWalls — окна, оказавшиеся в общей стене или без стены.
 
+import { cornerWindowGeometry, cornerWindowProjections } from './corner-windows.js';
+import { levelWindowOpenings, nextWindowSpan } from './spanning-windows.js';
 import { openingFrame, openingPos, openingRect, setOpeningPos } from './walls.js';
 
 export const OPENING_GAP = 100;
@@ -41,7 +43,7 @@ function freeIntervals(lo, hi, blocked) {
 // Занятые участки (абсолютные координаты вдоль стены) других проёмов.
 function occupied(project, opening, walls, others) {
   const list = [];
-  for (const other of others || project.openings || []) {
+  for (const other of (others ? cornerWindowProjections(project, others, walls) : levelWindowOpenings(project, walls))) {
     if (!other || other.id === opening.id) continue;
     const placed = openingRect(project, other, walls);
     if (!placed) continue;
@@ -102,6 +104,14 @@ export function snapOpeningOffset(project, opening, walls, desired, { step = 50,
 
 // Позиция — offset (проём комнаты) или host.t (проём ручной стены).
 export function fitOpeningOffset(project, opening, walls, desiredOffset, { gap = OPENING_GAP, others = null } = {}) {
+  if (opening.corner) {
+    const wings = cornerWindowGeometry(project, opening, walls);
+    if (!wings) return null;
+    const taken = occupied(project, opening, walls, others);
+    const blocked = wings.some(({ wall, start, end }) => taken.some((t) => sameLine(wall, t.wall)
+      && Math.max(start, end) + gap > t.from && Math.min(start, end) - gap < t.to));
+    return blocked ? null : wings[0].opening.offset;
+  }
   const frame = openingFrame(project, opening, walls);
   if (frame === undefined) return desiredOffset;
   if (!frame) return null;
@@ -124,7 +134,16 @@ export function fitOpeningOffset(project, opening, walls, desiredOffset, { gap =
       if (dist < bestDist - 1e-6) { bestDist = dist; best = at; }
     }
   }
-  return best === null ? null : (best - base) * dir;
+  if (best === null) return null;
+  const pos = (best - base) * dir;
+  // Внутреннее сопоставление верхней стены передаёт собственный список занятых мест.
+  // При обычном перемещении / копировании сохраняем обе части витража.
+  if (opening.span && !others) {
+    const probe = structuredClone(opening);
+    setOpeningPos(probe, pos);
+    if (nextWindowSpan(project, project.activeLevel, probe)?.targetLevelId !== opening.span.levelId) return null;
+  }
+  return pos;
 }
 
 // Раздвигает проёмы в порядке массива: ранние стоят, поздние уступают.
@@ -182,4 +201,17 @@ export function windowsOnSharedWalls(project, walls, ids = null) {
       return !placed || placed.wall.kind === 'shared';
     })
     .map((o) => o.id);
+}
+
+// Resize a single wing, keeping the other wing and the corner fixed. Both
+// hosts must remain free. The operation is atomic for input, touch and undo.
+export function resizeCornerWing(project, opening, walls, wing, width) {
+  if (!opening.corner || !Number.isFinite(width) || width < 600) return false;
+  const probe = { ...opening, corner: { ...opening.corner } };
+  if (wing === 'return') probe.corner.returnWidth = Math.round(width);
+  else probe.width = Math.round(width);
+  const offset = fitOpeningOffset(project, probe, walls, opening.offset);
+  if (offset == null) return false;
+  Object.assign(opening, { width: probe.width, corner: probe.corner, offset });
+  return true;
 }

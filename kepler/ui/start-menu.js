@@ -8,8 +8,10 @@ import { el, escapeHtml, toast } from './dom.js';
 import { handleExport, loadTemplate, newProject } from './files.js';
 import { buildSample } from './sample.js';
 import { createProjectThumbnail } from './project-thumbnail.js';
+import { openView } from './props-views.js';
 import { state } from './state.js';
 import { getStorageScope } from './storage-scope.js';
+import { viewFromEyeHeight } from './view3d.js';
 
 const projectHasContent = () => hasContent(state.project);
 const EDITOR_SESSION = 'kepler-startup-chosen';
@@ -63,11 +65,15 @@ function showBroken(warn, broken) {
   warn.querySelector('#warnBrokenHide').addEventListener('click', () => { warn.hidden = true; });
 }
 
-function exampleContent(title, note, project) {
+function planPreview(project) {
   let preview;
   try { preview = createProjectThumbnail(project); } catch { /* Canvas может быть недоступен. */ }
+  return projectPreviewHtml(preview || createProjectPreview(project));
+}
+
+function exampleContent(title, note, previewHtml) {
   return `
-    <span class="startup-project-preview">${projectPreviewHtml(preview || createProjectPreview(project))}</span>
+    <span class="startup-project-preview">${previewHtml}</span>
     <span class="startup-project-info"><b>${escapeHtml(title)}</b><small>${escapeHtml(note)}</small></span>`;
 }
 
@@ -76,14 +82,24 @@ function renderTemplates() {
   const box = el('startTemplates');
   if (!box || box.dataset.ready === 'true') return;
   const sample = el('startSample');
-  sample.innerHTML = exampleContent('Демо-дом с участком', 'участок, рельеф и инсоляция', buildSample().project);
+  sample.innerHTML = exampleContent('Демо-дом с участком', 'участок, рельеф и инсоляция', planPreview(buildSample().project));
   for (const t of TEMPLATES) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'startup-project-card';
     btn.dataset.template = t.id;
-    btn.innerHTML = exampleContent(t.title, t.note, t.build());
-    btn.addEventListener('click', () => { loadTemplate(t.id); closeStartMenu(); });
+    const preview = t.preview
+      ? `<img class="project-preview-image" src="${escapeHtml(t.preview)}" alt="" loading="lazy" decoding="async" draggable="false">`
+      : planPreview(t.build());
+    btn.innerHTML = exampleContent(t.title, t.note, preview);
+    btn.addEventListener('click', () => {
+      loadTemplate(t.id);
+      closeStartMenu();
+      if (t.id === 'garden-villa') {
+        openView('3d');
+        viewFromEyeHeight(-1.9);
+      }
+    });
     box.appendChild(btn);
   }
   box.dataset.ready = 'true';

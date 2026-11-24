@@ -139,6 +139,7 @@ export function pickBoxes(project, levelIds = null) {
     const derived = deriveWalls(lp);
     const { recs, voids } = levelWallSolids(lp, derived, level.height);
     const elev = Number(level.elevation) || 0;
+    const outsideRooms = new Set(lp.rooms.filter((r) => !r.parentId).map((r) => r.id));
     for (const q of recs) {
       const w = q.wall;
       const h = w.orient === 'h';
@@ -149,7 +150,8 @@ export function pickBoxes(project, levelIds = null) {
           walls.push({
             ...p, z0: p.z0 + elev, z1: p.z1 + elev,
             key: w.key, wallId: w.wallId ?? null, from: w.from, kind: w.kind, orient: w.orient,
-            levelId: level.id, wallZ0: q.z0 + elev, wallZ1: q.z1 + elev, alongMin, alongMax,
+            levelId: level.id, facadeRoom: w.rooms?.[0], facadeSide: w.sides?.[w.rooms?.[0]],
+            facadeOutward: w.kind === 'own' && outsideRooms.has(w.rooms?.[0]) ? w.outward : 0, wallZ0: q.z0 + elev, wallZ1: q.z1 + elev, alongMin, alongMax,
           });
         }
       }
@@ -160,7 +162,8 @@ export function pickBoxes(project, levelIds = null) {
       if (!q.id || q.kind === 'mass-void') continue;
       openings.push({
         x0: q.r.x, y0: q.r.y, x1: q.r.x + q.r.w, y1: q.r.y + q.r.h, z0: q.bottom + elev, z1: q.top + elev,
-        type: 'opening', id: q.id, kind: q.kind, levelId: level.id,
+        type: 'opening', id: q.id, kind: q.kind, levelId: q.opening?.spanOwnerLevelId || level.id,
+        wallKey: q.wall.key, wallFrom: q.wall.from, wallLevelId: level.id,
       });
     }
   }
@@ -236,8 +239,8 @@ export function pickWall(boxes, ray) {
 // перила — по граням перил (railing: { roomId, id }), крыши-плиты — по
 // граням плиты, края и парапета (roofId; core/roofs.js),
 // проёмы — по коробке пустоты, ландшафт — по граням конкретного объекта.
-// Перекрытия и ручная кровля только заслоняют. Связанная автокровля
-// пропускает выбор: готовый дом виден сразу, но интерьер остаётся доступен.
+// Перекрытия заслоняют объекты под ними. Видимая кровля выбирается по
+// своей поверхности; при отключении слоя её грани отсутствуют в наборе.
 // Земля и участок не выбираются.
 // Побеждает ближайшее к камере попадание.
 
@@ -251,9 +254,11 @@ export function pickFaces(faces) {
     let pick = null;
     if (f.kind === 'floor' && f.roomId) pick = { type: 'room', id: f.roomId, levelId: f.level };
     else if (f.itemId && (f.kind === 'furniture' || f.kind === 'stairs' || f.kind === 'wall')) pick = { type: 'item', id: f.itemId, levelId: f.level };
+    else if (f.slabOpeningId) pick = { type: 'slab', id: f.slabOpeningId, levelId: f.level };
     else if (f.kind === 'railing' && f.railing) pick = { type: 'railing', roomId: f.railing.roomId, id: f.railing.id, levelId: f.level };
-    else if (f.autoRoofId) continue;
+    else if (f.roofSource === 'linked' && f.roofId) pick = { type: 'roof', id: f.roofId, levelId: f.level };
     else if (f.roofId && (f.kind === 'roof' || f.kind === 'parapet' || f.kind === 'fascia')) pick = { type: 'roof', id: f.roofId, levelId: f.level };
+    else if (f.facadeKind && f.massId) pick = { type: 'mass', id: f.massId, normal: f.normal };
     else if (f.landscapeId) pick = { type: 'landscape', id: f.landscapeId };
     else if (!OCCLUDERS.has(f.kind)) continue;
     const P = f.pts;

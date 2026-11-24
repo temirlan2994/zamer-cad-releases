@@ -1,5 +1,6 @@
 // Поиск объектов под курсором: ручки, комнаты, стены, проёмы, мебель, участок.
 
+import { levelWindowOpenings } from '../core/spanning-windows.js';
 import { isFixedSizeComp, pointInComposite } from '../core/composite.js';
 import { isOpenRoom, isShaft } from '../core/catalog.js';
 import { itemsEditable, planHitStack } from '../core/hit-stack.js';
@@ -253,7 +254,7 @@ export function hitPlanStack(p) {
 }
 
 export function hitOpening(p) {
-  for (const opening of state.project.openings) {
+  for (const opening of levelWindowOpenings(state.project, state.walls)) {
     if (openingContains(opening, p)) return opening;
   }
   return null;

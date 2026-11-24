@@ -44,7 +44,7 @@ function currentViewId() {
 
 function activate(id) {
   if (id.startsWith('analysis:')) {
-    openAnalyticalView(id);
+    openAnalyticalView(id, { showProperties: true });
     return;
   }
   closeAnalyticalView({ restoreFocus: false });

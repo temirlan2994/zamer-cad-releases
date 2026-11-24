@@ -10,6 +10,7 @@ import {
   createSlabOpening, dragSlabRect, findSlabOpening, removeSlabOpening, resetSlabOpeningAuto,
   setSlabOpeningPolygon, setSlabOpeningRect, slabHandlePoints, slabOpeningArea, slabOpeningPolygon, slabOpeningStair,
 } from '../core/slab-openings.js';
+import { reshapeAtrium } from '../core/atrium.js';
 import { dragPolygonEdge, polygonEdgeAxis, polygonEdgeMode } from '../core/polygon-edge.js';
 import { snapWallPoint } from '../core/wall-manual.js';
 import { canvas, escapeHtml, toast } from './dom.js';
@@ -101,7 +102,7 @@ export function slabPointerDown(event, screen, plan) {
   selectObject({ type: 'slab', levelId, id: o.id });
   const base = {
     levelId, id: o.id, start: { x: o.x, y: o.y, w: o.w, h: o.h },
-    points: slabOpeningPolygon(o).map((p) => ({ ...p })), polygonal: Boolean(o.outline?.length),
+    atrium: Boolean(o.atrium), points: slabOpeningPolygon(o).map((p) => ({ ...p })), polygonal: Boolean(o.outline?.length),
     plan0: { x: plan.x, y: plan.y }, before: snapshot(), moved: false,
   };
   if (hit.part === 'body') return {
@@ -206,7 +207,14 @@ export function slabDragMove(drag, plan, event) {
       && rect.w === drag.start.w && rect.h === drag.start.h) return;
   }
   // Авто-проём при первой правке становится ручным — выбор идёт за записью.
-  const rec = polygon
+  let rec;
+  if (drag.atrium) {
+    const opening = selectedSlab();
+    if (!opening) return;
+    const result = reshapeAtrium(state.project, drag.levelId, opening, { polygon, rect });
+    rec = result.opening;
+    if (!result.ok) state.slabLabel = { x: plan.x, y: plan.y, text: result.reason };
+  } else rec = polygon
     ? setSlabOpeningPolygon(state.project, drag.levelId, drag.id, polygon)
     : setSlabOpeningRect(state.project, drag.levelId, drag.id, rect);
   if (!rec) { clearObjGuides(); requestDraw(); return; }
@@ -359,7 +367,7 @@ export function slabToolbar(sel) {
   const shape = o.outline?.length
     ? `${(slabOpeningArea(o) / 1e6).toFixed(2).replace('.', ',')} м² · ${slabOpeningPolygon(o).length} вершин`
     : `${o.w} × ${o.h} мм`;
-  return { o, label: `Проём в перекрытии · ${shape}${o.auto ? ' · по лестнице' : ''}` };
+  return { o, label: `${o.atrium ? 'Второй свет' : 'Проём в перекрытии'} · ${shape}${o.auto ? ' · по лестнице' : ''}` };
 }
 
 export function renderSlabProps(panel, sel) {
@@ -374,10 +382,10 @@ export function renderSlabProps(panel, sel) {
   })();
   const area = (slabOpeningArea(o) / 1e6).toFixed(2).replace('.', ',');
   panel.innerHTML = `
-    <h2>Проём в перекрытии</h2>
+    <h2>${o.atrium ? 'Второй свет' : 'Проём в перекрытии'}</h2>
     <p class="subtitle">${o.auto
     ? `Автоматически по лестнице${fromName ? ` с этажа «${fromName}»` : ''}: габарит маршей и площадок + 100 мм. Следует за лестницей. Тяните сторону или угол на плане — станет ручным.`
-    : stair ? 'Изменён вручную: за лестницей больше не следует.' : 'Ручной проём.'}
+    : o.atrium ? 'Измените размер проёма или потяните его край на плане верхнего этажа.' : stair ? 'Изменён вручную: за лестницей больше не следует.' : 'Ручной проём.'}
       ${o.outline?.length ? ` Свободный контур: ${slabOpeningPolygon(o).length} вершин; тяните круги или саму линию (вдоль/перпендикулярно), «+» добавляет вершину. Во время движения видны привязки и расстояния.` : ' Тяните сторону вдали от квадратной ручки, чтобы двигать линию вдоль или перпендикулярно; появятся привязки и расстояния.'}</p>
     <div class="prop-block">
       <div class="prop-grid">
@@ -388,6 +396,7 @@ export function renderSlabProps(panel, sel) {
       </div>
       <div class="prop-row"><span>Площадь</span><strong>${area} м²</strong></div>
       <div class="prop-row"><span>Форма</span><strong>${o.outline?.length ? `свободная · ${slabOpeningPolygon(o).length} вершин` : 'прямоугольник'}</strong></div>
+      ${o.atrium ? `<label class="prop-row"><span>Стеклянное ограждение галереи</span><input type="checkbox" id="atriumRail" ${o.atrium.railing ? 'checked' : ''}></label>` : ''}
       <div class="prop-row"><span>Режим</span><strong id="slabMode">${o.auto ? 'авто по лестнице' : 'ручной'}</strong></div>
       ${!o.outline?.length ? '<button id="slabFreeShape" type="button">Редактировать произвольный контур</button>' : ''}
       ${!o.auto && stair ? '<button id="slabAuto" type="button">Вернуть авто по лестнице</button>' : ''}
@@ -397,10 +406,19 @@ export function renderSlabProps(panel, sel) {
     const v = (id, d) => { const n = Number(panel.querySelector(id).value); return Number.isFinite(n) ? n : d; };
     const rect = { x: v('#slabX', o.x), y: v('#slabY', o.y), w: v('#slabW', o.w), h: v('#slabH', o.h) };
     let rec = null;
-    mutate(() => { rec = setSlabOpeningRect(state.project, levelId, o.id, rect); });
+    mutate(() => {
+      if (!o.atrium) { rec = setSlabOpeningRect(state.project, levelId, o.id, rect); return; }
+      const result = reshapeAtrium(state.project, levelId, o, { rect });
+      rec = result.opening;
+      if (!result.ok) toast(result.reason);
+    });
     if (rec) selectObject({ type: 'slab', levelId, id: rec.id });
   };
   for (const id of ['#slabW', '#slabH', '#slabX', '#slabY']) panel.querySelector(id).addEventListener('change', apply);
+  panel.querySelector('#atriumRail')?.addEventListener('change', (e) => {
+    const stored = state.project.levels.find((l) => l.id === levelId)?.slabOpenings?.find((s) => s.id === o.id);
+    if (stored?.atrium) mutate(() => { stored.atrium.railing = e.target.checked; });
+  });
   panel.querySelector('#slabAuto')?.addEventListener('click', () => resetSlabAuto(sel));
   panel.querySelector('#slabFreeShape')?.addEventListener('click', () => makeSlabFreeShape(sel));
   return true;

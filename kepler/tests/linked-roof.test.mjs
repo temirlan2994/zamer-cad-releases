@@ -62,6 +62,8 @@ test('gable: auto ridge follows the long side and both eaves drain', () => {
   const tops = topFaces(faces);
   assert.equal(tops.length, 2);
   assert.ok(tops.every((face) => face.roofDirection === 'n'));
+  assert.ok(sideFaces(faces).some((f) => Math.abs(f.normal.x) === 1
+    && f.pts.some((p) => p.y === 2000 && Math.abs(p.z - 5250) < 1e-6)), 'торец плиты закрыт на коньке');
   const points = tops.flatMap((face) => face.pts);
   const ridge = points.filter((point) => point.y === 2000);
   assert.ok(ridge.length >= 4);

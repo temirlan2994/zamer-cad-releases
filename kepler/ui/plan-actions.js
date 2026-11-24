@@ -1,6 +1,9 @@
 // Действия режима «План»: комнаты, проёмы, мебель, удаление, группы.
 
-import { applyOpeningPreset } from '../core/opening-preset.js';
+import { CORNER_PRESET, cornerWindowGeometry } from '../core/corner-windows.js';
+import { levelWindowOpenings } from '../core/spanning-windows.js';
+import { wallZRange } from '../core/wall-z-range.js';
+import { applyOpeningPreset, openingHeight, openingSill } from '../core/opening-preset.js';
 import { DOOR_WIDTH, GRID_STEP, WINDOW_WIDTH, furnitureDef, gridStepForScale, isOpenRoom, roomType } from '../core/catalog.js';
 import { itemsInRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import {
@@ -144,6 +147,15 @@ export function placeRoomAt(at, typeOverride = null) {
   const room = createRoom(type, x, y, w, h);
   room.parentId = parentId;
   if (def.shaft) room.takesArea = true;
+  return commitPlacedRoom(room, { parentId, alignedBuilding, verdict });
+}
+
+// Одинаковые имена, создание лестницы, история и выбор при обычной вставке
+// и при пристройке. В последнем случае дверь входит в ту же запись истории.
+export function commitPlacedRoom(room, { parentId = null, alignedBuilding = null, verdict, door = null }) {
+  if (state.editLocked) return false;
+  const type = room.type;
+  const def = roomType(type);
   const sameType = state.project.rooms.filter((r) => r.type === room.type).length;
   if (sameType > 0) room.name = `${def.title} ${sameType + 1}`;
   let stair = null;
@@ -155,6 +167,7 @@ export function placeRoomAt(at, typeOverride = null) {
   mutate(() => {
     if (alignedBuilding) state.project.building = alignedBuilding;
     state.project.rooms.push(room);
+    if (door) state.project.openings.push(door);
     if (stair) state.project.items.push(stair);
     // Мебель родителя из-под нового помещения вытаскивается.
     if (parentId) reclaimItemsFromChild(state.project, roomById(state.project, parentId), room);
@@ -180,26 +193,29 @@ export function placeRoomAt(at, typeOverride = null) {
   else if (stair) toast(`${alignedText ? `${alignedText} ` : ''}Лестница создана и рассчитана по высоте этажа — выберите форму справа`, Boolean(alignedBuilding));
   else if (parentId) toast(`${alignedText ? `${alignedText} ` : ''}«${room.name}» вложена в «${roomById(state.project, parentId).name}» и отнимает её площадь`, Boolean(alignedBuilding));
   else if (alignedText) toast(`${alignedText} Ctrl+Z вернёт и помещение, и поворот.`, true);
+  return true;
 }
 
 // Расчёт параметров проёма под курсором: позиция, сторона открывания и петли
 // зависят от того, с какой стороны стены и ближе к какому концу стоит мышь.
 // Привязка проёма при вставке/перетаскивании: шаг по зуму, середина стены;
 // Shift (state.openingFree) — свободно, с точностью до мм.
-export function openingSnapOpts() {
-  if (state.openingFree) return { step: 1, tol: 0 };
+export function openingSnapOpts(free = state.openingFree) {
+  if (free) return { step: 1, tol: 0 };
   const scale = state.view?.scale || 0.08;
   return { step: gridStepForScale(scale), tol: 12 / scale };
 }
 
-export function computeOpeningParams(at) {
+export function computeOpeningParams(at, { project = state.project, walls = state.walls, wall: host, snap = openingSnapOpts(), others = levelWindowOpenings(project, walls) } = {}) {
   const openKind = state.tool.openKind;
-  const wall = state.tool.presetWall ? findWall(state.tool.presetWall.key, state.tool.presetWall.from) : nearestWall(at);
+  const wall = host || (state.tool.presetWall ? findWall(state.tool.presetWall.key, state.tool.presetWall.from) : nearestWall(at));
   if (!wall) return null;
-  if (wall.kind === 'manual') return computeHostOpening(at, wall, openKind);
+  const corner = openKind === 'window' && state.tool.preset?.presetId === CORNER_PRESET;
+  if (corner && wall.kind !== 'own') return { error: 'Выберите наружный угол помещения' };
+  if (wall.kind === 'manual') return computeHostOpening(at, wall, openKind, project, walls, snap, others);
   const roomId = wall.rooms[0];
   const side = wall.sides[roomId];
-  const room = roomById(state.project, roomId);
+  const room = roomById(project, roomId);
   if (!room) return null;
   if (openKind === 'window' && (wall.kind === 'shared' || room.parentId)) return { error: 'Окно можно разместить только на наружной стене' };
   const edge = sideEdge(room, side);
@@ -207,11 +223,25 @@ export function computeOpeningParams(at) {
   const along = wall.orient === 'h' ? at.x : at.y;
   const width = openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
   const opening = applyOpeningPreset(createOpening(openKind, roomId, side, along - base, width), state.tool.preset);
-  const clamped = clampOpeningOffset(state.project, opening, state.walls, along - base);
+  if (corner) {
+    opening.corner = { end: Math.abs(along - edge.from) <= Math.abs(along - edge.to) ? 'from' : 'to', returnWidth: state.tool.preset.returnWidth || 1800, joint: state.tool.preset.cornerJoint || 'post' };
+    const offset = fitOpeningOffset(project, opening, walls, along - base, { others });
+    if (offset === null) return { error: 'Для витража нужны две свободные наружные стены у выбранного угла' };
+    const level = activeLevel(project);
+    const sill = openingSill(opening, level);
+    const top = sill + openingHeight(opening, level);
+    if (cornerWindowGeometry(project, opening, walls).some((wing) => {
+      const range = wallZRange(project, wing.wall, level.height);
+      return sill < range.z0 || top > range.z1;
+    })) return { error: 'Высота витража должна помещаться в обеих стенах' };
+    opening.offset = offset;
+    return { opening, wall };
+  }
+  const clamped = clampOpeningOffset(project, opening, walls, along - base);
   if (clamped === null) return { error: 'На этом участке стены проём не помещается' };
   // Ближайшее место, где проём не налезает на соседние (зазор ≥ OPENING_GAP).
-  const free = fitOpeningOffset(state.project, opening, state.walls,
-    snapOpeningOffset(state.project, opening, state.walls, along - base, openingSnapOpts()));
+  const free = fitOpeningOffset(project, opening, walls,
+    snapOpeningOffset(project, opening, walls, along - base, snap), { others });
   if (free === null) return { error: `На этой стене нет места: проём пересёкся бы с соседними (нужен зазор ≥ ${OPENING_GAP} мм)` };
   opening.offset = free;
   if (openKind === 'door') {
@@ -230,7 +260,7 @@ export function computeOpeningParams(at) {
 }
 
 // Проём на ручной стене: host { wallId, t }, t — центр от начала оси.
-function computeHostOpening(at, wall, openKind) {
+function computeHostOpening(at, wall, openKind, project, walls, snap, others) {
   if (wall.orient === 'a') return { error: 'Проёмы в стене под свободным углом пока недоступны' };
   const width = openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
   const opening = applyOpeningPreset(createOpening(openKind, null, 0, 0, width), state.tool.preset);
@@ -239,9 +269,9 @@ function computeHostOpening(at, wall, openKind) {
   opening.roomId = null;
   const along = wall.orient === 'h' ? at.x : at.y;
   opening.host = { wallId: wall.wallId, t: (along - wall.axisStart) * wall.axisDir };
-  if (clampOpeningOffset(state.project, opening, state.walls, opening.host.t) === null) return { error: 'На этой стене проём не помещается' };
-  const free = fitOpeningOffset(state.project, opening, state.walls,
-    snapOpeningOffset(state.project, opening, state.walls, opening.host.t, openingSnapOpts()));
+  if (clampOpeningOffset(project, opening, walls, opening.host.t) === null) return { error: 'На этой стене проём не помещается' };
+  const free = fitOpeningOffset(project, opening, walls,
+    snapOpeningOffset(project, opening, walls, opening.host.t, snap), { others });
   if (free === null) return { error: `На этой стене нет места: проём пересёкся бы с соседними (нужен зазор ≥ ${OPENING_GAP} мм)` };
   opening.host.t = free;
   if (openKind === 'door') {
@@ -680,6 +710,25 @@ function pasteItems(clipboard) {
   return true;
 }
 
+function copyCornerOpening(source, copy, walls) {
+  const possible = walls.filter((wall) => wall.kind === 'own' && wall.sides?.[source.roomId] !== undefined);
+  possible.sort((a, b) => Number(b.sides[source.roomId] === source.side) - Number(a.sides[source.roomId] === source.side));
+  for (const wall of possible) {
+    copy.side = wall.sides[source.roomId];
+    for (const end of ['from', 'to']) {
+      copy.corner.end = end;
+      const offset = fitOpeningOffset(state.project, copy, walls, 0);
+      if (offset === null) continue;
+      copy.offset = offset;
+      mutate(() => state.project.openings.push(copy));
+      selectObject({ type: 'opening', id: copy.id });
+      return true;
+    }
+  }
+  toast('В помещении нет свободного угла для такого витража', true);
+  return false;
+}
+
 function pasteOpening(clipboard) {
   const source = clipboard.opening;
   if (source.host ? !manualWallById(state.project, source.host.wallId) : !roomById(state.project, source.roomId)) {
@@ -690,6 +739,7 @@ function pasteOpening(clipboard) {
   const id = copy.id;
   Object.assign(copy, cloneData(source), { id });
   const walls = deriveWalls(state.project);
+  if (copy.corner) return copyCornerOpening(source, copy, walls);
   const step = (source.width + 300) * (clipboard.pastes + 1);
   const pos = openingPos(source);
   const right = fitOpeningOffset(state.project, copy, walls, pos + step);
@@ -802,6 +852,7 @@ function duplicateOpeningSelection(sel) {
   const id = copy.id;
   Object.assign(copy, JSON.parse(JSON.stringify(source)), { id });
   const walls = deriveWalls(state.project);
+  if (copy.corner) return copyCornerOpening(source, copy, walls);
   const step = source.width + 300;
   const pos = openingPos(source);
   const right = fitOpeningOffset(state.project, copy, walls, pos + step);

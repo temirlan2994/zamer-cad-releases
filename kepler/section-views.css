@@ -141,3 +141,29 @@ body.lib-open .toolstrip .tb-btn.active .tb-tip { display: none; }
   body.sheet-library #canvasHint,
   body.sheet-library:has(#openingsBar:not([hidden])) #toolOptions { display: none; }
 }
+
+.section-level-handle { cursor: ns-resize; }
+.ls-section:has(.section-level-controls) .ls-section-body { touch-action: none; }
+.section-level-icon { transform: scale(var(--profile-icon-scale, 1)); }
+.section-level-controls {
+  display: flex; align-items: end; flex-wrap: wrap; gap: 4px 12px; padding: 5px 12px 8px;
+  background: var(--surface); border-top: 1px solid var(--border);
+}
+.section-level-controls label { display: grid; gap: 2px; max-width: 100%; font-size: 12px; color: var(--muted); }
+.section-level-controls select { max-width: min(220px, 45vw); }
+.section-level-controls input { width: 100px; }
+.section-level-controls :is(input, select) { min-height: 32px; }
+.section-level-controls small { align-self: center; color: var(--muted); }
+@media (max-width: 640px) {
+  .ls-section:has(.section-level-controls) .ls-section-body svg { width: 100%; height: 100%; min-width: 0; min-height: 0; }
+  .ls-section:has(.section-level-controls) .cut-view-options { flex-wrap: nowrap; overflow-x: auto; }
+  .ls-section:has(.section-level-controls) .cut-view-options > * { flex: none; }
+  .section-level-controls { gap: 3px 8px; padding: 4px 8px; }
+  .section-level-controls label { font-size: 11px; }
+  .section-level-controls :is(input, select) { min-height: 36px; }
+}
+
+/* The landscape cut owns the canvas until its back button is pressed.
+   Keep the model controls clear of the floating analytics dock. */
+body:has(#lsSectionView:not([hidden])) #projectRoute .project-route-bar { display: none !important; }
+body:has(#sheetView:not([hidden])) #projectRoute { display: none; }

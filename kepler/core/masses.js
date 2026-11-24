@@ -13,6 +13,7 @@
 // сплошных масс. Скошенных граней пока нет; контур сечения собирается через
 // union/difference (core/geom: целые 0,5 мм).
 
+import { isFacadeKind } from '../data/facade-catalog.js';
 import { difference, union } from './geom/poly.js';
 
 export const MASS_MIN = 100; // мм — меньше бокс не делаем
@@ -40,7 +41,9 @@ const num = (v) => {
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
   return typeof n === 'number' && Number.isFinite(n) ? n : null;
 };
-const clampSize = (v) => Math.min(MASS_MAX, Math.max(MASS_MIN, Math.round(v)));
+export const massMinimum = (m) => isFacadeKind(m?.facadeKind) ? 12 : MASS_MIN;
+const clampSize = (v, m) => Math.min(MASS_MAX, Math.max(massMinimum(m), Math.round(v)));
+const baseZ = (v, m) => isFacadeKind(m?.facadeKind) ? Math.round(v) : Math.max(0, Math.round(v));
 const normRot = (r) => ((Math.round((Number(r) || 0) / 90) * 90) % 360 + 360) % 360;
 
 // Следующее свободное имя «Масса N».
@@ -53,14 +56,16 @@ export function nextMassName(masses = []) {
 
 // Новая масса (размеры приводятся к допустимым).
 export function createMass({
-  x = 0, y = 0, w = 6000, d = 6000, z0 = 0, h = MASS_H_DEFAULT, rotation = 0, name = null, color = null,
+  x = 0, y = 0, w = 6000, d = 6000, z0 = 0, h = MASS_H_DEFAULT, rotation = 0, name = null, color = null, facadeKind = null,
 } = {}, existing = []) {
+  const precision = isFacadeKind(facadeKind) ? 2 : 1;
   const m = {
     id: newId(),
     name: name || nextMassName(existing),
-    x: Math.round(x), y: Math.round(y),
-    w: clampSize(w), d: clampSize(d),
-    z0: Math.max(0, Math.round(z0)), h: clampSize(h),
+    x: Math.round(x * precision) / precision, y: Math.round(y * precision) / precision,
+    w: clampSize(w, { facadeKind }), d: clampSize(d, { facadeKind }),
+    z0: baseZ(z0, { facadeKind }), h: clampSize(h, { facadeKind }),
+    ...(isFacadeKind(facadeKind) ? { facadeKind } : {}),
     rotation: normRot(rotation),
   };
   if (typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color)) m.color = color;
@@ -84,10 +89,23 @@ export function normalizeMass(raw) {
   const m = {
     id: typeof raw.id === 'string' && raw.id ? raw.id : newId(),
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 60) : 'Масса',
-    x, y, w: clampSize(w), d: clampSize(d),
-    z0: Math.max(0, num(raw.z0) ?? 0), h: clampSize(h),
+    x, y, w: clampSize(w, raw), d: clampSize(d, raw),
+    ...(isFacadeKind(raw.facadeKind) ? { facadeKind: raw.facadeKind } : {}),
+    z0: isFacadeKind(raw.facadeKind) ? num(raw.z0) ?? 0 : Math.max(0, num(raw.z0) ?? 0), h: clampSize(h, raw),
     rotation: normRot(raw.rotation),
   };
+  const host = raw.facadeHost;
+  if (m.facadeKind && host && typeof host.roomId === 'string' && typeof host.levelId === 'string' &&
+      ([0, 1, 2, 3].includes(host.side) || typeof host.side === 'string') &&
+      ['full', 'top', 'base'].includes(host.vertical) && [host.along, host.offset, host.inset].every(Number.isFinite)) {
+    m.facadeHost = { roomId: host.roomId, levelId: host.levelId, side: host.side, vertical: host.vertical,
+      along: host.along, offset: host.offset, inset: host.inset,
+      ...(m.facadeKind === 'band' && Number.isFinite(host.bandAnchor) ? { bandAnchor: Math.min(1, Math.max(0, host.bandAnchor)) } : {}),
+      ...(host.vertical === 'full' && Number.isFinite(host.headGap) && host.headGap > 0 ? { headGap: host.headGap } : {}),
+      ...(Number.isFinite(host.span) && host.span > 0 && Number.isFinite(host.width) && host.width > 0
+        ? { span: host.span, width: host.width } : {}) };
+  }
+  if (m.facadeKind === 'light' && !m.facadeHost && typeof raw.canopyId === 'string' && raw.canopyId) m.canopyId = raw.canopyId;
   if (typeof raw.color === 'string' && /^#[0-9a-f]{6}$/i.test(raw.color)) m.color = raw.color;
   return m;
 }
@@ -146,15 +164,15 @@ export function massRect(m) {
 
 // Габарит → масса с тем же id/именем/поворотом (размеры — по поворотy).
 export function massFromBox(m, b) {
-  const ex = clampSize(b.x1 - b.x0);
-  const ey = clampSize(b.y1 - b.y0);
+  const ex = clampSize(b.x1 - b.x0, m);
+  const ey = clampSize(b.y1 - b.y0, m);
   const turned = m.rotation === 90 || m.rotation === 270;
   return {
     ...m,
     x: Math.round(((b.x0 + b.x1) / 2) * 2) / 2,
     y: Math.round(((b.y0 + b.y1) / 2) * 2) / 2,
     w: turned ? ey : ex, d: turned ? ex : ey,
-    z0: Math.max(0, Math.round(b.z0)), h: clampSize(b.z1 - b.z0),
+    z0: baseZ(b.z0, m), h: clampSize(b.z1 - b.z0, m),
   };
 }
 
@@ -167,16 +185,23 @@ export function massFromCorners(a, b, z0, h, existing = [], extra = {}) {
 }
 
 export function moveMass(m, dx = 0, dy = 0, dz = 0) {
-  return { ...m, x: m.x + dx, y: m.y + dy, z0: Math.max(0, m.z0 + dz) };
+  return { ...m, x: m.x + dx, y: m.y + dy, z0: isFacadeKind(m.facadeKind) ? m.z0 + dz : Math.max(0, m.z0 + dz) };
 }
 
 // Новые размеры (любые из w, d, h, z0); центр основания на месте.
 export function resizeMass(m, { w, d, h, z0 } = {}) {
   const out = { ...m };
-  if (num(w) > 0) out.w = clampSize(w);
-  if (num(d) > 0) out.d = clampSize(d);
-  if (num(h) > 0) out.h = clampSize(h);
-  if (num(z0) != null) out.z0 = Math.max(0, Math.round(num(z0)));
+  if (num(w) > 0) out.w = clampSize(w, m);
+  if (num(d) > 0) {
+    out.d = clampSize(d, m);
+    if (m.facadeKind) {
+      const half = (out.d - m.d) / 2;
+      if (m.rotation % 180 === 0) out.y += m.rotation === 0 ? half : -half;
+      else out.x += m.rotation === 90 ? -half : half;
+    }
+  }
+  if (num(h) > 0) out.h = clampSize(h, m);
+  if (num(z0) != null) out.z0 = baseZ(num(z0), m);
   return out;
 }
 
@@ -199,12 +224,13 @@ export function faceOf(axis, sign) {
 export function resizeFace(m, face, delta) {
   const b = massBox(m);
   const dd = Number(delta) || 0;
-  if (face === 'top') b.z1 = Math.max(b.z0 + MASS_MIN, b.z1 + dd);
-  else if (face === 'bottom') b.z0 = Math.max(0, Math.min(b.z1 - MASS_MIN, b.z0 - dd));
-  else if (face === 'px') b.x1 = Math.max(b.x0 + MASS_MIN, b.x1 + dd);
-  else if (face === 'nx') b.x0 = Math.min(b.x1 - MASS_MIN, b.x0 - dd);
-  else if (face === 'py') b.y1 = Math.max(b.y0 + MASS_MIN, b.y1 + dd);
-  else if (face === 'ny') b.y0 = Math.min(b.y1 - MASS_MIN, b.y0 - dd);
+  const min = massMinimum(m);
+  if (face === 'top') b.z1 = Math.max(b.z0 + min, b.z1 + dd);
+  else if (face === 'bottom') b.z0 = baseZ(Math.min(b.z1 - min, b.z0 - dd), m);
+  else if (face === 'px') b.x1 = Math.max(b.x0 + min, b.x1 + dd);
+  else if (face === 'nx') b.x0 = Math.min(b.x1 - min, b.x0 - dd);
+  else if (face === 'py') b.y1 = Math.max(b.y0 + min, b.y1 + dd);
+  else if (face === 'ny') b.y0 = Math.min(b.y1 - min, b.y0 - dd);
   else return { ...m };
   return massFromBox(m, b);
 }
@@ -221,7 +247,7 @@ export function faceSize(m, face) {
 export function setFaceSize(m, face, value) {
   const v = num(value);
   if (!(v > 0)) return null;
-  return resizeFace(m, face, clampSize(v) - faceSize(m, face));
+  return resizeFace(m, face, clampSize(v, m) - faceSize(m, face));
 }
 
 // Поворот на 90° по часовой вокруг центра основания.
@@ -434,6 +460,10 @@ export function floorsLabel(h, levelHeight = 3000) {
 // Копия со смещением (по x на ширину + 1000 мм, если не задано).
 export function copyMass(m, masses, offset = null) {
   const { ex } = massExtent(m);
-  const o = offset || { x: ex + 1000, y: 0 };
-  return { ...m, id: newId(), name: nextMassName(masses), x: m.x + o.x, y: m.y + o.y };
+  const alongside = m.rotation % 180 === 90 ? { x: 0, y: m.w } : { x: m.w, y: 0 };
+  const o = offset || (m.facadeKind ? alongside : { x: ex + 1000, y: 0 });
+  const copy = { ...m, id: newId(), name: m.facadeKind ? m.name : nextMassName(masses), x: m.x + o.x, y: m.y + o.y };
+  delete copy.facadeHost;
+  delete copy.canopyId;
+  return copy;
 }

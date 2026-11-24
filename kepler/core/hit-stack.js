@@ -1,6 +1,7 @@
 // Стопка объектов под точкой плана — без DOM. Порядок соответствует
 // отрисовке: мебель, проёмы, стены, затем помещения сверху вниз.
 
+import { levelWindowOpenings } from './spanning-windows.js';
 import { isOpenRoom, isShaft } from './catalog.js';
 import { isFixedSizeComp, pointInComposite } from './composite.js';
 import { itemRect } from './furnish.js';
@@ -37,9 +38,10 @@ export function planHitStack(project, walls, scale, point) {
     const item = project.items[i];
     if (itemContains(item, point)) hits.push({ type: 'item', id: item.id, entity: item });
   }
-  for (let i = project.openings.length - 1; i >= 0; i -= 1) {
-    const opening = project.openings[i];
-    if (openingContains(project, walls, opening, point, scale)) {
+  const openings = levelWindowOpenings(project, walls);
+  for (let i = openings.length - 1; i >= 0; i -= 1) {
+    const opening = openings[i];
+    if (openingContains(project, walls, opening, point, scale) && (!opening.corner || !hits.some((hit) => hit.id === opening.id))) {
       hits.push({ type: 'opening', id: opening.id, entity: opening });
     }
   }

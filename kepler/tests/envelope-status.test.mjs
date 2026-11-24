@@ -154,3 +154,18 @@ test('контракт содержит только известные ключ
   assert.deepEqual(Object.keys(result), ENVELOPE_STATUS_KEYS);
   assert.ok(Object.values(result).every((status) => ENVELOPE_STATUSES.includes(status)));
 });
+
+test('удаление единственной видимой крыши меняет статусы кровли и водостока', () => {
+  const { project } = house();
+  const upper = createLevel('2 этаж', 3000, 3000, 'L2');
+  const bedroom = createRoom('bedroom', 0, 0, 5000, 4000);
+  project.levels.push(upper);
+  upper.rooms.push(bedroom);
+  project.envelope.roof.drainage = 'external';
+  bedroom.linkedRoof = false;
+  assert.equal(deriveEnvelopeStatus(project).roof, 'attention');
+  assert.equal(deriveEnvelopeStatus(project).drainage, 'unknown');
+  delete bedroom.linkedRoof;
+  assert.equal(deriveEnvelopeStatus(project).roof, 'checked');
+  assert.equal(deriveEnvelopeStatus(project).drainage, 'checked');
+});

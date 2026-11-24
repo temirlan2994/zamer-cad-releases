@@ -116,8 +116,8 @@ test('явная крыша и сохранённый разрез возвра�
   assert.equal(result.sections.availableCount, 1);
   assert.ok(result.sections.records[0].cutCount > 0);
   assert.ok(result.sections.records[0].widthMm > 0);
-  assert.ok(result.facades.records.every((facade) => facade.roofRepresentation === 'explicit-plus-linked-automatic'));
-  assert.ok(result.facts.some((item) => item.id === 'roof:coverage-linked'));
+  assert.ok(result.facades.records.every((facade) => facade.roofRepresentation === 'explicit'));
+  assert.equal(result.roofs.linkedCount, 0);
 });
 
 test('лёгкий режим регистрирует виды, но строит их только после открытия', () => {
@@ -193,4 +193,32 @@ test('битая явная крыша фиксируется как конфл�
   assert.equal(result.roofs.invalidCount, 1);
   assert.ok(result.conflicts.some((item) => item.id === `roof:invalid:${roof.id}`));
   assert.equal(result.facades.records.length, 4);
+});
+
+test('сводка считает открытую площадь обоих этажей и самостоятельную крышу в том же доме', () => {
+  const { project } = oneStorey();
+  project.envelope.roof.overhang = 0;
+  const upper = createLevel('2 этаж', 3000, 3000, 'L2');
+  const bedroom = createRoom('bedroom', 2500, 0, 2500, 4000);
+  upper.rooms.push(bedroom);
+  project.levels.push(upper);
+  const detached = createRoom('storage', 15000, 0, 2000, 2000);
+  project.rooms.push(detached);
+  const manual = roofFromRooms(project, 'L1', [detached.id]);
+  project.roofs = [manual];
+
+  const analyze = () => analyzeHomeEnvelope(project, { inspectViewGeometry: false });
+  const summary = analyze();
+  assert.equal(summary.roofs.explicitCount, 1);
+  assert.equal(summary.roofs.linkedCount, 2);
+  const linked = summary.roofs.records.filter((roof) => roof.status === 'linked');
+  assert.deepEqual(linked.map((roof) => [roof.levelId, roof.areaM2]), [['L1', 11.25], ['L2', 13.5]]);
+  assert.equal(summary.roofs.totalAreaM2, 24.75 + summary.roofs.records.find((roof) => roof.id === manual.id).areaM2);
+  assert.ok(summary.facades.records.every((f) => f.roofRepresentation === 'explicit-plus-linked-automatic'));
+
+  Object.assign(bedroom, { x: 0, w: 5000, linkedRoof: false });
+  const updated = analyze();
+  assert.deepEqual(updated.roofs.records.map((roof) => roof.id), [manual.id]);
+  assert.equal(updated.roofs.autoLinked, false);
+  assert.ok(updated.facades.records.every((f) => f.roofRepresentation === 'explicit'));
 });

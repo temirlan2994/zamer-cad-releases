@@ -42,6 +42,7 @@ describe('3D: мебель и выбор объектов', () => {
       s.project.site.landscape = { objects: [createLandscapeObject('tree-thuja', p.x, p.y)] };
     });
     await app.page.click('#view3dBtn');
+    await with3dLayers(app.page, () => app.page.uncheck('#v3Roof'));
     hits = await scan(app.page);
   });
   after(async () => { await app?.close(); });

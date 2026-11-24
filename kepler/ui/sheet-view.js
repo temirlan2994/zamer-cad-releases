@@ -25,7 +25,7 @@ import {
 } from '../core/views.js';
 import { saveFile } from './cloud.js';
 import { el, escapeHtml, toast } from './dom.js';
-import { handleExport, safeFileName } from './files.js';
+import { safeFileName } from './files.js';
 import {
   SHEET, SHEET_PX, autoSheetCount, buildOneSheetPdf, loadSheetImages, renderSheet, sheetKey, sheetList, sheetNumber, sheetTitle,
 } from './sheet.js';
@@ -35,7 +35,7 @@ import {
 } from './sheet-viewports.js';
 import { sheetStylePref } from './landscape-style.js';
 import { closeSheets, isPhone } from './mobile.js';
-import { close3d, is3dOpen } from './view3d.js';
+import { camera3dSnapshot, close3d, is3dOpen } from './view3d.js';
 import { closeElevation } from './elevation-view.js';
 import { closeSection, openSectionId } from './landscape-section.js';
 import { PROJECT_NAME_EVENT } from './project-name.js';
@@ -141,14 +141,17 @@ export function downloadSheetPng(key) {
 }
 
 // PDF одного листа.
-export function downloadSheetPdf(key) {
+export async function downloadSheetPdf(key) {
   const found = findSheet(key);
   if (!found) return;
-  const name = safeFileName();
-  buildOneSheetPdf(state.project, key).then((pdf) => {
-    if (pdf) saveFile(`${name}-лист-${found.no}.pdf`, pdf, 'application/pdf');
-  });
-  toast('PDF: этот лист');
+  const number = String(found.no).replace(/[^\p{L}\p{N}._ -]/gu, '-');
+  const filename = `${safeFileName()}-лист-${number}.pdf`;
+  try {
+    const pdf = await buildOneSheetPdf(state.project, key);
+    if (pdf && await saveFile(filename, pdf, 'application/pdf')) toast(`PDF листа ${found.no} готов`);
+  } catch {
+    toast('Не удалось подготовить PDF листа. Попробуйте ещё раз.', true);
+  }
 }
 
 // Номер записи истории — штамп меняется после каждой правки, даже когда
@@ -185,6 +188,17 @@ document.addEventListener(PROJECT_NAME_EVENT, (event) => {
   projectNameTimer = setTimeout(refreshSheetView, 150);
 });
 
+const sheetActions = `
+  <button type="button" class="primary" id="sheetViewPdf" aria-label="Скачать PDF этого листа">PDF этого листа</button>
+  <button type="button" id="sheetViewPng" aria-label="Скачать PNG этого листа">PNG</button>
+  <button type="button" id="sheetViewClose">✕ Закрыть лист</button>`;
+
+function bindSheetActions(box, key) {
+  box.querySelector('#sheetViewPdf').addEventListener('click', () => downloadSheetPdf(key));
+  box.querySelector('#sheetViewPng').addEventListener('click', () => downloadSheetPng(key));
+  box.querySelector('#sheetViewClose').addEventListener('click', () => closeSheet({ restoreView: true }));
+}
+
 function renderSheetView() {
   const box = el('sheetView');
   const key = state.sheetOpen;
@@ -201,14 +215,10 @@ function renderSheetView() {
       <b class="sheet-view-title" id="sheetViewTitle">${escapeHtml(title)}</b>
       <span class="sheet-view-meta" id="sheetViewMeta">A3 · ${SHEET.w}×${SHEET.h} мм</span>
       <span class="sheet-view-gap"></span>
-      <button type="button" class="primary" id="sheetViewPdf">Скачать PDF</button>
-      <button type="button" id="sheetViewPng">PNG</button>
-      <button type="button" id="sheetViewClose">✕ Закрыть лист</button>
+      ${sheetActions}
     </div>
     <div class="sheet-view-body" id="sheetViewBody"><p class="hint">Готовлю лист…</p></div>`;
-  box.querySelector('#sheetViewPdf').addEventListener('click', () => handleExport('sheet-pdf'));
-  box.querySelector('#sheetViewPng').addEventListener('click', () => downloadSheetPng(key));
-  box.querySelector('#sheetViewClose').addEventListener('click', () => closeSheet({ restoreView: true }));
+  bindSheetActions(box, key);
   const stamp = stampOf(key);
   const put = () => {
     const body = box.querySelector('#sheetViewBody');
@@ -257,18 +267,14 @@ function renderEditor(box, key, found) {
       <span class="sheet-view-meta" id="sheetViewMeta"></span>
       <span class="sheet-view-gap"></span>
       <button type="button" id="sheetViewFit" title="Весь лист на экране">Вписать</button>
-      <button type="button" class="primary" id="sheetViewPdf">Скачать PDF</button>
-      <button type="button" id="sheetViewPng">PNG</button>
-      <button type="button" id="sheetViewClose">✕ Закрыть лист</button>
+      ${sheetActions}
     </div>
     <div class="sheet-view-body sheet-edit" id="sheetViewBody">
       <canvas id="sheetCanvas" tabindex="0" aria-label="Лист: перетащите вид из «Видов»"></canvas>
       <p class="sheet-edit-hint" id="sheetEditHint" hidden>Перетащите вид из вкладки «Виды» на лист или нажмите «На лист…» в «Свойствах» вида.</p>
     </div>`;
     box.querySelector('#sheetViewFit').addEventListener('click', () => { ed = null; drawEditor(); });
-    box.querySelector('#sheetViewPdf').addEventListener('click', () => handleExport('sheet-pdf'));
-    box.querySelector('#sheetViewPng').addEventListener('click', () => downloadSheetPng(key));
-    box.querySelector('#sheetViewClose').addEventListener('click', () => closeSheet({ restoreView: true }));
+    bindSheetActions(box, key);
     bindEditor(box.querySelector('#sheetCanvas'));
     resizeObs?.disconnect();
     resizeObs = typeof ResizeObserver === 'function' ? new ResizeObserver(() => drawEditor()) : null;
@@ -606,14 +612,15 @@ export function placeViewOnSheet(sheetId, viewId, at = null) {
   const sheet = findSheetById(project, sheetId);
   const desc = viewById(project, viewId);
   if (!sheet || !desc) { toast('Вид не найден', true); return null; }
-  const scale = defaultViewportScale(project, viewId, sheet);
+  const cam = viewId === '3d' ? normalizeCam(camera3dSnapshot({ capturedOnly: true })) : null;
+  const scale = defaultViewportScale(project, viewId, sheet, cam);
   let vp = null;
   mutate(() => {
-    const c = at ? fitInFrame(project, sheet, viewId, scale, at.x, at.y) : freeSpot(project, sheet, viewId, scale);
-    vp = placeView(state.project, sheetId, viewId, { x: snapMm(c.x), y: snapMm(c.y), scale }).viewport || null;
+    const c = at ? fitInFrame(project, sheet, viewId, scale, at.x, at.y, cam) : freeSpot(project, sheet, viewId, scale, cam);
+    vp = placeView(state.project, sheetId, viewId, { x: snapMm(c.x), y: snapMm(c.y), scale, cam }).viewport || null;
     if (vp) state.sheetVp = vp.id;
   });
-  if (vp) toast(`${desc.name} — на листе ${sheet.no}, М 1:${scale}`);
+  if (vp) toast(`${desc.name} — на листе ${sheet.no}${cam?.projection === 'perspective' ? '' : `, М 1:${scale}`}`);
   return vp;
 }
 

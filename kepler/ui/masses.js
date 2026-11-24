@@ -9,6 +9,8 @@ import {
   MASS_H_DEFAULT, MASS_MIN, allMasses, copyMass, createMass, createMassVoid, floorsLabel, massExtent, massSnapCoords, massStats, massStep,
   resizeMass, rotateMass90, snapValue, solidMasses, stackMass, voidMasses,
 } from '../core/masses.js';
+import { fitFacadeBand, fitSoffitLight, updateFacadeAttachment } from '../core/facade.js';
+import { FACADE_ELEMENTS } from '../data/facade-catalog.js';
 import { massVoidCutsProject } from '../core/mesh3d.js';
 import { wallSnapCoords } from '../core/walls.js';
 import { escapeHtml, toast } from './dom.js';
@@ -78,7 +80,7 @@ export function updateMass(id, fn) {
   let removed = false;
   const wasVoid = massIsVoid(id);
   mutate(() => {
-    next = fn(m);
+    next = updateFacadeAttachment(state.project, m, fn(m));
     const geometryChanged = massGeometryKey(next) !== massGeometryKey(m);
     if (wasVoid) {
       if (!geometryChanged || massVoidCutsProject(state.project, next)) state.project.massVoids = massVoids().map((x) => (x.id === id ? next : x));
@@ -126,7 +128,7 @@ export function deleteMass(id) {
 export function duplicateMass(id, offset = null) {
   const m = massById(id);
   if (!m) return null;
-  if (!massIsVoid(id)) return addMass(copyMass(m, solidMassList(), offset));
+  if (!massIsVoid(id)) return addMass(updateFacadeAttachment(state.project, m, copyMass(m, solidMassList(), offset)));
   const { ex } = massExtent(m);
   const o = offset || { x: ex + 1000, y: 0 };
   return addMass(createMassVoid({ ...m, id: undefined, name: `${m.name} копия`, x: m.x + o.x, y: m.y + o.y }, massVoids()));
@@ -216,15 +218,65 @@ export function massPlanClick(plan, event) {
 export function replaceMassLive(id, next) {
   if (massIsVoid(id)) state.project.massVoids = massVoids().map((m) => (m.id === id ? next : m));
   else state.project.masses = solidMassList().map((m) => (m.id === id ? next : m));
+  if (next.facadeKind === 'canopy') {
+    for (const light of state.project.masses) if (light.canopyId === next.id) fitSoffitLight(light, next);
+  }
 }
 
 // ---------------------------------------------------------------- «Свойства»
 
-const numField = (id, label, value, step = 100) => `
+const numField = (id, label, value, step = 100, min = 0) => `
   <label class="prop-field"><span>${label}</span>
-    <input id="${id}" type="number" step="${step}" min="0" inputmode="numeric" value="${Math.round(value)}"></label>`;
+    <input id="${id}" type="number" step="${step}" ${min == null ? '' : `min="${min}"`} inputmode="decimal" value="${Math.round(value)}"></label>`;
+
+function renderFacadeProps(panel, m) {
+  const preset = FACADE_ELEMENTS[m.facadeKind];
+  panel.innerHTML = `
+    <h2>${escapeHtml(m.name)}</h2>
+    <div class="prop-block" id="massProps">
+      <label class="prop-field"><span>${m.facadeKind === 'light' ? 'Цвет света' : 'Отделка'}</span>
+        <select id="facadeFinish">${Object.entries(preset.finishes).map(([name, color]) =>
+          `<option value="${color}" ${m.color === color ? 'selected' : ''}>${name}</option>`).join('')}</select>
+      </label>
+      <div class="prop-grid">
+        ${numField('massW', 'Ширина, мм', m.w, 1, 12)}
+        ${numField('massD', m.facadeKind === 'post' ? 'Глубина стойки, мм' : 'Вынос от стены, мм', m.d, 1, 12)}
+        ${numField('massH', m.facadeKind === 'decking' ? 'Толщина настила, мм' : 'Высота, мм', m.h, 1, 12)}
+        ${numField('massZ0', 'Отметка низа, мм', m.z0, 1, null)}
+      </div>
+      ${m.facadeKind === 'band' && m.facadeHost && !Number.isFinite(m.facadeHost.bandAnchor)
+        ? '<button type="button" id="facadeFitBand">Растянуть от угла до угла</button>' : ''}
+      ${m.facadeHost || m.canopyId ? `<div class="prop-row"><span>${m.canopyId ? 'Под кромкой навеса' : Number.isFinite(m.facadeHost?.bandAnchor) ? 'От угла до угла' : 'Связь со стеной'}</span><button type="button" id="facadeDetach">Отвязать</button></div>` : ''}
+      <details><summary>Положение на плане</summary><div class="prop-grid">
+        ${numField('facadeX', 'Центр X, мм', m.x, 1, null)}
+        ${numField('facadeY', 'Центр Y, мм', m.y, 1, null)}
+      </div></details>
+      <div class="prop-grid"><button type="button" id="massCopy">Копировать рядом</button>
+        <button type="button" id="massDelete" class="danger">Удалить</button></div>
+    </div>`;
+  panel.querySelector('#facadeFitBand')?.addEventListener('click', () => mutate(() => {
+    if (!fitFacadeBand(state.project, m, m.facadeHost.along / m.facadeHost.span)) toast('В этом месте нет непрерывной наружной стены', true);
+  }));
+  panel.querySelector('#facadeDetach')?.addEventListener('click', () => updateMass(m.id, (x) => {
+    const next = { ...x };
+    delete next.facadeHost;
+    delete next.canopyId;
+    return next;
+  }));
+  panel.querySelector('#facadeFinish').addEventListener('change', (e) => updateMass(m.id, (x) => ({ ...x, color: e.target.value })));
+  for (const [id, key] of Object.entries({ massW: 'w', massD: 'd', massH: 'h', massZ0: 'z0', facadeX: 'x', facadeY: 'y' })) {
+    panel.querySelector('#' + id).addEventListener('change', (e) => {
+      const v = e.target.valueAsNumber;
+      if (!Number.isFinite(v) || !e.target.validity.valid) { e.target.value = m[key]; return; }
+      updateMass(m.id, (x) => key === 'x' || key === 'y' ? { ...x, [key]: v } : resizeMass(x, { [key]: v }));
+    });
+  }
+  panel.querySelector('#massCopy').addEventListener('click', () => duplicateMass(m.id));
+  panel.querySelector('#massDelete').addEventListener('click', () => deleteMass(m.id));
+}
 
 export function renderMassProps(panel, m) {
+  if (FACADE_ELEMENTS[m.facadeKind]) { renderFacadeProps(panel, m); return; }
   const st = massStats(m, massLevelHeight());
   const isVoid = massIsVoid(m.id);
   panel.innerHTML = `

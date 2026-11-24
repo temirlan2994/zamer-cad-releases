@@ -169,6 +169,8 @@ const RAW = [
     variants: [v('wood', 'Дерево'), v('metal', 'Металл', ['#6c6f73', '#595c60', '#8b8e92'])], keywords: 'навес' },
   { kind: 'bbq-zone', layer: 'ground', title: 'Зона барбекю', cat: 'site', group: 'Отдых', shape: 'rect', w: 4000, h: 3000, min: [2500, 2000], max: [10000, 8000], height: 900, cover: true, look: 'bbq', colors: 'tiles',
     variants: [v('tiles', 'Плитка')], keywords: 'гриль мангал стол' },
+  { kind: 'sunken-lounge', title: 'Лаунж у воды', cat: 'site', group: 'Отдых', shape: 'circle', w: 5200, min: 3600, max: 12000, height: 800, layer: 'low', cover: true, look: 'sunken-lounge', colors: 'stone',
+    variants: [v('stone', 'Камень'), v('teak', 'Тик', LS_COLORS.wood)], keywords: 'круглая утопленная лаунж зона диван скамья чаша пруд остров терраса lounge' },
   { kind: 'firepit', title: 'Яма для костра со скамьёй', cat: 'site', group: 'Отдых', shape: 'circle', w: 5200, min: 2800, max: 9000, height: 450, cover: true, look: 'firepit', colors: 'gravel',
     variants: [v('bench', 'Круговая скамья'), v('stones', 'Каменное кольцо')], keywords: 'костёр очаг огонь' },
   { kind: 'grill', title: 'Мангал', cat: 'site', group: 'Отдых', shape: 'rect', w: 1000, h: 500, min: [500, 300], max: [3000, 1200], height: 900, look: 'grill', colors: 'metal',
@@ -179,6 +181,8 @@ const RAW = [
     variants: [v('square', 'Квадратное'), v('round', 'Круглое')], keywords: 'спа купель' },
   { kind: 'pond', title: 'Декоративный пруд', cat: 'site', group: 'Вода', shape: 'rect', round: true, w: 4000, h: 2600, min: [1000, 800], max: [20000, 15000], height: 0, cover: true, look: 'pond', colors: 'pond',
     variants: [v('lilies', 'С кувшинками'), v('mirror', 'Зеркальный')], keywords: 'вода' },
+  { kind: 'water-curtain', title: 'Водная завеса', cat: 'site', group: 'Вода', shape: 'rect', w: 3200, h: 900, min: [800, 450], max: [15000, 3500], height: 2700, tall: true, look: 'water-curtain', colors: 'stone',
+    variants: [v('graphite', 'Графит', ['#545854', '#404540', '#757970']), v('limestone', 'Известняк', ['#c6bbab', '#a69a88', '#e2d8c6'])], keywords: 'водопад каскад камень завеса водная стена чаша' },
   { kind: 'fountain', title: 'Фонтан / водная чаша', cat: 'site', group: 'Вода', shape: 'circle', w: 1600, min: 600, max: 5000, height: 900, look: 'fountain', colors: 'water',
     variants: [v('bowl', 'Чаша')], keywords: 'вода' },
   { kind: 'sandbox', title: 'Песочница', cat: 'site', group: 'Дети', shape: 'rect', w: 2000, h: 2000, min: [1000, 1000], max: [5000, 5000], height: 300, cover: true, look: 'sandbox', colors: 'sand',
@@ -224,7 +228,7 @@ const RAW = [
   // Наружная лестница: w — общая ширина (марш + борта), h — длина в плане
   // (ступени × проступь), height — высота подъёма; «вверх» — к −Y в осях
   // объекта. meta: steps (0 — авто по подступенку ~150), tread, cheeks, cheekW.
-  { kind: 'stairs-out', layer: 'low', title: 'Лестница наружная', cat: 'site', group: 'Лестницы и бордюры', shape: 'rect', w: 1500, h: 1500, min: [500, 200], max: [12000, 15000], height: 750, cover: true, look: 'stairs', colors: 'concrete',
+  { kind: 'stairs-out', layer: 'low', title: 'Лестница наружная', cat: 'site', group: 'Лестницы и бордюры', shape: 'rect', w: 1500, h: 1500, min: [500, 200], max: [12000, 48000], height: 750, cover: true, look: 'stairs', colors: 'concrete',
     variants: [v('concrete', 'Бетон'), v('stone', 'Камень', ['#cfcac0', '#a39d90', '#e0dcd3']), v('wood', 'Дерево', ['#b39b82', '#8d7562', '#c8b39c'])],
     meta: { steps: 0, tread: 300, cheeks: false, cheekW: 150 }, keywords: 'ступени лестница терраса подъём марш' },
   // Бордюр (лента по линии): width — ширина, height — над землёй.
@@ -260,7 +264,7 @@ const RAW = [
 // Поверхность для баланса территории (ТЭП): green — озеленение (газон,
 // цветники, проекции крон), hard — твёрдые покрытия, water — вода, null —
 // не покрытие (малые формы, ограждения).
-const WATER_KINDS = new Set(['pool', 'jacuzzi', 'pond', 'fountain', 'pond-area', 'pool-area']);
+const WATER_KINDS = new Set(['pool', 'jacuzzi', 'pond', 'fountain', 'water-curtain', 'pond-area', 'pool-area']);
 // Конструктивы (короба, лестница, бордюр) — в группе «Малые формы».
 export const PLANTER_KINDS = new Set(['planter-box', 'planter-area']);
 const BUILT_KINDS = new Set([...PLANTER_KINDS, 'stairs-out', 'curb', 'retaining-wall']);
@@ -362,6 +366,14 @@ export const isPathShape = (def) => def?.shape === 'line' || def?.shape === 'pol
 export const LINE_WIDTH_MIN = 50;
 export const LINE_WIDTH_MAX = 10000;
 
+// Продольный бортик чаши, выпуск воды и ширина завесы в локальных осях.
+export function waterCurtainParts(o) {
+  const rim = Math.min(140, o.h * 0.12, o.w * 0.09);
+  const backDepth = Math.min(220, o.h * 0.24);
+  const lipDepth = backDepth + Math.min(160, o.h * 0.14);
+  return { rim, backDepth, lipDepth, streamWidth: o.w - 2 * rim };
+}
+
 export function createLandscapeObject(kind, x, y, opts = {}) {
   const def = landscapeDef(kind);
   if (!def) throw new Error(`Неизвестный объект ландшафта: ${kind}`);
@@ -375,7 +387,7 @@ export function createLandscapeObject(kind, x, y, opts = {}) {
     rotation: normDeg(opts.rotation || 0),
     w: opts.w ?? def.w,
     h: opts.h ?? def.h,
-    height: opts.height ?? def.height,
+    height: kind === 'sunken-lounge' ? clampNum(opts.height, 300, 2000, def.height) : opts.height ?? def.height,
     variant: opts.variant || def.variants[0].id,
     meta: { ...(def.meta || {}), ...(opts.meta || {}) },
   };
@@ -390,6 +402,7 @@ export function createLandscapeObject(kind, x, y, opts = {}) {
   const curb = CURB_HOSTS.has(kind) ? normalizeCurb(opts.curb) : null;
   if (curb) obj.curb = curb;
   applyElev(obj, opts);
+  if (kind === 'stairs-out' && stairsDrop(obj) !== null) applyStairsDrop(obj);
   return syncRadius(clampSize(obj, def), def);
 }
 
@@ -424,7 +437,23 @@ function createCallout(def, x, y, opts) {
 // Необязательное поле elev — отметка, мм, относительно нуля участка (верх
 // покрытия; у лестницы и стенки — низ). У лестницы ещё elevTo — отметка
 // верха. Нет поля — объект на земле, как раньше.
-export const ELEV_KINDS = new Set(['paving-area', 'gravel-area', 'deck-area', 'lawn-area', 'path', 'stairs-out', 'retaining-wall']);
+export const PLATFORM_KINDS = new Set(['sunken-lounge', 'pad', 'pad-round', 'terrace-deck', 'deck-area', 'paving-area', 'gravel-area']);
+export const ELEV_KINDS = new Set([...PLATFORM_KINDS, 'lawn-area', 'path', 'stairs-out', 'retaining-wall']);
+
+// Ground at the platform centre is relative to the site datum, in millimetres.
+export function platformTop(o, ground = 0) {
+  if (Number.isFinite(o.elev)) return o.elev;
+  if (o.kind === 'sunken-lounge') return ground - 600;
+  return ground + (PLATFORM_KINDS.has(o.kind) ? Math.max(0, o.height ?? landscapeDef(o.kind).height) : 0);
+}
+export function loungeEntranceLevel(o, objects, groundAt) {
+  if (Number.isFinite(o.elevTo)) return o.elevTo;
+  const p = toWorld(o, 0, o.w / 2 + 30);
+  const surfaces = objects.filter((other) => other !== o && other.kind !== 'sunken-lounge'
+    && PLATFORM_KINDS.has(other.kind) && pointInObject(other, p));
+  return surfaces.length ? Math.max(...surfaces.map((other) => platformTop(other, groundAt(other)))) : groundAt(p);
+}
+
 export const ELEV_LIMIT = 20000;
 
 export function normalizeElev(val) {
@@ -437,7 +466,7 @@ function applyElev(obj, opts) {
   if (!ELEV_KINDS.has(obj.kind)) return;
   const e = normalizeElev(opts.elev);
   if (e !== null) obj.elev = e;
-  if (obj.kind === 'stairs-out') {
+  if (obj.kind === 'stairs-out' || obj.kind === 'sunken-lounge') {
     const t = normalizeElev(opts.elevTo);
     if (t !== null) obj.elevTo = t;
   }
@@ -454,17 +483,18 @@ export function fmtElev(mm) {
 export const elevOf = (o) => (Number.isFinite(o?.elev) ? o.elev : 0);
 
 // Перепад лестницы между отметками низа и верха (null — не задан).
+export const MAX_STAIR_RISE = 6000;
 export function stairsDrop(o) {
   if (!Number.isFinite(o?.elev) || !Number.isFinite(o?.elevTo)) return null;
   const d = o.elevTo - o.elev;
-  return d > 0 ? d : null;
+  return d > 0 && d <= MAX_STAIR_RISE ? d : null;
 }
 
 // «Взять перепад»: высота подъёма = отметка верха − отметка низа.
 export function applyStairsDrop(o) {
   const d = stairsDrop(o);
   if (d === null) return false;
-  o.height = Math.min(6000, d);
+  o.height = d;
   syncStairs(o);
   return true;
 }
@@ -758,7 +788,7 @@ export function translateObject(o, dx, dy) {
 export function screenPlaceRotation(kind, viewRad = 0, extra = 0) {
   const def = landscapeDef(kind);
   if (!def || isPathShape(def)) return 0;
-  if (def.shape === 'point' || def.shape === 'circle') return normDeg(extra);
+  if (def.shape === 'point' || (def.shape === 'circle' && kind !== 'sunken-lounge')) return normDeg(extra);
   const view = Math.round(((-(viewRad || 0) * 180) / Math.PI) * 100) / 100;
   return normDeg(view + (extra || 0));
 }

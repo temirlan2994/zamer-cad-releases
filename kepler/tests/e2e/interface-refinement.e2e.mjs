@@ -390,3 +390,62 @@ describe('компактная аналитика на телефоне', () => 
     assert.deepEqual(app.errors, []);
   });
 });
+
+describe('свойства поэтажной аналитики', () => {
+  it('показывает действия выбранной карты и сохраняет режим солнца при переходе на другой этаж', async () => {
+    const app = await startApp({ viewSections: 'default' });
+    const { page } = app;
+    try {
+      await page.click('[data-template="two-storey"]');
+      const [first, second] = await page.evaluate(() => window.__kepler.state.project.levels.map((l) => l.id));
+      await page.click('#propsTabSheets');
+      await pickWorkspaceView(page, 'analytics', `analysis:light:${first}`);
+      assert.equal(await page.locator('#propsTabMain').getAttribute('aria-selected'), 'true');
+      assert.equal(await page.locator('#projectSection').count(), 0);
+      await page.getByLabel('Карта всех помещений').selectOption('direct');
+      await page.click(`#levelBar [data-level="${second}"]`);
+      assert.match(await page.innerText('#solarLegend'), /Прямое солнце · все помещения/);
+      assert.equal(await page.getByLabel('Карта всех помещений').inputValue(), 'direct');
+      await page.getByRole('button', { name: 'Дата, координаты и север' }).click();
+      assert.ok(await page.locator('[data-analysis-mission-panel="location"]').isVisible());
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => document.activeElement?.dataset.floorMission === 'location');
+      for (const [type, name, mission] of [
+        ['layout', 'Сценарии семьи', 'scenarios'],
+        ['circulation', 'Ширина прохода', 'circulation-check'],
+        ['engineering', 'Мокрые зоны', 'engineering-wet'],
+      ]) {
+        await pickWorkspaceView(page, 'analytics', `analysis:${type}:${second}`);
+        await page.locator('#propsBody').getByRole('button', { name }).click();
+        assert.ok(await page.locator(`[data-analysis-mission-panel="${mission}"]`).isVisible());
+        await page.click('#projectRouteClose');
+      }
+      await pickWorkspaceView(page, 'analytics', `analysis:ergonomics:${second}`);
+      await page.getByLabel('Карта проходимости', { exact: true }).check();
+      assert.equal(await page.evaluate(() => window.__kepler.state.ergo.heat), true);
+      await pickWorkspaceView(page, 'plans', `plan:${second}`);
+      assert.ok(await page.locator('#projectSection').isVisible());
+      assert.deepEqual(app.errors, []);
+    } finally { await app.close(); }
+  });
+
+  it('на телефоне показывает управление картой пустого этажа и возвращает к черчению', async () => {
+    const app = await startApp({ mobile: true, viewSections: 'default' });
+    const { page } = app;
+    try {
+      await page.click('#startNew');
+      const id = await page.evaluate(() => window.__kepler.state.project.activeLevel);
+      await pickWorkspaceView(page, 'analytics', `analysis:light:${id}`);
+      assert.match(await page.innerText('#solarLegend'), /Добавьте помещение/);
+      await page.tap('#mobileBar [data-sheet="props"]');
+      assert.match(await page.innerText('#mobilePropsTitle'), /Освещение/);
+      await page.getByLabel('Карта всех помещений').selectOption('direct');
+      assert.ok(await page.getByRole('button', { name: 'Перейти на план этажа' }).isVisible());
+      await page.getByRole('button', { name: 'Перейти на план этажа' }).tap();
+      assert.ok(await page.locator('#solarLegend').isHidden());
+      assert.equal(await page.locator('#mobileBar [data-sheet="props"]').getAttribute('aria-pressed'), 'false');
+      assert.equal(await page.evaluate(() => window.__kepler.state.project.activeLevel), id);
+      assert.deepEqual(app.errors, []);
+    } finally { await app.close(); }
+  });
+});

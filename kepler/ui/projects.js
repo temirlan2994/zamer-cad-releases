@@ -73,6 +73,8 @@ let authAction = false;
 let projectActionBusy = false;
 const expanded = new Set();
 let startProjectsRequest = 0;
+const START_PAGE_SIZE = 6;
+let startVisibleCount = START_PAGE_SIZE;
 let activeEditor = null; // { pid, lease, unsubscribe, timer, lastHeartbeat }
 let handoffBusy = false;
 let pendingLeaseFlow = null;
@@ -203,7 +205,8 @@ async function upgradeProjectThumbnail(target, project) {
   if (backend === target) {
     const current = projects.find((candidate) => candidate.id === project.id);
     if (current) current.preview = preview;
-    if (!el('startProjectsView').hidden && !el('startScreen').hidden) renderStartProjects(projects);
+    const cardPreview = el('startRecentProjects').querySelector(`[data-pid="${CSS.escape(project.id)}"] .startup-project-preview`);
+    if (cardPreview) cardPreview.innerHTML = projectPreviewHtml(preview, latestStats(project));
   }
   return true;
 }
@@ -294,7 +297,7 @@ function unlockEditor() {
   state.editLockReason = '';
   lostEditor = null;
   hideEditLock();
-  if (el('startScreen').hidden) document.querySelector('.app')?.removeAttribute('inert');
+  if (el('startScreen').hidden && !isProjectsOpen()) document.querySelector('.app')?.removeAttribute('inert');
 }
 
 function clearPendingFor(pid) {
@@ -662,6 +665,8 @@ function watch() {
   stopWatching();
   if (!backend || !isProjectsOpen()) return;
   const fail = (error) => {
+    el('projectFilter').hidden = true;
+    el('projectSearchStatus').textContent = '';
     el('projectsList').innerHTML = `<p class="hint">Не удалось загрузить: ${escapeHtml(projectErrorText(error))}</p>`;
   };
   if (tab === 'mine') {
@@ -691,13 +696,59 @@ function latestStats(project) {
   return project.draftStats || project.versions?.[0]?.stats || null;
 }
 
+function shownProjectName(project) {
+  return project.id && project.id === state.pid ? currentProjectName() : project.name || 'Без названия';
+}
+
+function searchText(value) {
+  return String(value ?? '').normalize('NFKC').toLocaleLowerCase('ru').replaceAll('ё', 'е').trim();
+}
+
+function matchingProjects(list, query) {
+  const words = searchText(query).split(/\s+/).filter(Boolean);
+  if (!words.length) return list;
+  return list.filter((project) => {
+    const name = searchText(shownProjectName(project));
+    return words.every((word) => name.includes(word));
+  });
+}
+
+function bindProjectSearch(input, clear, update) {
+  const apply = () => {
+    clear.hidden = !input.value;
+    update();
+  };
+  const reset = () => {
+    input.value = '';
+    apply();
+    input.focus();
+  };
+  input.addEventListener('input', apply);
+  clear.addEventListener('click', reset);
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !input.value || event.isComposing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    reset();
+  });
+}
+
 function renderStartProjects(list) {
   const section = el('startRecentSection');
   const box = el('startRecentProjects');
   const status = el('startRecentStatus');
-  const recent = list.slice(0, 6);
-  section.hidden = recent.length === 0;
-  status.textContent = recent.length ? `${recent.length} последних` : '';
+  const query = el('startProjectSearch').value;
+  const matches = matchingProjects(list, query);
+  const recent = matches.slice(0, startVisibleCount);
+  section.hidden = list.length === 0;
+  el('startExamplesSection').hidden = Boolean(query.trim()) && list.length > 0;
+  el('startProjectFilter').hidden = list.length < 2 && !query;
+  const more = el('startProjectMore');
+  more.hidden = recent.length >= matches.length;
+  more.textContent = `Показать ещё (${Math.min(START_PAGE_SIZE, matches.length - recent.length)})`;
+  if (!recent.length && list.length) status.textContent = 'Совпадений нет';
+  else if (recent.length < matches.length) status.textContent = `Показано ${recent.length} из ${matches.length}`;
+  else status.textContent = query.trim() ? `Найдено ${matches.length} из ${list.length}` : `Всего ${list.length}`;
   box.innerHTML = recent.map((project) => {
     const stats = latestStats(project);
     const current = project.id === state.pid;
@@ -708,14 +759,14 @@ function renderStartProjects(list) {
         data-act="open" data-pid="${escapeHtml(project.id)}">
         <span class="startup-project-preview">${projectPreviewHtml(project.preview, stats)}</span>
         <span class="startup-project-info">
-          <b>${escapeHtml(current ? currentProjectName() : project.name || 'Без названия')}</b>
+          <b>${escapeHtml(shownProjectName(project))}</b>
           <small>${escapeHtml(details.filter(Boolean).join(' · ') || 'Облачный проект')}</small>
         </span>
       </button>`;
   }).join('');
   // Старые карточки содержат только прямоугольную схему. Полные проекты
   // загружаются по одному в фоне и получают настоящий снимок первого этажа.
-  scheduleProjectThumbnailUpgrades(list);
+  scheduleProjectThumbnailUpgrades(recent);
 }
 
 async function refreshStartProjects() {
@@ -725,6 +776,9 @@ async function refreshStartProjects() {
   if (loginGateActive() || el('startProjectsView').hidden) return;
   section.hidden = false;
   status.textContent = 'Загрузка…';
+  el('startRecentProjects').replaceChildren();
+  el('startProjectFilter').hidden = true;
+  el('startProjectMore').hidden = true;
   try {
     if (!backend) await refreshBackend({ restartWatch: false });
     const list = await listProjects(backend.db, backend.root);
@@ -742,6 +796,13 @@ async function refreshStartProjects() {
 function render() {
   const box = el('projectsList');
   if (!backend) return;
+  const query = el('projectSearch').value;
+  const list = tab === 'mine' ? projects : shared;
+  const matches = matchingProjects(list, query);
+  el('projectFilter').hidden = list.length < 2 && !query;
+  el('projectSearchStatus').textContent = query.trim() && list.length
+    ? matches.length ? `Найдено ${matches.length} из ${list.length}` : 'Совпадений нет'
+    : '';
   if (tab === 'mine') {
     if (!projects.length) {
       box.innerHTML = backend.mode === 'cloud'
@@ -749,7 +810,7 @@ function render() {
         : '<p class="hint">Пока ничего не сохранено. Нажмите «Сохранить версию» — проект появится здесь.</p>';
       return;
     }
-    box.innerHTML = projects.map((project) => {
+    box.innerHTML = matches.map((project) => {
       const versions = project.versions || [];
       const open = expanded.has(project.id);
       const current = project.id === state.pid;
@@ -759,7 +820,7 @@ function render() {
       return `
       <div class="prj-row${current ? ' current' : ''}">
         <div class="prj-main">
-          <b>${escapeHtml(current ? currentProjectName() : project.name || 'Без названия')}</b>${current ? ' <em>(открыт)</em>' : ''}
+          <b>${escapeHtml(shownProjectName(project))}</b>${current ? ' <em>(открыт)</em>' : ''}
           <small>${escapeHtml(fmtDate(project.updatedAt))} · версий: ${versions.length}${draft}</small>
         </div>
         <div class="prj-actions">
@@ -777,7 +838,7 @@ function render() {
     box.innerHTML = '<p class="hint">Общих проектов нет. Опубликуйте свой на вкладке «Мои проекты».</p>';
     return;
   }
-  box.innerHTML = shared.map((item) => {
+  box.innerHTML = matches.map((item) => {
     const mine = item.owner === backend.uid;
     return `
       <div class="prj-row">
@@ -978,7 +1039,7 @@ export async function continueCurrentProject({ reloading = false, savedAt = null
     if (reloading && !contended && (matchesRemote || (savedAt && !shouldUseRemoteProject(state.project, savedAt, remoteAt)))) {
       startActiveEditor(pid, lease);
       closeStartMenu();
-      if (!matchesRemote) scheduleCloudDraft(localText, { immediate: true });
+      if (!matchesRemote) scheduleCloudDraft(localText, { immediate: true, capturedAt: savedAt });
     } else {
       const backup = !reloading || contended || !savedAt ? localText : null;
       await activateLoadedProject(pid, lease, loaded, loaded.meta?.name, { localBackup: backup });
@@ -1133,12 +1194,12 @@ function assignPendingDraft() {
   pendingUnassignedDraft = null;
 }
 
-function scheduleCloudDraft(text, { immediate = false } = {}) {
+function scheduleCloudDraft(text, { immediate = false, capturedAt } = {}) {
   if (typeof text === 'string' && text) {
     // Локальный autosave не строит canvas-превью и не разбирает проект.
     // Перед реальной облачной отправкой metadata будет создана из этого же
     // текста, поэтому быстрое переключение проекта не перепутает снимки.
-    const draft = lazyCloudDraft(text, ++draftOrder);
+    const draft = lazyCloudDraft(text, ++draftOrder, capturedAt);
     if (backend?.mode === 'cloud') {
       const pid = state.pid || newId('p');
       state.pid = pid;
@@ -1283,7 +1344,7 @@ async function flushCloudDraft({ allowStartLease = false } = {}) {
         thumbnail: createProjectThumbnail,
       });
       const operation = saveDraft(target.db, target.root, ready.text, {
-        pid, preview: ready.preview, stats: ready.stats, editor,
+        pid, preview: ready.preview, stats: ready.stats, editor, now: new Date(ready.capturedAt),
       });
       try {
         const saved = await withSaveTimeout(operation);
@@ -1508,6 +1569,10 @@ async function onAction(button) {
 
 function setTab(next) {
   tab = next;
+  el('projectSearch').value = '';
+  el('projectFilter').hidden = true;
+  el('projectClear').hidden = true;
+  el('projectSearchStatus').textContent = '';
   el('prjTabMine').classList.toggle('active', tab === 'mine');
   el('prjTabShared').classList.toggle('active', tab === 'shared');
   el('projectsSave').hidden = tab !== 'mine';
@@ -1598,6 +1663,8 @@ async function refreshBackend({ restartWatch = true } = {}) {
 export async function openProjects() {
   rememberEditor(false);
   el('projectsScreen').hidden = false;
+  document.querySelector('.app')?.setAttribute('inert', '');
+  el('projectsClose').focus({ preventScroll: true });
   el('projectsList').innerHTML = '<p class="hint">Загрузка…</p>';
   account = await getAccountState();
   renderAccount();
@@ -1606,6 +1673,10 @@ export async function openProjects() {
 }
 
 export async function openProjectChooser(options = {}) {
+  el('startProjectSearch').value = '';
+  el('startProjectClear').hidden = true;
+  el('startExamplesSection').hidden = false;
+  startVisibleCount = START_PAGE_SIZE;
   openStartMenu(options);
   renderAccount();
   if (loginGateActive()) {
@@ -1618,8 +1689,16 @@ export async function openProjectChooser(options = {}) {
 
 export function closeProjects(force = false) {
   if ((projectActionBusy || authAction) && !force) return;
+  const wasOpen = isProjectsOpen();
   el('projectsScreen').hidden = true;
-  if (el('startScreen').hidden && !state.editLocked && !loginGateActive()) rememberEditor(true);
+  if (el('startScreen').hidden && !state.editLocked && !loginGateActive()) {
+    document.querySelector('.app')?.removeAttribute('inert');
+    rememberEditor(true);
+    if (wasOpen && !force) {
+      const opener = el('projectsBtn').getClientRects().length ? el('projectsBtn') : el('moreBtn');
+      opener.focus({ preventScroll: true });
+    }
+  }
   stopWatching();
 }
 
@@ -1684,6 +1763,17 @@ export function bindProjects(initialAccount = null) {
   });
   el('prjTabMine').addEventListener('click', () => setTab('mine'));
   el('prjTabShared').addEventListener('click', () => setTab('shared'));
+  bindProjectSearch(el('projectSearch'), el('projectClear'), render);
+  bindProjectSearch(el('startProjectSearch'), el('startProjectClear'), () => {
+    startVisibleCount = START_PAGE_SIZE;
+    renderStartProjects(projects);
+  });
+  el('startProjectMore').addEventListener('click', () => {
+    const firstNewIndex = startVisibleCount;
+    startVisibleCount += START_PAGE_SIZE;
+    renderStartProjects(projects);
+    el('startRecentProjects').children[firstNewIndex]?.focus();
+  });
   el('prjSave').addEventListener('click', saveCurrent);
   el('googleSignIn').addEventListener('click', handleSignIn);
   el('startGoogleSignIn').addEventListener('click', handleSignIn);
@@ -1703,6 +1793,7 @@ export function bindProjects(initialAccount = null) {
   });
   document.addEventListener(AUTOSAVE_EVENT, (event) => {
     scheduleCloudDraft(event.detail?.text, {
+      capturedAt: event.detail?.capturedAt,
       immediate: event.detail?.immediate === true || document.visibilityState === 'hidden',
     });
   });

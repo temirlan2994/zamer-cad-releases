@@ -154,7 +154,7 @@ test('дом: стены по этажам с проёмом, перекрыти
   const walls = prof.prims.filter((x) => x.kind === 'house-wall');
   assert.ok(walls.length >= 3, 'западная стена + восточная под и над окном');
   assert.ok(walls.every((x) => x.cut));
-  assert.ok(near(zMax(walls), 3000 - 220));
+  assert.ok(near(zMax(walls), 3000));
   assert.ok(prof.prims.some((x) => x.kind === 'house-opening' && x.mat === 'glass'));
   assert.ok(prof.prims.some((x) => x.kind === 'house-slab'));
   assert.ok(prof.marks.some((m) => m.text === '±0.00') && prof.marks.some((m) => m.text === '+3.00'));
@@ -303,4 +303,23 @@ test('лист разрезов: отбор, масштаб по ширине п
   assert.equal(packSectionSheets(low, { x0: 25, y0: 10, areaW: 385, areaH: 222 }).length, 1);
   const px = svgAtDpi(items[0].svg, items[0], 150 / 25.4);
   assert.match(px, new RegExp(`^<svg[^>]+width="${Math.round(items[0].width * 150 / 25.4)}" height="`));
+});
+
+test('повёрнутая терраса дома на верхнем этаже видна в разрезе и проекции с учётом вырезов', () => {
+  const p = project();
+  p.building = { origin: { x: 12000, y: 14000 }, rotation: 90 };
+  p.masses = ['decking', 'post', 'canopy'].map((kind, i) => ({
+    id: kind, name: kind, facadeKind: kind, x: 2000, y: 0, w: 4000, d: 1800, rotation: 0, z0: 3000 + 750 * i, h: 140,
+  }));
+  p.massVoids = [{ id: 'hole', x: 2000, y: 0, w: 400, d: 1800, z0: 2900, h: 600, rotation: 0 }];
+  const points = [{ x: 12000, y: 13000 }, { x: 12000, y: 19000 }];
+  const profile = sectionProfile(p, points);
+  const deck = profile.prims.filter((o) => o.kind === 'decking');
+  assert.ok(deck.every((o) => o.cut && (o.s1 <= 2800 || o.s0 >= 3200)), 'вырез проходит через основание и доски');
+  assert.equal(zMax(deck), 3140);
+  assert.deepEqual([Math.min(...deck.map((o) => o.s0)), Math.max(...deck.map((o) => o.s1))], [1000, 5000]);
+  assert.ok(profile.prims.some((o) => o.kind === 'post' && o.cut));
+  assert.ok(profile.prims.some((o) => o.kind === 'canopy' && o.cut));
+  const behind = sectionProfile(p, points.map((q) => ({ ...q, x: q.x - 2000 })));
+  assert.ok(behind.prims.some((o) => o.kind === 'decking' && !o.cut));
 });

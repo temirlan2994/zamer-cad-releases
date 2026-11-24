@@ -2,6 +2,8 @@
 // Геометрия рисуется в мировых координатах (мм) через transform (масштаб +
 // поворот: в режиме «Участок» север всегда вверх), подписи — в экранных.
 
+import { cornerWindowHandles, cornerWindowProjections } from './core/corner-windows.js';
+import { levelWindowOpenings } from './core/spanning-windows.js';
 import {
   deriveWalls, doorLeaves, doorSymbol, openingRect, wallOutline, wallRects,
   wallsEngine,
@@ -64,6 +66,7 @@ import { drawMassOverlay, drawMassSketch } from './ui/render-masses.js';
 import { drawRoofOutlines, drawRoofPlan } from './ui/render-roofs.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 import { drawPlanSections } from './ui/render-plan-section.js';
+import { drawAtriumPreview } from './ui/render-atrium.js';
 import { drawSlabOpeningDraft, drawSlabOpenings } from './ui/render-slab.js';
 import { levelProject } from './core/model.js';
 import { slabOpeningPolygon, slabOpeningSourceLevel, slabOpenings } from './core/slab-openings.js';
@@ -185,7 +188,7 @@ function drawSlabUnderlays(ctx, st, tokens, px, { print = false } = {}) {
       } else fillWallBody(ctx, wall);
     }
     ctx.globalAlpha = print ? 0.48 : 0.58;
-    for (const op of lp.openings) drawOpening(ctx, lowerState, op, lowerWalls, tokens, px);
+    for (const op of levelWindowOpenings(lp, lowerWalls)) drawOpening(ctx, lowerState, op, lowerWalls, tokens, px);
     for (const item of lp.items.filter((i) => i.kind !== 'stairs')) drawItem(ctx, item, tokens, px, false, false);
     ctx.globalAlpha = print ? 0.72 : 0.9;
     for (const item of lp.items.filter((i) => i.kind === 'stairs')) drawItem(ctx, item, tokens, px, false, false);
@@ -732,7 +735,7 @@ export function createRenderer(canvas) {
       }
 
       // 5. Проёмы.
-      for (const opening of state.project.openings) {
+      for (const opening of levelWindowOpenings(state.project, walls)) {
         if (opts.cull !== false && opening.roomId && !visibleRoomIds.has(opening.roomId)
           && state.selection?.id !== opening.id && state.hover?.id !== opening.id) continue;
         drawOpening(ctx, state, opening, walls, houseTokens, px);
@@ -884,9 +887,12 @@ export function createRenderer(canvas) {
       ctx.restore();
     }
     if (state.ghostOpening) {
-      const r = state.ghostOpening.rect;
+      const preview = state.ghostOpeningFull;
+      const rects = preview?.corner
+        ? cornerWindowProjections(state.project, [preview], walls).map((o) => openingRect(state.project, o, walls)?.rect)
+        : [state.ghostOpening.rect];
       ctx.fillStyle = 'rgba(29,180,168,0.5)';
-      ctx.fillRect(r.x, r.y, r.w, r.h);
+      for (const r of rects) if (r) ctx.fillRect(r.x, r.y, r.w, r.h);
     }
     // Превью двери под курсором: створка с направлением открывания.
     if (state.ghostDoor) {
@@ -1030,11 +1036,14 @@ export function createRenderer(canvas) {
     }
     // Вставка окна/двери: размеры до стен и соседних проёмов слева и справа.
     const ghostOp = state.ghostDoor || state.ghostOpeningFull;
-    if (ghostOp && !print) drawOpeningGhostDims(ctx, state, ghostOp, walls, p2s, tokens);
+    if (ghostOp && !ghostOp.corner && !print) drawOpeningGhostDims(ctx, state, ghostOp, walls, p2s, tokens);
     // Проёмы в перекрытии (ui/render-slab.js): над лестницей — авто, ручные.
     if (state.modeName === 'plan' && !state.roofPlan) {
       drawSlabOpenings(ctx, { st: state, p2s, tokens, print });
-      if (!print) drawSlabOpeningDraft(ctx, { st: state, p2s, tokens });
+      if (!print) {
+        drawSlabOpeningDraft(ctx, { st: state, p2s, tokens });
+        if (state.tool?.kind === 'atrium') drawAtriumPreview(ctx, state.tool, p2s, tokens);
+      }
     }
     // Линии разрезов по плану этажа (ui/plan-section.js) и черновик инструмента.
     if (state.modeName === 'plan' && !print) drawPlanSections(ctx, { p2s, tokens });
@@ -1848,6 +1857,10 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
   const selected = state.selection?.type === 'opening' && state.selection.id === opening.id;
   const hovered = state.hover?.type === 'opening' && state.hover.id === opening.id;
   ctx.fillStyle = tokens.canvas;
+  if (opening.cornerJunction) {
+    const r = opening.cornerJunction;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+  }
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
   ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.line;
@@ -1901,7 +1914,8 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
     const band = wall.band;
     ctx.save();
     ctx.beginPath();
-    ctx.rect(band.x, band.y, band.w, band.h);
+    const clip = opening.cornerWing ? rect : band;
+    ctx.rect(clip.x, clip.y, clip.w, clip.h);
     ctx.clip();
     ctx.save();
     ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : '#3b4148';
@@ -2886,6 +2900,7 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens, visibleRooms = state.pr
 
 // Ручки на торцах проёма (на осевой линии стены).
 export function openingHandles(project, opening, walls) {
+  if (opening.corner) return cornerWindowHandles(project, opening, walls);
   const placed = openingRect(project, opening, walls);
   if (!placed) return [];
   const { rect, wall } = placed;
@@ -3024,6 +3039,7 @@ export function drawGlyphPreview(canvas, kind, w, h, stroke, options = null) {
 // Размерные линии до ближайших стен и стрелки-перевороты у выбранного проёма.
 // Зоны клика сохраняются в state._openingUI для обработки в pointerdown.
 function drawSelectedOpeningUI(ctx, state, opening, walls, w2s, scale, tokens) {
+  if (opening.corner) return;
   const placed = openingRect(state.project, opening, walls);
   if (!placed) return;
   const { rect, wall } = placed;

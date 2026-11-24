@@ -3,9 +3,11 @@
 // оси задаёт сам объект. Растения и обычные объекты участка двигаются только
 // по земле; Z доступен мебели и объектам с проектной отметкой.
 
-import { ELEV_KINDS } from '../core/landscape.js';
+import { ELEV_KINDS, ELEV_LIMIT, PLATFORM_KINDS, platformTop } from '../core/landscape.js';
 import { GIZMO_AXES, GIZMO_COLORS, GIZMO_PLANE_PX, GIZMO_PX, gizmoPick } from '../core/mass-gizmo.js';
 import { toLocal, toWorld } from '../core/building.js';
+import { platformLevelEdit, setPlatformLevel } from '../core/landscape-tools.js';
+import { groundFn } from '../core/landscape-section.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, snapshot } from './store.js';
 
@@ -130,7 +132,18 @@ export function clearObjectGizmoHover() { const changed = hover !== null; hover 
 export function startObjectGizmoDrag(event, hit = objectGizmoPartAt(event)) {
   if (!hit) return false;
   const O = origin(hit.bounds, hit.target);
+  const object = hit.target.object;
+  let startElev = Number(object.elev) || 0;
+  let platformEdit = null;
+  if (hit.part === 'z' && hit.target.type === 'landscape' && (PLATFORM_KINDS.has(object.kind) || object.kind === 'stairs-out')) {
+    // The cut view and the 3D Z arrow use the same site-datum height.
+    const ground = Number.isFinite(object.elev) ? null : groundFn(state.project);
+    const base = ground ? ground(object.x, object.y) - ground.siteDatum : 0;
+    startElev = platformTop(object, base);
+    platformEdit = platformLevelEdit(state.project.site.landscape.objects, object, base);
+  }
   drag = {
+    startElev, platformEdit, stairStarts: platformEdit?.stairs.map((stair) => ({ ...stair })),
     ...hit, before: snapshot(), start: structuredClone(hit.target.object), x0: event.clientX, y0: event.clientY,
     planeZ: O.z, p0: hit.part === 'xy' ? env.rayPlaneZ(env.ray(event), O.z) : null, changed: false,
   };
@@ -156,9 +169,11 @@ function movedLandscape(start, dx, dy, dz) {
   const sx = world.x - start.x; const sy = world.y - start.y;
   const next = { ...start, x: Math.round(start.x + sx), y: Math.round(start.y + sy) };
   if (start.points) next.points = start.points.map((p) => ({ x: Math.round(p.x + sx), y: Math.round(p.y + sy) }));
-  if (drag.target.canZ) {
-    next.elev = Math.round((Number(start.elev) || 0) + dz);
-    if (Number.isFinite(start.elevTo)) next.elevTo = Math.round(start.elevTo + dz);
+  if (drag.target.canZ && dz) {
+    const top = Number.isFinite(start.elevTo) ? start.elevTo : drag.startElev;
+    const delta = Math.max(-ELEV_LIMIT - drag.startElev, Math.min(ELEV_LIMIT - top, dz));
+    next.elev = Math.round(drag.startElev + delta);
+    if (Number.isFinite(start.elevTo)) next.elevTo = Math.round(start.elevTo + delta);
   }
   return next;
 }
@@ -188,8 +203,18 @@ export function moveObjectGizmoDrag(event) {
       elev3d: Math.max(0, Math.round((Number(start.elev3d) || 0) + dz)),
     }
     : movedLandscape(start, dx, dy, dz);
+  let changed = dx !== 0 || dy !== 0 || dz !== 0;
+  if (drag.platformEdit) {
+    const edit = drag.platformEdit;
+    edit.stairs.forEach((stair, index) => Object.assign(stair, drag.stairStarts[index]));
+    const level = Math.round(Math.max(edit.min, Math.min(edit.max, drag.startElev + dz)));
+    changed = level !== edit.level;
+    if (changed) setPlatformLevel({ ...edit, platform: next }, level);
+    else if (Number.isFinite(start.elev)) next.elev = start.elev;
+    else delete next.elev;
+  }
   replaceObject(next);
-  drag.changed = dx !== 0 || dy !== 0 || dz !== 0;
+  drag.changed = changed;
   const signed = (v) => `${v > 0 ? '+' : ''}${Math.round(v)}`;
   env.hint(`${drag.part.toUpperCase()}: ${signed(dx)}, ${signed(dy)}${drag.target.canZ ? `, ${signed(dz)}` : ''} мм · Shift — без шага`);
   env.rebuild();
@@ -207,6 +232,7 @@ export function finishObjectGizmoDrag() {
 export function cancelObjectGizmoDrag() {
   const current = drag;
   if (!current) return;
+  current.platformEdit?.stairs.forEach((stair, index) => Object.assign(stair, current.stairStarts[index]));
   replaceObject(current.start);
   drag = null; hover = null;
   env.rebuild();

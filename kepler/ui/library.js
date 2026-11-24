@@ -229,6 +229,7 @@ export function syncLibraryOpen() {
   const stairsBar = el('stairsBar');
   if (stairsBar) stairsBar.hidden = true;
   const opening = plan && t?.kind === 'place-opening';
+  el('modelAddRoom').hidden = !model || opening || state.libraryTab !== 'furniture';
   const tabs = el('objectCatalogTabs');
   tabs.hidden = !(opening || (plan && state.libraryTab === 'furniture'));
   if (!tabs.hidden) syncCatalogTabs();

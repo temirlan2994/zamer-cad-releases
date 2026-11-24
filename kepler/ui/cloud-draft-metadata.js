@@ -3,8 +3,11 @@
 // облачной отправкой снимок материализуется из того же JSON и остаётся в
 // объекте draft для повторной попытки после таймаута/офлайна.
 
-export function lazyCloudDraft(text, order) {
-  return { text, order, metadataReady: false };
+export function lazyCloudDraft(text, order, capturedAt) {
+  // Старый снимок может ждать интернет или аренду дольше, чем следующая
+  // локальная правка. При восстановлении сравнивается время самих снимков.
+  const timestamp = Date.parse(capturedAt);
+  return { text, order, capturedAt: Number.isFinite(timestamp) ? timestamp : Date.now(), metadataReady: false };
 }
 
 export function projectStatsOf(project) {

@@ -2,37 +2,45 @@
 
 import { elevationView, isElevationOpen, refreshElevationView } from './elevation-view.js';
 import { findView } from '../core/views.js';
+import { floorAnalyticalViewById } from '../core/analytical-views.js';
+import { renderAnalyticalProps } from './props-analytical.js';
 import { renderSectionProps } from './plan-section.js';
 import { renderSlabProps } from './slab-ui.js';
 import { slabOpenings, stairRiseByLevels, stairTargetLevel } from '../core/slab-openings.js';
 import { massById, renderMassProps } from './masses.js';
-import { bindRoomRoof, renderRoofProps, roofById, roomRoofHtml } from './roofs.js';
+import { bindRoomRoof, renderRoofProps, visibleRoofById, roomRoofHtml } from './roofs.js';
 import { gridById, renderGridProps, renderGridToolOptions } from './grids.js';
 import { furnitureDef, isShaft, roomType, roomTypesByCategory } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
-import { activeLevel, roomById, roomCeiling } from '../core/model.js';
+import {
+  activeLevel, roomById, roomCeiling, setLevelTallWindowOffsets,
+} from '../core/model.js';
 import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, roomNetAreaM2 } from '../core/rooms.js';
 import {
-  DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, deriveWalls, openingFrame, openingPos, openingRect,
+  DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, openingFrame, openingPos, openingRect,
   setOpeningPos, wallClassThickness,
 } from '../core/walls.js';
 import { moveManualWall, setManualWallJustify, setWallHeight } from '../core/wall-manual.js';
 import { roomShapeArea } from '../core/room-shape.js';
+import { canAttachRoom, planAdjacentRoom } from '../core/adjacent-room.js';
+import { clearWindowSpan, levelWindowOpenings, nextWindowSpan, setWindowSpan, windowSpanTop } from '../core/spanning-windows.js';
+import { CORNER_PRESET, cornerWindowGeometry } from '../core/corner-windows.js';
+import { wallZRange } from '../core/wall-z-range.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { setWallDefaults } from '../core/wall-thickness.js';
-import { escapeHtml, refs, toast } from './dom.js';
+import { canvas, escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
-import { deleteLevel, switchLevel } from './levels.js';
-import { isPhone, syncMobileBar } from './mobile.js';
+import { addRoomAbove, deleteLevel, switchLevel } from './levels.js';
+import { closeSheets, isPhone, syncMobileBar } from './mobile.js';
 import { renderTepPanel } from './props-tep.js';
 import {
   activeViewTitle, bindViewSettings, renderViewsPanel, viewSettingsHtml,
 } from './props-views.js';
 import { renderSheetProps, renderSheetsPanel } from './props-sheets.js';
 import { refreshSheetView } from './sheet-view.js';
-import { renderToolstrip } from './toolstrip.js';
+import { renderToolstrip, toolContext } from './toolstrip.js';
 import {
-  addFurniture, autoDockAfterGesture, changeManualWall, changeWallKind, changeWallThickness, eatOverlapsAfter, overlappingTopRooms,
+  addFurniture, autoDockAfterGesture, changeManualWall, changeWallKind, changeWallThickness, commitPlacedRoom, eatOverlapsAfter, overlappingTopRooms,
   reconcileOpenings,
 } from './plan-actions.js';
 import {
@@ -42,8 +50,10 @@ import { resizeVerdict } from './snap.js';
 import {
   STAIR_BUILDS, STAIR_ENVIRONMENTS, STAIR_MATERIALS, STAIR_RAILINGS, STAIR_SHAPES, applyStairPreset, stairAppearance, stairBuild, materializeStair, setStairParam, setStairRise, stairCalculation, stairParamKeys, stairParamValue, stairShape,
 } from '../core/stairs.js';
-import { HIGH_WINDOW_TYPES, openingHeight, presetWithType } from '../core/opening-preset.js';
-import { requestDraw } from './view.js';
+import {
+  HIGH_WINDOW_TYPES, openingHeight, openingSill, presetWithType,
+} from '../core/opening-preset.js';
+import { fitView, planToScreen, requestDraw } from './view.js';
 import { bindRoomRailings, renderRailingProps, roomRailingsHtml } from './railing-props.js';
 import { renderOpeningLibrary } from './opening-library.js';
 import { state } from './state.js';
@@ -139,6 +149,7 @@ export function renderProps() {
   if (!sel && (state.sheetOpen || state.sheetSel) && renderSheetProps(panel)) return;
   // Открыт фасад — его настройки (масштаб, отметки).
   if (!sel && isElevationOpen()) { renderElevationProps(panel); return; }
+  if (!sel && toolContext() === 'model') { renderProjectProps(panel); return; }
   // Параметры двери/окна до вставки — в строке параметров над холстом (renderToolOptions).
   if ((state.modeName === 'landscape' && !sel) || sel?.type === 'landscape') {
     if (sel || landscapeToolActive()) renderLandscapeProps(panel);
@@ -166,7 +177,7 @@ export function renderProps() {
     if (mass) { renderMassProps(panel, mass); return; }
   }
   if (sel.type === 'roof') {
-    const roof = roofById(sel.id);
+    const roof = visibleRoofById(sel.id);
     if (roof) { renderRoofProps(panel, roof); return; }
   }
   if (sel.type === 'slab' && renderSlabProps(panel, sel)) return;
@@ -201,6 +212,13 @@ function defaultCeiling() {
   return roomCeiling({}, level);
 }
 
+function windowCountLabel(count) {
+  const n10 = count % 10; const n100 = count % 100;
+  const word = n10 === 1 && n100 !== 11 ? 'окно'
+    : n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14) ? 'окна' : 'окон';
+  return `${count} ${word}`;
+}
+
 function renderElevationProps(panel) {
   panel.innerHTML = `
     <h2 id="viewPropsTitle">Вид: ${escapeHtml(activeViewTitle())}</h2>
@@ -210,6 +228,8 @@ function renderElevationProps(panel) {
 }
 
 function renderProjectProps(panel) {
+  const analytical = floorAnalyticalViewById(state.project, state.analyticalView?.id);
+  if (analytical) { renderAnalyticalProps(panel, analytical); return; }
   const site = state.project.site;
   const hasSite = Boolean(site?.boundary?.length || site?.underlay);
   const level = activeLevel(state.project);
@@ -222,6 +242,13 @@ function renderProjectProps(panel) {
   const levelSection = panel.querySelector('#levelSection');
   const keepLevelOpen = levelSection?.open && levelSection.dataset.level === level.id;
   const focusLevelSummary = keepLevelOpen && document.activeElement?.id === 'levelSummary';
+  const linkedWindowProbe = { kind: 'window', heightMode: 'level' };
+  const tallWindowBottom = openingSill(linkedWindowProbe, level);
+  const tallWindowHeight = openingHeight(linkedWindowProbe, level);
+  const tallWindowTop = Math.max(0, level.height - tallWindowBottom - tallWindowHeight);
+  const linkedWindowCount = (level.openings || []).filter((opening) => (
+    opening.kind === 'window' && opening.heightMode === 'level'
+  )).length;
   const levelFields = `
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="levelName" value="${escapeHtml(level.name)}"></label>
@@ -237,12 +264,16 @@ function renderProjectProps(panel) {
         <label class="prop-field"><span>Перекрытие, м</span>
           <input id="slabThickness" type="number" step="0.05" min="0.12" max="0.6" value="${((level.slabThickness || 300) / 1000).toFixed(2)}"></label>
       </div>
+      <div class="prop-row"><strong>Окна в пол</strong></div>
+      <label class="check-row"><input id="allLevelWindowGaps" type="checkbox" ${state.project.settings.linkTallWindowsAcrossLevels === true ? 'checked' : ''}>
+        <span>Общие отступы для всех этажей</span></label>
       <div class="prop-grid">
-        <label class="prop-field"><span>Высота витражей, м</span>
-          <input id="tallWindowHeight" type="number" step="0.05" min="0.3" value="${((level.tallWindowHeight || 2400) / 1000).toFixed(2)}"></label>
-        <label class="prop-field"><span>Связь</span><input value="Весь этаж" disabled></label>
+        <label class="prop-field"><span>Снизу, мм</span>
+          <input id="tallWindowBottomGap" type="number" inputmode="numeric" step="10" min="0" value="${Math.round(tallWindowBottom)}"></label>
+        <label class="prop-field"><span>Сверху, мм</span>
+          <input id="tallWindowTopGap" type="number" inputmode="numeric" step="10" min="0" value="${Math.round(tallWindowTop)}"></label>
       </div>
-      <p class="empty-hint">Связанные помещения и высокие окна обновляются вместе с этажом.</p>
+      <div class="prop-row" id="tallWindowComputedHeight"><span>Общая высота</span><strong>${Math.round(tallWindowHeight)} мм${linkedWindowCount ? ` · ${windowCountLabel(linkedWindowCount)}` : ''}</strong></div>
       ${multi ? '<button id="deleteLevel" class="danger">Удалить этаж</button>' : ''}
     </div>`;
   panel.innerHTML = `
@@ -297,29 +328,111 @@ function renderProjectProps(panel) {
     mutate(() => { level.elevation = Math.round((Number(e.target.value) || 0) * 1000); });
   });
   panel.querySelector('#levelHeight').addEventListener('change', (e) => {
-    mutate(() => { level.height = Math.max(2000, Math.round((Number(e.target.value) || 3) * 1000)); });
+    mutate(() => {
+      level.height = Math.max(2000, Math.round((Number(e.target.value) || 3) * 1000));
+      setLevelTallWindowOffsets(level, {
+        bottom: level.tallWindowBottomOffset,
+        top: level.tallWindowTopOffset,
+      });
+    });
   });
   panel.querySelector('#slabThickness').addEventListener('change', (e) => {
     const next = Math.round((Number(e.target.value) || 0.3) * 1000);
     mutate(() => { level.slabThickness = Math.min(600, Math.max(120, next)); });
   });
-  panel.querySelector('#tallWindowHeight').addEventListener('change', (e) => {
-    const max = Math.max(300, level.height - 100);
-    mutate(() => { level.tallWindowHeight = Math.min(max, Math.max(300, Math.round((Number(e.target.value) || 2.4) * 1000))); });
+  const updateGaps = (values) => {
+    const gaps = setLevelTallWindowOffsets(level, values);
+    if (state.project.settings.linkTallWindowsAcrossLevels === true) {
+      for (const floor of state.project.levels) setLevelTallWindowOffsets(floor, gaps);
+    }
+  };
+  panel.querySelector('#allLevelWindowGaps').addEventListener('change', (e) => {
+    mutate(() => {
+      state.project.settings.linkTallWindowsAcrossLevels = e.target.checked;
+      if (e.target.checked) updateGaps({ top: tallWindowTop, bottom: tallWindowBottom });
+    });
   });
+  for (const [id, key] of [['tallWindowBottomGap', 'bottom'], ['tallWindowTopGap', 'top']]) {
+    panel.querySelector(`#${id}`).addEventListener('change', (e) => {
+      mutate(() => updateGaps({ [key]: Math.max(0, Math.round(Number(e.target.value) || 0)) }));
+    });
+  }
   panel.querySelector('#deleteLevel')?.addEventListener('click', () => deleteLevel(level.id));
 }
 
 // Тип помещения — список по категориям (optgroup). Шахта — вертикальный
 // проём, а не помещение: в шахту и из шахты тип не меняется.
-function roomTypeSelect(room, shaft) {
-  const groups = roomTypesByCategory().map((g) => {
-    const opts = g.types.filter((t) => Boolean(t.shaft) === shaft)
-      .map((t) => `<option value="${t.type}" ${t.type === room.type ? 'selected' : ''}>${escapeHtml(t.title)}</option>`).join('');
+function roomTypeOptions(selected, accept) {
+  return roomTypesByCategory().map((g) => {
+    const opts = g.types.filter(accept)
+      .map((t) => `<option value="${t.type}" ${t.type === selected ? 'selected' : ''}>${escapeHtml(t.title)}</option>`).join('');
     return opts ? `<optgroup label="${escapeHtml(g.title)}">${opts}</optgroup>` : '';
   }).join('');
+}
+
+function roomTypeSelect(room, shaft) {
+  const groups = roomTypeOptions(room.type, (t) => Boolean(t.shaft) === shaft);
   const unknown = roomType(room.type) ? '' : `<option value="${escapeHtml(room.type)}" selected>${escapeHtml(room.type)}</option>`;
   return `<label class="prop-field"><span>Тип</span><select id="roomType" ${shaft ? 'disabled' : ''}>${unknown}${groups}</select></label>`;
+}
+
+function adjacentSideOptions() {
+  const origin = planToScreen(0, 0);
+  const names = ['Справа', 'Справа внизу', 'Снизу', 'Слева внизу', 'Слева', 'Слева вверху', 'Сверху', 'Справа вверху'];
+  return [[0, -1], [1, 0], [0, 1], [-1, 0]].map(([dx, dy], side) => {
+    const p = planToScreen(dx, dy);
+    const angle = Math.atan2(p.y - origin.y, p.x - origin.x);
+    const index = (Math.round(angle / (Math.PI / 4)) + 8) % 8;
+    return `<option value="${side}" ${side === 1 ? 'selected' : ''}>${names[index]}</option>`;
+  }).join('');
+}
+
+function bindAdjacentRoom(panel, source) {
+  const details = panel.querySelector('#adjacentRoom');
+  if (!details) return;
+  details.addEventListener('toggle', () => {
+    if (!details.open || details.querySelector('#adjacentType')) return;
+    const typeOptions = roomTypeOptions(source.type === 'bedroom' ? 'living' : 'bedroom', (t) => !t.shaft && !t.open);
+    details.insertAdjacentHTML('beforeend', `<div class="prop-block">
+      <div class="prop-grid"><label class="prop-field"><span>Помещение</span><select id="adjacentType">${typeOptions}</select></label>
+      <label class="prop-field"><span>Сторона на плане</span><select id="adjacentSide">${adjacentSideOptions()}</select></label></div>
+      <label class="check-row"><input id="adjacentDoor" type="checkbox" checked><span>Дверь между комнатами</span></label>
+      <div id="adjacentStatus" class="hint" role="status"></div>
+      <button type="button" id="adjacentApply" class="primary">Пристроить</button></div>`);
+    const type = details.querySelector('#adjacentType');
+    const side = details.querySelector('#adjacentSide');
+    const door = details.querySelector('#adjacentDoor');
+    const status = details.querySelector('#adjacentStatus');
+    const apply = details.querySelector('#adjacentApply');
+    const preview = () => {
+      const result = planAdjacentRoom(state.project, source.id, type.value, Number(side.value), door.checked, state.walls);
+      apply.disabled = !result.ok || state.editLocked;
+      status.textContent = result.ok ? [`${result.room.w} × ${result.room.h} мм`, result.existingDoor ? 'Существующая дверь сохранится' : '', result.warning].filter(Boolean).join(' · ') : result.reason;
+      return result;
+    };
+    details.addEventListener('change', preview);
+    apply.addEventListener('click', () => {
+      const result = preview();
+      if (!result.ok || state.editLocked) return;
+      state.libraryPinned = false;
+      closeSheets();
+      const { room } = result;
+      if (!commitPlacedRoom(room, { verdict: result, door: result.door })) return;
+      const center = planToScreen(room.x + room.w / 2, room.y + room.h / 2);
+      const outside = (p) => p.x < 40 || p.y < 60 || p.x > canvas.clientWidth - 40 || p.y > canvas.clientHeight - 60;
+      const corners = [[0, 0], [room.w, 0], [0, room.h], [room.w, room.h]];
+      if (state.project.rooms.length === 2 && corners.some(([dx, dy]) => outside(planToScreen(room.x + dx, room.y + dy)))) fitView();
+      else if (outside(center)) {
+        state.view.panX += canvas.clientWidth / 2 - center.x;
+        state.view.panY += canvas.clientHeight / 2 - center.y;
+        requestDraw();
+      }
+      if (!result.warning) toast(`Добавлено помещение «${room.name}»`);
+      const next = isPhone() ? document.getElementById('mobileCardProps') : panel.querySelector('#adjacentRoom summary');
+      next?.focus({ preventScroll: true });
+    });
+    preview();
+  });
 }
 
 // Смена типа: цвет, нормы, ТЭП и набор мебели — по новому типу. Название
@@ -388,8 +501,8 @@ function renderRoomProps(panel, room) {
     : '';
 
   panel.innerHTML = `
-    ${datumPending ? envelopeSettingsHtml() : ''}
     <h2>${def?.title || 'Комната'}${parent ? `<span class="badge">внутри «${escapeHtml(parent.name)}»</span>` : ''}</h2>
+    ${canAttachRoom(room) && state.modeName === 'plan' && !document.body.classList.contains('v3-open') ? '<details class="vs-sec" id="adjacentRoom"><summary>Пристроить комнату</summary></details>' : ''}
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="roomName" value="${escapeHtml(room.name)}"></label>
       ${roomTypeSelect(room, shaft)}
@@ -404,7 +517,9 @@ function renderRoomProps(panel, room) {
         <input id="roomCeil" type="number" step="0.05" min="2" value="${(roomCeiling(room, activeLevel(state.project)) / 1000).toFixed(2)}" ${room.ceiling ? '' : 'disabled'}></label>
       `}
       <div class="prop-row"><span>${shaft ? 'Площадь отверстия' : 'Площадь (чистая)'}</span><strong>${(shaft ? roomShapeArea(room) / 1_000_000 : roomNetAreaM2(state.project, room)).toFixed(2)} м²</strong></div>
+      ${shaft || room.type === 'stairs-room' ? '' : '<button type="button" class="secondary" id="roomAbove" title="Повторить контур на следующем этаже">Добавить комнату этажом выше</button>'}
     </div>
+    ${datumPending ? envelopeSettingsHtml() : ''}
     ${areaControl}
     ${overlapControl}
     ${roomRailingsHtml(room)}
@@ -417,6 +532,8 @@ function renderRoomProps(panel, room) {
     ${shaft ? '' : autoLayoutHtml(room)}`;
 
   if (datumPending) bindEnvelopeSettings(panel);
+  bindAdjacentRoom(panel, room);
+  panel.querySelector('#roomAbove')?.addEventListener('click', () => addRoomAbove(room));
   panel.querySelector('#roomName').addEventListener('change', (e) => {
     mutate(() => { room.name = e.target.value.trim() || room.name; });
   });
@@ -632,7 +749,14 @@ function renderPlaceOpeningProps(panel, compact = false) {
   const tool = state.tool;
   const isDoor = tool.openKind === 'door';
   const preset = tool.preset;
-  const sample = { kind: tool.openKind, ...preset, height: openingHeight({ kind: tool.openKind, ...preset }, activeLevel(state.project)) };
+  if (preset.presetId === CORNER_PRESET) { renderCornerWindowProps(panel, preset, { preset: true, compact }); return; }
+  const level = activeLevel(state.project);
+  const sampleSource = { kind: tool.openKind, ...preset };
+  const sample = {
+    ...sampleSource,
+    sill: openingSill(sampleSource, level),
+    height: openingHeight(sampleSource, level),
+  };
   panel.innerHTML = `
     ${compact ? `<strong class="to-title">${isDoor ? 'Дверь' : 'Окно'}</strong>` : `<h2>${isDoor ? 'Дверь' : 'Окно'} — параметры вставки</h2>
     <p class="subtitle">Задайте размеры и кликайте по стенам: можно ставить несколько. Esc — выход.</p>
@@ -649,9 +773,9 @@ function renderPlaceOpeningProps(panel, compact = false) {
           <input id="presetH" type="number" step="50" min="300" value="${sample.height}" ${!isDoor && preset.heightMode === 'level' ? 'disabled' : ''}></label>
       </div>
       ${isDoor ? '' : `<label class="check-row"><input id="presetHeightLinked" type="checkbox" ${preset.heightMode === 'level' ? 'checked' : ''}>
-        <span>Связать с высотой витражей этажа</span></label>`}
-      ${isDoor ? '' : `<label class="prop-field"><span>Отступ от пола (подоконник), мм</span>
-        <input id="presetSill" type="number" step="50" min="0" value="${preset.sill}"></label>`}
+        <span>Общие отступы этажа</span></label>`}
+      ${isDoor ? '' : `<label class="prop-field"><span>Снизу от пола, мм</span>
+        <input id="presetSill" type="number" step="50" min="0" value="${sample.sill}" ${preset.heightMode === 'level' ? 'disabled' : ''}></label>`}
     </div>`;
   // Библиотека проёмов подсвечивает карточку по новым параметрам.
   const save = (next) => {
@@ -670,8 +794,11 @@ function renderPlaceOpeningProps(panel, compact = false) {
   }));
   panel.querySelector('#presetHeightLinked')?.addEventListener('change', (e) => {
     save(e.target.checked
-      ? { heightMode: 'level', frameMaterial: 'aluminum', frameColor: 'anthracite' }
-      : { heightMode: 'custom', height: sample.height });
+      ? {
+        heightMode: 'level', height: sample.height, sill: sample.sill,
+        frameMaterial: 'aluminum', frameColor: 'anthracite',
+      }
+      : { heightMode: 'custom', height: sample.height, sill: sample.sill });
   });
   panel.querySelector('#presetSill')?.addEventListener('change', (e) => save({ sill: Math.max(0, Number(e.target.value) || 0) }));
 }
@@ -784,12 +911,85 @@ export function renderToolOptions(force = false) {
   }
 }
 
+function renderCornerWindowProps(panel, target, { preset = false, compact = false } = {}) {
+  const level = activeLevel(state.project);
+  const spec = preset ? { joint: target.cornerJoint || 'post', returnWidth: target.returnWidth || 1800 } : target.corner;
+  const linked = target.heightMode === 'level';
+  const sample = { ...target, kind: 'window' };
+  const height = openingHeight(sample, level);
+  const sill = openingSill(sample, level);
+  const field = (id, label, value, min, disabled = false) => `<label class="prop-field"><span>${label}, мм</span>
+    <input id="${id}" type="number" min="${min}" step="10" value="${value}" ${disabled ? 'disabled' : ''}></label>`;
+  panel.innerHTML = `${compact ? '<strong class="to-title">Угловой витраж</strong>' : '<h2>Угловой витраж</h2>'}
+    ${preset && !compact ? '<p class="subtitle">Нажмите на наружную стену ближе к нужному углу.</p>' : ''}
+    <div class="prop-block"><div class="prop-grid">
+      ${field('cornerMain', 'Первое крыло', target.width, 600)}
+      ${field('cornerReturn', 'Второе крыло', spec.returnWidth, 600)}
+    </div><label class="prop-field"><span>Стык</span><select id="cornerJoint">
+      <option value="post" ${spec.joint !== 'pier' ? 'selected' : ''}>Тонкая алюминиевая стойка</option>
+      <option value="pier" ${spec.joint === 'pier' ? 'selected' : ''}>Простенок · 350 мм</option></select></label>
+    ${compact ? '' : `<label class="prop-field"><span>Рама обоих крыльев</span><select id="cornerColor">
+      ${Object.entries({ anthracite: 'Антрацит', black: 'Чёрная', bronze: 'Бронза' }).map(([id, label]) =>
+        `<option value="${id}" ${(target.frameColor || 'anthracite') === id ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label class="check-row"><input type="checkbox" id="cornerLinked" ${linked ? 'checked' : ''}><span>Общие отступы этажа</span></label>
+      <div class="prop-grid">${field('cornerHeight', 'Высота', height, 300, linked)}${field('cornerSill', 'Снизу от пола', sill, 0, linked)}</div>`}
+    </div>`;
+  panel.querySelectorAll('input, select').forEach((control) => control.addEventListener('change', () => {
+    const next = { ...target, corner: { ...spec } };
+    const n = control.valueAsNumber;
+    if (control.id === 'cornerMain') next.width = n;
+    if (control.id === 'cornerReturn') next.corner.returnWidth = n;
+    if (control.id === 'cornerJoint') next.corner.joint = control.value;
+    if (control.id === 'cornerColor') next.frameColor = control.value;
+    if (control.id === 'cornerHeight') next.height = n;
+    if (control.id === 'cornerSill') next.sill = n;
+    if (control.id === 'cornerLinked') {
+      next.heightMode = control.checked ? 'level' : 'custom';
+      next.height = height;
+      next.sill = sill;
+    }
+    const windows = { ...next, kind: 'window' };
+    const bottom = openingSill(windows, level);
+    const top = bottom + openingHeight(windows, level);
+    const wings = !preset && cornerWindowGeometry(state.project, next, state.walls);
+    const fitsHeight = (!wings || wings.every(({ wall }) => {
+      const range = wallZRange(state.project, wall, level.height);
+      return bottom >= range.z0 && top <= range.z1;
+    })) && top <= level.height;
+    if (!preset) next.offset = fitOpeningOffset(state.project, next, state.walls, next.offset);
+    if (control.validity?.badInput || (control.type === 'number' && (!Number.isFinite(n) || n < Number(control.min)))
+      || !fitsHeight || (!preset && next.offset == null)) {
+      toast('Проверьте размеры и свободное место на обеих стенах', true);
+      renderCornerWindowProps(panel, target, { preset, compact });
+      return;
+    }
+    if (preset) {
+      next.returnWidth = next.corner.returnWidth;
+      next.cornerJoint = next.corner.joint;
+      delete next.corner;
+      Object.assign(target, next);
+      renderToolOptions(true);
+      document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
+      requestDraw();
+    } else {
+      mutate(() => Object.assign(target, next));
+      selectObject({ type: 'opening', id: target.id });
+    }
+  }));
+}
+
 function renderOpeningProps(panel, opening) {
+  if (opening?.corner) { renderCornerWindowProps(panel, opening); return; }
   if (!opening) { renderProjectProps(panel); return; }
   const room = roomById(state.project, opening.roomId);
   const isDoor = opening.kind === 'door';
   const level = activeLevel(state.project);
-  const effectiveHeight = openingHeight(opening, level);
+  const hasUpperFloor = !isDoor && state.project.levels.some((candidate) => candidate.elevation > level.elevation);
+  const spanOption = hasUpperFloor && nextWindowSpan(state.project, level.id, opening);
+  const upper = spanOption && state.project.levels.find((l) => l.id === spanOption.targetLevelId);
+  const spanTop = opening.span && windowSpanTop(state.project, level.id, opening);
+  const effectiveSill = openingSill(opening, level);
+  const effectiveHeight = spanTop ? spanTop - effectiveSill : openingHeight(opening, level);
   const walls = state.walls;
   const frame = openingFrame(state.project, opening, walls);
   const placed = openingRect(state.project, opening, walls);
@@ -806,20 +1006,29 @@ function renderOpeningProps(panel, opening) {
   panel.innerHTML = `
     <h2>${isDoor ? 'Дверь' : 'Окно'}</h2>
     <p class="subtitle">${opening.host ? 'Ручная стена' : room ? `Стена «${escapeHtml(room.name)}»` : 'Стена'}</p>
-    <div class="elev-wrap">${elevationSVG({ ...opening, height: effectiveHeight })}</div>
+    <div class="elev-wrap">${elevationSVG({ ...opening, height: effectiveHeight, sill: effectiveSill })}</div>
     <div class="prop-block">
       <label class="prop-field"><span>Тип</span>
         <select id="openType">${Object.entries(isDoor ? DOOR_TYPES : WINDOW_TYPES).map(([id, title]) => `
           <option value="${id}" ${(opening.type || (isDoor ? 'single' : 'standard')) === id ? 'selected' : ''}>${title}</option>`).join('')}
         </select></label>
+      ${isDoor || (!hasUpperFloor && !opening.span) ? '' : `<label class="prop-field"><span>Верх окна</span>
+        <select id="openTopLevel" ${!upper && !opening.span ? 'disabled' : ''}>
+          <option value="">В пределах этажа · ${escapeHtml(level.name)}</option>
+          ${upper ? `<option value="${escapeHtml(upper.id)}" ${spanTop ? 'selected' : ''}>До потолка · ${escapeHtml(upper.name)}</option>` : ''}
+          ${opening.span && !spanTop ? '<option value="detached" selected disabled>Этаж или верхняя стена изменены</option>' : ''}
+        </select></label>
+        ${!upper ? '<p class="subtitle">Для второго света нужна свободная наружная стена на той же линии этажом выше.</p>' : ''}
+        ${spanTop && upper ? `<label class="prop-field"><span>Отступ от потолка · ${escapeHtml(upper.name)}, мм</span>
+          <input id="openTopGap" type="number" step="50" min="0" max="${spanOption.maxTop - spanOption.minTop}" value="${Math.round(spanOption.maxTop - spanTop)}"></label>` : ''}`}
       <div class="prop-grid">
         <label class="prop-field"><span>Ширина, мм</span>
           <input id="openW" type="number" step="50" min="300" value="${opening.width}"></label>
         <label class="prop-field"><span>Высота, мм</span>
-          <input id="openH" type="number" step="50" min="300" value="${effectiveHeight}" ${!isDoor && opening.heightMode === 'level' ? 'disabled' : ''}></label>
+          <input id="openH" type="number" step="50" min="300" value="${effectiveHeight}" ${!isDoor && (opening.heightMode === 'level' || spanTop) ? 'disabled' : ''}></label>
       </div>
       ${isDoor ? '' : `<label class="check-row"><input id="openHeightLinked" type="checkbox" ${opening.heightMode === 'level' ? 'checked' : ''}>
-        <span>Высота связана с витражами этажа</span></label>
+        <span>${spanTop ? 'Общий отступ от пола' : 'Общие отступы этажа'}</span></label>
         <div class="prop-row"><span>Рама</span><strong>Алюминий · антрацит</strong></div>`}
       ${isDoor ? `<label class="prop-field"><span>Роль наружной двери</span><select id="entryRole">
         <option value="auto" ${!opening.entryRole ? 'selected' : ''}>Определять автоматически</option>
@@ -828,8 +1037,8 @@ function renderOpeningProps(panel, opening) {
         <option value="terrace" ${opening.entryRole === 'terrace' ? 'selected' : ''}>Выход на террасу</option>
         <option value="none" ${opening.entryRole === 'none' ? 'selected' : ''}>Без автокрыльца</option>
       </select></label>` : ''}
-      ${isDoor ? '' : `<label class="prop-field"><span>Высота подоконника, мм</span>
-        <input id="openSill" type="number" step="50" min="0" value="${opening.sill || 0}"></label>`}
+      ${isDoor ? '' : `<label class="prop-field"><span>Снизу от пола, мм</span>
+        <input id="openSill" type="number" step="50" min="0" value="${effectiveSill}" ${opening.heightMode === 'level' ? 'disabled' : ''}></label>`}
     </div>
     <h3>Положение на стене</h3>
     <div class="prop-block">
@@ -844,16 +1053,39 @@ function renderOpeningProps(panel, opening) {
     </div>`;
 
   const commitOpening = (fn) => {
-    mutate(fn);
+    const before = structuredClone(opening);
+    mutate(() => {
+      fn();
+      if (before.span && spanTop && opening.span && !nextWindowSpan(state.project, level.id, opening)) {
+        for (const key of Object.keys(opening)) delete opening[key];
+        Object.assign(opening, before);
+        toast('На верхней стене для такого положения или ширины нет места', true);
+      }
+    });
     selectObject({ type: 'opening', id: opening.id });
   };
+  panel.querySelector('#openTopLevel')?.addEventListener('change', (e) => {
+    const target = e.target.value;
+    commitOpening(() => {
+      if (!target) clearWindowSpan(opening);
+      else if (spanOption && target === spanOption.targetLevelId) {
+        setWindowSpan(state.project, level.id, opening, spanOption.maxTop);
+      }
+    });
+  });
+  panel.querySelector('#openTopGap')?.addEventListener('change', (e) => {
+    const gap = Math.max(0, Number(e.target.value) || 0);
+    commitOpening(() => setWindowSpan(state.project, level.id, opening, Math.max(spanOption.minTop, spanOption.maxTop - gap)));
+  });
+  const fit = (pos) => fitOpeningOffset(state.project, opening, walls, pos, { others: levelWindowOpenings(state.project, walls) });
   panel.querySelector('#openW').addEventListener('change', (e) => {
     const width = Math.max(300, Number(e.target.value) || opening.width);
     commitOpening(() => {
+      const oldWidth = opening.width;
       opening.width = width;
-      const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), openingPos(opening));
+      const clamped = fit(openingPos(opening));
       if (clamped !== null) setOpeningPos(opening, clamped);
-      else toast('Проём шире свободного участка стены (с зазором 100 мм до соседних) — уменьшите ширину');
+      else { opening.width = oldWidth; toast('Проём шире свободного участка стены — уменьшите ширину', true); }
     });
   });
   panel.querySelector('#openType').addEventListener('change', (e) => {
@@ -864,9 +1096,9 @@ function renderOpeningProps(panel, opening) {
         // Высокие окна следуют единой отметке этажа, обычные — индивидуальны.
         const top = activeLevel(state.project).height - 400;
         if (HIGH_WINDOW_TYPES.has(type)) {
-          opening.sill = type === 'french' ? 50 : 100;
-          opening.height = Math.min(2400, top - opening.sill);
           opening.heightMode = 'level';
+          opening.sill = openingSill(opening, level);
+          opening.height = openingHeight(opening, level);
         } else {
           opening.sill = type === 'clerestory' ? 1700 : 900;
           opening.height = type === 'clerestory' ? 600 : Math.min(1500, top - 900);
@@ -893,15 +1125,24 @@ function renderOpeningProps(panel, opening) {
   });
   panel.querySelector('#openHeightLinked')?.addEventListener('change', (e) => {
     commitOpening(() => {
-      if (e.target.checked) opening.heightMode = 'level';
-      else {
-        opening.height = openingHeight(opening, activeLevel(state.project));
+      const height = openingHeight(opening, level);
+      const sill = openingSill(opening, level);
+      if (e.target.checked) {
+        opening.heightMode = 'level';
+        opening.sill = openingSill(opening, level);
+        opening.height = openingHeight(opening, level);
+      } else {
+        opening.height = height;
+        opening.sill = sill;
         opening.heightMode = 'custom';
       }
     });
   });
   const sillInput = panel.querySelector('#openSill');
-  if (sillInput) sillInput.addEventListener('change', (e) => commitOpening(() => { opening.sill = Math.max(0, Number(e.target.value) || 0); }));
+  if (sillInput) sillInput.addEventListener('change', (e) => commitOpening(() => {
+    opening.sill = Math.max(0, Number(e.target.value) || 0);
+    opening.heightMode = 'custom';
+  }));
 
   const setByGap = (fromLeft) => (e) => {
     if (!wall || !frame) return;
@@ -909,7 +1150,7 @@ function renderOpeningProps(panel, opening) {
     const along = fromLeft ? wall.from + opening.width / 2 + value : wall.to - opening.width / 2 - value;
     const desired = (along - frame.base) * frame.dir;
     commitOpening(() => {
-      const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), desired);
+      const clamped = fit(desired);
       if (clamped !== null) setOpeningPos(opening, clamped);
       else toast('Сюда проём не помещается: мало места или налезает на соседний проём');
     });
@@ -918,7 +1159,7 @@ function renderOpeningProps(panel, opening) {
   if (rightGap !== null) panel.querySelector('#gapR').addEventListener('change', setByGap(false));
   panel.querySelector('#openOff').addEventListener('change', (e) => {
     commitOpening(() => {
-      const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), Number(e.target.value) || openingPos(opening));
+      const clamped = fit(Number(e.target.value) || openingPos(opening));
       if (clamped !== null) setOpeningPos(opening, clamped);
       else toast('Сюда проём не помещается: мало места или налезает на соседний проём');
     });

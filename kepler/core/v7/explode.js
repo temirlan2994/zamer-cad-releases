@@ -5,7 +5,7 @@
 import { buffer, difference, interiorPoint, opening, transformPoint } from '../geom/poly.js';
 import { EAT_SLIVER } from './carve.js';
 import { derive } from './derive.js';
-import { activeLevel7, blockById, blockEdges, createWall, makeId, pairGap } from './model.js';
+import { activeLevel7, blockById, blockEdges, blockHasWalls, createWall, makeId, pairGap } from './model.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
@@ -64,6 +64,7 @@ export function explodeBlock(project, blockId, { levelId } = {}) {
   const level = activeLevel7(project, levelId);
   const block = blockById(level, blockId);
   if (!block) return { ok: false, reason: 'Блок не найден' };
+  if (!blockHasWalls(block)) return { ok: false, reason: 'У открытой площадки нет стен для разбора' };
   const res = derive(project, { levelId: level.id, cache: false });
   const mine = res.walls.filter((w) => w.source === 'block' && (w.blockId === blockId || w.pair?.includes(blockId)));
   const idMap = new Map();

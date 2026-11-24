@@ -13,9 +13,11 @@ const upperOpenings = (page) => page.evaluate(() => {
 // Ищем реально видимый пиксель боковой грани нужной стены. Это устойчивее
 // фиксированных координат: frameHouse меняет камеру вместе с размером дома.
 async function wallPoint(page, targetX = 2200) {
-  return page.evaluate((along) => {
+  return page.evaluate(async (along) => {
+    const { levelProject } = await import('./core/model.js');
+    const { deriveWalls } = await import('./core/walls.js');
     const box = document.getElementById('canvas3d').getBoundingClientRect();
-    const walls = window.__kepler.state.walls;
+    const walls = deriveWalls(levelProject(window.__kepler.state.project, 'L2'));
     const north = walls.find((w) => w.orient === 'h' && Math.abs(w.edge) < 1);
     const cross = north.band.y + north.band.h / 2;
     const target = window.__kepler.screen3d({ x: along, y: cross, z: 4200 });
@@ -64,6 +66,15 @@ describe('3D: создание окон и дверей, межэтажная п
     await openNew(app.page);
     await setupTwoFloors(app.page);
     await app.page.click('#view3dBtn');
+    // Окна в этом доме стоят на северном фасаде. С исходной южной
+    // изометрии кровля заслоняет их, поэтому разворачиваем модель.
+    const canvas = await app.page.locator('#canvas3d').boundingBox();
+    const yaw = (await d3(app.page)).cam.yaw;
+    const dx = ((yaw - Math.PI / 2 + 2 * Math.PI) % (2 * Math.PI)) / 0.008;
+    await app.page.mouse.move(canvas.x + 50, canvas.y + 110);
+    await app.page.mouse.down();
+    await app.page.mouse.move(canvas.x + 50 + dx, canvas.y + 110, { steps: 10 });
+    await app.page.mouse.up();
     facade = await wallPoint(app.page);
     assert.ok(facade, 'видна боковая грань северной стены второго этажа');
   });
@@ -198,7 +209,162 @@ describe('3D: создание окон и дверей, межэтажная п
     assert.deepEqual(picked, { type: 'opening', id: door.id }, '3D-геометрия проёма выбирается как дверь');
   });
 
+  it('выбирает этаж стены при вставке, даже если на плане активен другой этаж', async () => {
+    const { page } = app;
+    await page.keyboard.press('Escape');
+    await page.evaluate(async () => {
+      const { switchLevel } = await import('./ui/levels.js');
+      const { mutate } = await import('./ui/store.js');
+      const s = window.__kepler.state;
+      mutate(() => { s.project.levels.find((l) => l.id === 'L2').openings = []; });
+      switchLevel('L1', { planView: false });
+    });
+    await clickToolbarTool(page, 'windowToolBtn');
+    const upperWall = await wallPoint(page, 4200);
+    assert.ok(upperWall);
+    await page.keyboard.down('Shift');
+    await page.mouse.move(upperWall.x, upperWall.y);
+    const ghost = (await d3(page)).openingTool;
+    assert.equal(ghost.valid, true);
+    assert.equal(ghost.wall.levelId, 'L2');
+    await page.mouse.click(upperWall.x, upperWall.y);
+    await page.keyboard.up('Shift');
+    assert.equal((await upperOpenings(page)).length, 1);
+    assert.equal(await page.evaluate(() => window.__kepler.state.project.activeLevel), 'L1');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Escape');
+    assert.equal((await upperOpenings(page)).length, 0);
+  });
+
+  it('один витраж на двух этажах: выбор потолка, отступ, выбор за верхнее стекло и перетягивание обратно', async () => {
+    const { page } = app;
+    const id = await page.evaluate(async () => {
+      const { selectObject } = await import('./ui/tools.js');
+      const glass = window.__kepler.state.project.levels[0].openings[0];
+      selectObject({ type: 'opening', id: glass.id });
+      return glass.id;
+    });
+    await page.selectOption('#openTopLevel', 'L2');
+    assert.equal(await page.locator('#openTopGap').inputValue(), '0');
+    await page.fill('#openTopGap', '200');
+    await page.locator('#openTopGap').press('Tab');
+    assert.equal(await page.locator('#openTopGap').inputValue(), '200');
+    assert.equal((await upperOpenings(page)).length, 0);
+    const point = (z) => page.evaluate(async (target) => {
+      const { levelProject } = await import('./core/model.js');
+      const { deriveWalls, openingRect } = await import('./core/walls.js');
+      const s = window.__kepler.state;
+      const lp = levelProject(s.project, 'L1');
+      const placed = openingRect(lp, lp.openings[0], deriveWalls(lp));
+      return window.__kepler.screen3d({ x: placed.absCenter, y: placed.wall.band.y + placed.wall.band.h / 2, z: target });
+    }, z);
+    const readTop = () => page.evaluate(async () => {
+      const { windowSpanTop } = await import('./core/spanning-windows.js');
+      const s = window.__kepler.state;
+      const opening = s.project.levels[0].openings[0];
+      return windowSpanTop(s.project, 'L1', opening) ?? opening.sill + opening.height;
+    });
+    const head = await readTop();
+    assert.ok(head > 5000 && head < 6000);
+    await page.evaluate(async () => {
+      const { switchLevel } = await import('./ui/levels.js');
+      switchLevel('L2', { planView: false });
+    });
+    const upperGlass = await point(4100);
+    const picked = await page.evaluate((p) => {
+      const hit = window.__kepler.pick3d(p.x, p.y);
+      return hit && [hit.type, hit.id, hit.levelId];
+    }, upperGlass);
+    assert.deepEqual(picked, ['opening', id, 'L1']);
+    await page.mouse.click(upperGlass.x, upperGlass.y);
+    assert.deepEqual(await page.evaluate(() => {
+      const s = window.__kepler.state;
+      return [s.selection?.id, s.project.activeLevel];
+    }), [id, 'L1']);
+    async function dragTop(to) {
+      const start = await point(await readTop());
+      const end = await point(to);
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      assert.equal((await d3(page)).openingTool.resizing, 'top');
+      await page.mouse.move(end.x, end.y, { steps: 5 });
+      await page.mouse.up();
+    }
+    await dragTop(2250);
+    assert.ok(Math.abs(await readTop() - 2250) < 35);
+    assert.equal(await page.locator('#openTopLevel').inputValue(), '');
+    await dragTop(4800);
+    assert.ok(Math.abs(await readTop() - 4800) < 35);
+    assert.equal(await page.locator('#openTopLevel').inputValue(), 'L2');
+    await page.keyboard.press('Control+z');
+    assert.ok(Math.abs(await readTop() - 2250) < 35);
+  });
+
+  it('верхняя ручка притягивает окно к соседнему с видимой направляющей, Shift освобождает высоту', async () => {
+    const { page } = app;
+    const { start, near, neighborId } = await page.evaluate(async () => {
+      const { createOpening } = await import('./core/model.js');
+      const { mutate } = await import('./ui/store.js');
+      const { selectObject } = await import('./ui/tools.js');
+      const { project } = window.__kepler.state;
+      const room = project.levels[0].rooms[0];
+      const source = project.levels[0].openings[0];
+      const neighbor = createOpening('window', room.id, 0, 4400, 900);
+      mutate(() => {
+        Object.assign(neighbor, { heightMode: 'custom', sill: 600, height: 2050 });
+        Object.assign(source, { heightMode: 'custom', sill: 650, height: 1400 });
+        delete source.span;
+        project.levels[0].openings.push(neighbor);
+      });
+      selectObject({ type: 'opening', id: source.id });
+      const at = (z) => window.__kepler.screen3d({ x: 2200, y: -project.settings.exterior / 2, z });
+      return { start: at(2050), near: at(2620), neighborId: neighbor.id };
+    });
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    assert.equal((await d3(page)).openingTool.resizing, 'top');
+    await page.mouse.move(near.x, near.y, { steps: 5 });
+    assert.equal((await d3(page)).openingTool.alignedHeadId, neighborId);
+    assert.ok(await page.evaluate(async () => {
+      const { openingOverlay } = await import('./ui/opening3d.js');
+      return openingOverlay().some((f) => f.edges?.length === 1 && f.edges[0].every((p) => p.z === 2650));
+    }));
+    await page.keyboard.down('Shift');
+    await page.mouse.move(near.x, near.y + 1);
+    assert.equal((await d3(page)).openingTool.alignedHeadId, null);
+    await page.keyboard.up('Shift');
+    await page.mouse.move(near.x, near.y);
+    await page.mouse.up();
+    assert.equal(await page.evaluate(() => window.__kepler.state.project.openings[0].height), 2000);
+  });
+
   it('без ошибок в консоли', () => {
     assert.deepEqual(app.errors, []);
+  });
+});
+
+describe('Окно второго света на телефоне', () => {
+  it('верхний этаж выбирается из свойств окна', async () => {
+    const app = await startApp({ width: 390, height: 844, mobile: true });
+    try {
+      const { page } = app;
+      await openNew(page);
+      await setupTwoFloors(page);
+      await page.evaluate(async () => {
+        const { selectObject } = await import('./ui/tools.js');
+        const { switchLevel } = await import('./ui/levels.js');
+        const s = window.__kepler.state;
+        switchLevel('L1');
+        selectObject({ type: 'opening', id: s.project.openings[0].id });
+      });
+      await page.tap('#mobileBar [data-sheet="props"]');
+      await page.selectOption('#openTopLevel', 'L2');
+      assert.equal(await page.locator('#openTopGap').inputValue(), '0');
+      await page.selectOption('#openTopLevel', '');
+      assert.equal(await page.locator('#openTopGap').count(), 0);
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.close();
+    }
   });
 });

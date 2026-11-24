@@ -1,7 +1,7 @@
 // Единая контекстная панель действий над выделением — одно и то же место
 // для комнат, стен, проёмов, мебели и групп, как в BIM-редакторах.
 
-import { isShaft } from '../core/catalog.js';
+import { isOpenRoom, isShaft } from '../core/catalog.js';
 import { wallsInsideRooms } from '../core/bound-rooms.js';
 import { canFill } from '../core/landscape-array.js';
 import { roomById } from '../core/model.js';
@@ -16,6 +16,7 @@ import { findWall } from './hit.js';
 import { state } from './state.js';
 import { activeGrids } from './plan-grids.js';
 import { wallPins } from '../core/grid-pins.js';
+import { visibleRoofById } from './plan-roofs.js';
 import { allMasses } from '../core/masses.js';
 
 const button = (action, icon, text, key = '', extra = '') => `
@@ -73,8 +74,9 @@ function contentForSelection(sel) {
     const room = roomById(state.project, sel.id);
     if (!room) return null;
     const common = `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${room.parentId ? '' : button('rotate', '↻', 'Повернуть 90°', 'R')}`;
+    const atrium = isShaft(room) || isOpenRoom(room) ? '' : button('atrium', '⇳', 'Второй свет');
     const roomTools = isShaft(room) ? '' : `${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}${button('roof', '⌂', 'Крыша', 'K')}`;
-    return { label: isShaft(room) ? 'Шахта' : 'Помещение', html: `${common}${roomTools}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}` };
+    return { label: isShaft(room) ? 'Шахта' : 'Помещение', html: `${atrium}${common}${roomTools}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}` };
   }
   if (sel.type === 'wall') {
     const wall = findWall(sel.key, sel.from);
@@ -121,10 +123,10 @@ function contentForSelection(sel) {
     };
   }
   if (sel.type === 'roof') {
-    const roof = (state.project.roofs || []).find((r) => r.id === sel.id);
+    const roof = visibleRoofById(sel.id);
     if (!roof) return null;
     return {
-      label: `${roof.name} · ${overhangLabel(roof)} мм`,
+      label: roof.roofSource === 'linked' ? roof.name : `${roof.name} · ${overhangLabel(roof)} мм`,
       html: `${state.roofPlan ? '' : button('roof-plan', '⌂', 'План крыши')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
@@ -208,7 +210,7 @@ function contentForSelection(sel) {
     if (!o) return null;
     const canReset = !o.auto && o.stairId && slabOpeningStair(state.project, o);
     return {
-      label: `Проём в перекрытии · ${o.w} × ${o.h} мм${o.auto ? ' · по лестнице' : ''}`,
+      label: `${o.atrium ? 'Второй свет' : 'Проём в перекрытии'} · ${o.w} × ${o.h} мм${o.auto ? ' · по лестнице' : ''}`,
       html: `${canReset ? button('slab-auto', '↺', 'Вернуть авто') : ''}${o.auto ? '' : button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
@@ -234,6 +236,7 @@ function contentForSelection(sel) {
 export function renderSelectionToolbar() {
   const panel = el('selectionToolbar');
   if (!panel) return;
+  if (state.tool?.kind !== 'atrium') el('atriumPanel').hidden = true;
   const content = state.selection && !state.tool ? contentForSelection(state.selection) : null;
   if (!content) { panel.hidden = true; panel.innerHTML = ''; return; }
   panel.innerHTML = `<span class="selection-toolbar-label" title="${escapeHtml(content.label)}">${escapeHtml(content.label)}</span>
@@ -242,6 +245,7 @@ export function renderSelectionToolbar() {
 }
 
 export function bindSelectionToolbar() {
+  el('v3Atrium')?.addEventListener('click', async () => (await import('./atrium-ui.js')).startAtrium());
   // Модули грузим заранее: иначе первый клик выполняется с задержкой загрузки.
   const actionsReady = import('./plan-actions.js');
   const toolsReady = import('./tools.js');
@@ -266,6 +270,10 @@ export function bindSelectionToolbar() {
       const sel = state.selection;
       const gap = sel?.type === 'multi' ? gapOfSelection(sel) : null;
       if (gap) (await actionsReady).applyGapFix(gap, action.slice(4));
+      return;
+    }
+    if (action === 'atrium') {
+      (await import('./atrium-ui.js')).startAtrium();
       return;
     }
     if (action === 'slab-auto') {

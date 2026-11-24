@@ -75,16 +75,12 @@ test('этап показывает факты модели и не объявл
 test('карточка кровли показывает тип и уклон связанной автокрыши', () => {
   const project = createProject('Вальмовая крыша');
   project.levels[0].rooms.push(createRoom('living', 0, 0, 5000, 4000));
-  const html = homeEnvelopeHtml(project, {
-    analysis: {
-      status: 'attention',
-      roofs: {
-        autoLinked: true, autoType: 'hip', autoPitchDeg: 24, autoThicknessMm: 250, records: [],
-      },
-    },
-  });
-  assert.match(html, /Вальмовая автокровля/);
+  Object.assign(project.envelope.roof, { type: 'hip', pitchDeg: 24, overhang: 0 });
+  const html = homeEnvelopeHtml(project);
+  assert.match(html, /Связанная крыша/);
+  assert.match(html, /Вальмовая/);
   assert.match(html, /24°/);
+  assert.match(html, /24,8 м² в плане/);
 });
 
 test('сводка отражает этажи, явную кровлю, лестницу и существующий разрез', () => {

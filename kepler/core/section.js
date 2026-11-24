@@ -1,3 +1,4 @@
+import { clipFace } from './geom/clip.js';
 // Разрезы по линии на плане этажа (как в Revit). Чистый модуль без DOM.
 //
 // Вид-разрез (core/views.js, kind 'section'): line { a, b } — в осях дома,
@@ -102,31 +103,14 @@ function uIntervals(fr, poly) {
 // Точное пересечение линии разреза с плоской 3D-гранью. В отличие от
 // uIntervals сохраняет высоту на обоих концах — скат в разрезе остаётся
 // наклонным, а не превращается в прямоугольник по первой точке.
-function faceLineSegments(fr, points) {
-  const hits = [];
-  const add = (t, z) => {
-    if (t < -EPS || t > fr.len + EPS) return;
-    const existing = hits.find((hit) => Math.abs(hit.t - t) < 0.5);
-    if (existing) existing.z = (existing.z + z) / 2;
-    else hits.push({ t: Math.max(0, Math.min(fr.len, t)), z });
-  };
-  for (let i = 0; i < points.length; i += 1) {
-    const p = points[i]; const q = points[(i + 1) % points.length];
-    const sp = (p.x - fr.a.x) * fr.dir.y - (p.y - fr.a.y) * fr.dir.x;
-    const sq = (q.x - fr.a.x) * fr.dir.y - (q.y - fr.a.y) * fr.dir.x;
-    const tp = (p.x - fr.a.x) * fr.dir.x + (p.y - fr.a.y) * fr.dir.y;
-    if (Math.abs(sp) < EPS) add(tp, p.z);
-    if ((sp > EPS) === (sq > EPS) || Math.abs(sp - sq) < EPS) continue;
-    const k = sp / (sp - sq);
-    const x = p.x + (q.x - p.x) * k; const y = p.y + (q.y - p.y) * k;
-    add((x - fr.a.x) * fr.dir.x + (y - fr.a.y) * fr.dir.y, p.z + (q.z - p.z) * k);
-  }
-  hits.sort((a, b) => a.t - b.t);
-  const out = [];
-  for (let i = 0; i + 1 < hits.length; i += 2) {
-    if (hits[i + 1].t - hits[i].t > 0.5) out.push([hits[i], hits[i + 1]]);
-  }
-  return out;
+export function faceLineSegments(fr, face) {
+  const { pts, normal } = face;
+  if (!normal || Math.abs(normal.z) < EPS) return [];
+  const p = pts[0];
+  const at = (t) => ({
+    t, z: p.z - ((fr.a.x + fr.dir.x * t - p.x) * normal.x + (fr.a.y + fr.dir.y * t - p.y) * normal.y) / normal.z,
+  });
+  return lineIntervals(pts, fr.a, fr.dir, fr.len).map(([from, to]) => [at(from), at(to)]);
 }
 
 // Вычесть прямоугольник o из прямоугольника r (u0, u1, z0, z1).
@@ -190,21 +174,6 @@ function unionEdges(boxes) {
   return edges;
 }
 
-// Обрезать 3D-многоугольник полуплоскостью f(p) ≥ 0 (Сазерленд — Ходжмен).
-function clipPoly(pts, f) {
-  const out = [];
-  for (let i = 0; i < pts.length; i += 1) {
-    const p = pts[i]; const q = pts[(i + 1) % pts.length];
-    const fp = f(p); const fq = f(q);
-    if (fp >= 0) out.push(p);
-    if ((fp >= 0) !== (fq >= 0)) {
-      const k = fp / (fp - fq);
-      out.push({ x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k, z: p.z + (q.z - p.z) * k });
-    }
-  }
-  return out;
-}
-
 // Сечение: { cuts: [{ kind, u0, u1, z0, z1, pts }], edges, openings }.
 function cutSolids(project, fr, faces, levels) {
   const envelope = envelopeOf(project);
@@ -266,7 +235,7 @@ function cutSolids(project, fr, faces, levels) {
       && (f.roofType !== 'flat' || Math.hypot(f.normal?.x || 0, f.normal?.y || 0) > 1e-6);
     if (slopedRoof) {
       const thickness = Number(f.roofThickness) || ROOF_T;
-      for (const [a, b] of faceLineSegments(fr, f.pts)) {
+      for (const [a, b] of faceLineSegments(fr, f)) {
         const pa = { u: -fr.side * a.t, z: a.z }; const pb = { u: -fr.side * b.t, z: b.z };
         const [left, right] = pa.u <= pb.u ? [pa, pb] : [pb, pa];
         const pts = [
@@ -341,7 +310,7 @@ export function buildSection(project, view, { roof = true, terrain = true } = {}
     if (Math.abs(facing) < 1e-3 && !(n.x === 0 && n.y === 0)) continue;
     if (facing > 0 && !f.twoSided) continue;
     let pts3 = f.pts;
-    for (const g of planes) { pts3 = clipPoly(pts3, g); if (pts3.length < 3) break; }
+    for (const g of planes) { pts3 = clipFace(pts3, g); if (pts3.length < 3) break; }
     if (pts3.length < 3) continue;
     const pts = pts3.map((p) => ({ u: uOf(p), z: p.z }));
     if (Math.abs(area2(pts)) < 1) continue;

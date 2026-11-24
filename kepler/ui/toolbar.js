@@ -57,6 +57,10 @@ export function bindToolbar() {
   };
   refs.libTabRooms.addEventListener('click', () => libTab('rooms'));
   refs.libTabFurniture.addEventListener('click', () => libTab('furniture'));
+  el('modelAddRoom').addEventListener('click', () => {
+    openView(`plan:${state.project.activeLevel}`);
+    el('boundRoomBtn').click();
+  });
   el('undoBtn').addEventListener('click', undo);
   el('redoBtn').addEventListener('click', redo);
   el('fitBtn').addEventListener('click', fitView);

@@ -133,7 +133,7 @@ export function analyzeHomeClimateOverview(project = {}) {
 
   const summary = {
     roomCount: rooms.length,
-    windowCount: rooms.reduce((sum, room) => sum + room.windowCount, 0),
+    windowCount: new Set(rooms.flatMap((room) => room.windowIds)).size,
     windowlessRoomCount: rooms.filter((room) => room.windowCount === 0).length,
     roomsWithVentilationNeed: rooms.filter((room) => room.ventilation.required.length).length,
     ventilationFactRoomCount: rooms.filter((room) => room.ventilation.status === 'fact').length,
@@ -304,14 +304,17 @@ export function homeClimateOverviewKey(project = {}) {
       name: level.name,
       elevation: level.elevation,
       height: level.height,
+      slabThickness: level.slabThickness,
       tallWindowHeight: level.tallWindowHeight,
+      tallWindowTopOffset: level.tallWindowTopOffset,
+      tallWindowBottomOffset: level.tallWindowBottomOffset,
       rooms: array(level.rooms).map((room) => [
         room.id, room.name, room.type, room.x, room.y, room.w, room.h,
-        room.parentId || '', room.outline || null, room.notch || null,
+        room.parentId || '', room.outline || null, room.notch || null, room.ceiling || null,
       ]),
       openings: array(level.openings).filter((opening) => opening.kind === 'window').map((opening) => [
         opening.id, opening.roomId, opening.side, opening.offset, opening.width,
-        opening.height, opening.heightMode || '', opening.sill, opening.host || null, opening.orphan || false,
+        opening.height, opening.heightMode || '', opening.sill, opening.host || null, opening.orphan || false, opening.span || null,
       ]),
       items: array(level.items).map((item) => [item.id, item.kind, item.x, item.y]),
       walls: array(level.walls),

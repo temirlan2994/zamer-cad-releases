@@ -10,9 +10,8 @@
 import { DEFAULT_EXTERIOR, isOpenRoom, isShaft } from '../core/catalog.js';
 import { materialColor, overhangLabel, rectsOutline, roofIsSlanted, roofRects, roofSlabOutline } from '../core/roofs.js';
 import { roomPolygon, roomRects } from '../core/room-shape.js';
-import { linkedRoofFaces } from '../core/mesh3d.js';
 import {
-  ghostRoofFor, isRoofPlan, planRoofHandles, planRoofPref, rememberRoofHandles, roofOutlineEdges, roofs, selectedRoof,
+  ghostRoofFor, isRoofPlan, planLinkedRoofFaces, planLinkedRoofs, planRoofHandles, planRoofStack, planRoofPref, rememberRoofHandles, roofOutlineEdges, roofs, selectedRoof,
 } from './plan-roofs.js';
 import { state } from './state.js';
 
@@ -66,12 +65,19 @@ export function drawRoofOutlines(ctx, { p2s, tokens, print = false }) {
   if (print ? !pref.print : !pref.on) return 0;
   const lv = state.project?.activeLevel;
   const list = roofs().filter((r) => r.levelId === lv);
-  if (!list.length) return 0;
+  const linked = planLinkedRoofs().filter((r) => r.levelId === lv);
+  if (!list.length && !linked.length) return 0;
   ctx.save();
   ctx.strokeStyle = print ? '#333333' : (tokens.ink || tokens.text || '#3d4148');
   ctx.globalAlpha = print ? 0.75 : 0.35;
   ctx.lineWidth = 1;
   ctx.setLineDash([12, 4, 2, 4]);
+  for (const region of linked) {
+    ctx.beginPath();
+    for (const polygon of region.outline) for (const ring of polygon) polyPath(ctx, ring, p2s);
+    ctx.stroke();
+    state._planRoofs += 1;
+  }
   for (const r of list) {
     const edges = roofOutlineEdges(r);
     if (!edges.length) continue;
@@ -142,6 +148,44 @@ function drawHandles(ctx, hs, accent, hotId) {
   }
 }
 
+function drawLinkedRoof(ctx, region, facets, p2s, tokens, accent, ink) {
+  const selected = state.selection?.type === 'roof' && state.selection.id === region.id;
+  const hot = state.hover?.type === 'roof' && state.hover.id === region.id;
+  ctx.beginPath();
+  for (const polygon of region.outline) for (const ring of polygon) polyPath(ctx, ring, p2s);
+  ctx.fillStyle = selected ? accent : '#8797a6';
+  ctx.globalAlpha = selected ? 0.27 : 0.18;
+  ctx.fill('evenodd');
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = selected || hot ? accent : ink;
+  ctx.lineWidth = selected || hot ? 2 : 1.3;
+  ctx.stroke();
+  if (region.roofType !== 'flat') {
+    ctx.lineWidth = 0.65;
+    ctx.globalAlpha = 0.45;
+    for (const facet of facets) {
+      ctx.beginPath();
+      polyPath(ctx, facet.pts, p2s);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  // Центр грани находится на кровле даже при вырезанном дворе.
+  const surface = facets.reduce((best, face) => {
+    const area = Math.abs(face.pts.reduce((sum, p, i, pts) => {
+      const q = pts[(i + 1) % pts.length];
+      return sum + p.x * q.y - q.x * p.y;
+    }, 0));
+    return !best || area > best.area ? { area, pts: face.pts } : best;
+  }, null);
+  if (surface) {
+    const pts = surface.pts;
+    const center = p2s(pts.reduce((sum, p) => sum + p.x, 0) / pts.length,
+      pts.reduce((sum, p) => sum + p.y, 0) / pts.length);
+    labelAt(ctx, region.name, { x: center.x, y: center.y - 8 }, tokens, selected ? accent : ink, true);
+  }
+}
+
 // «План крыши» целиком (экранные координаты через p2s). → число крыш
 // (state._roofPlanDrawn — для автотестов).
 export function drawRoofPlan(ctx, { p2s, tokens }) {
@@ -153,44 +197,20 @@ export function drawRoofPlan(ctx, { p2s, tokens }) {
   const ink = tokens.ink || tokens.text || '#3d4148';
   drawUnderlay(ctx, p2s, tokens);
   ctx.save();
-  // Производная кровля не хранится в project.roofs: показываем её слабым
-  // штрихом под ручными крышами, чтобы «План крыши» отражал готовый дом.
-  const auto = linkedRoofFaces(state.project)
-    .filter((face) => face.kind === 'roof' && (face.roofSurface === 'top' || face.normal.z > 0.5));
-  if (auto.length) {
-    ctx.fillStyle = '#9aa3ad';
-    ctx.strokeStyle = ink;
-    ctx.globalAlpha = 0.12;
-    ctx.setLineDash([7, 5]);
-    for (const face of auto) {
-      ctx.beginPath();
-      polyPath(ctx, face.pts, p2s);
-      ctx.fill();
-      ctx.globalAlpha = 0.42;
-      ctx.stroke();
-      ctx.globalAlpha = 0.12;
-    }
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-    const groups = new Map();
-    for (const face of auto) {
-      if (!groups.has(face.autoRoofId)) groups.set(face.autoRoofId, []);
-      groups.get(face.autoRoofId).push(...face.pts);
-    }
-    for (const [id, points] of groups) {
-      const xs = points.map((point) => point.x); const ys = points.map((point) => point.y);
-      const center = p2s((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2);
-      const levelId = id.slice('auto-roof:'.length);
-      const title = state.project.levels.find((level) => level.id === levelId)?.name || 'этаж';
-      const roofFace = auto.find((face) => face.autoRoofId === id);
-      const type = { flat: 'плоская', shed: 'односкатная', gable: 'двускатная', hip: 'вальмовая' }[roofFace?.roofType] || 'крыша';
-      labelAt(ctx, `Авто · ${title} · ${type}`, { x: center.x, y: center.y - 8 }, tokens, ink, true);
-    }
-    state._autoRoofPlanDrawn = groups.size;
+  const regions = planLinkedRoofs();
+  const pitches = new Map();
+  for (const face of planLinkedRoofFaces()) {
+    if (!pitches.has(face.roofId)) pitches.set(face.roofId, []);
+    pitches.get(face.roofId).push(face);
   }
+  state._autoRoofPlanDrawn = regions.length;
   const sel = selectedRoof();
   const hoverId = state.hover?.type === 'roof' ? state.hover.id : null;
-  for (const r of roofs()) {
+  for (const r of planRoofStack()) {
+    if (r.roofSource === 'linked') {
+      drawLinkedRoof(ctx, r, pitches.get(r.id) || [], p2s, tokens, accent, ink);
+      continue;
+    }
     const isSel = sel?.id === r.id;
     const slab = roofOutlineEdges(r);
     if (!slab.length) continue;

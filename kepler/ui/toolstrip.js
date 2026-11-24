@@ -86,7 +86,7 @@ export function activateSiteTool(id) {
 }
 
 const LANDSCAPE_TOOLS = [
-  { id: 'section', name: 'Разрез', note: () => 'точки линии, Enter — вид сбоку',
+  { id: 'section', name: 'Разрез участка', note: () => 'линия профиля и отметки террас',
     active: () => state.tool?.kind === 'ls-section', action: () => startSectionTool() },
   { id: 'array', name: 'Массив', note: () => 'выделенное вдоль линии, по кругу, сеткой (Shift+A)',
     active: () => state.tool?.kind === 'ls-array', enabled: () => selectedIds().length > 0, action: () => startLandscapeArray() },
@@ -433,30 +433,30 @@ function syncContextTools() {
 export function renderToolstrip() {
   const strip = el('toolStrip');
   if (!strip || !state.project) return;
-  const mode = state.modeName;
   const context = toolContext();
+  const planTools = context === 'plan' || context === 'model';
   const t = state.tool;
   syncContextTools();
-  el('planTools').hidden = mode !== 'plan' && context !== 'model';
-  if (mode !== 'plan' && context !== 'model') closePlanToolFamilies();
-  refs.siteTools.hidden = mode !== 'site';
+  el('planTools').hidden = !planTools;
+  if (!planTools) closePlanToolFamilies();
+  refs.siteTools.hidden = context !== 'site';
   const ls = el('landscapeTools');
-  if (ls) ls.hidden = mode !== 'landscape';
+  if (ls) ls.hidden = context !== 'landscape';
   ensurePlanLabels();
   buildGroup(refs.siteTools, SITE_TOOLS, 'siteTool');
   buildGroup(ls, LANDSCAPE_TOOLS, 'lsTool');
-  if (mode === 'site') syncGroup(refs.siteTools, SITE_TOOLS, 'siteTool', (id) => activeSiteLayer() === id);
-  if (mode === 'landscape') syncGroup(ls, LANDSCAPE_TOOLS, 'lsTool', () => false);
+  if (context === 'site') syncGroup(refs.siteTools, SITE_TOOLS, 'siteTool', (id) => activeSiteLayer() === id);
+  if (context === 'landscape') syncGroup(ls, LANDSCAPE_TOOLS, 'lsTool', () => false);
   syncLibraryOpen(); // библиотека — по активному инструменту
   const phone = isPhone();
   const stairs = t?.kind === 'place-furniture' && t.itemKind === 'stairs';
-  const pinned = !phone && mode === 'plan' && !t && state.libraryPinned;
+  const pinned = !phone && planTools && !t && state.libraryPinned;
   toggle('selectToolBtn', !t && !pinned);
   toggle('wallToolBtn', t?.kind === 'wall');
   toggle('boundRoomBtn', t?.kind === 'bound-room' || t?.kind === 'place-room' || (pinned && state.libraryTab === 'rooms'));
   toggle('doorToolBtn', t?.kind === 'place-opening' && t.openKind === 'door');
   toggle('windowToolBtn', t?.kind === 'place-opening' && t.openKind === 'window');
-  const furnOpen = (mode === 'plan' || context === 'model') && ((t?.kind === 'place-furniture' && !stairs)
+  const furnOpen = planTools && ((t?.kind === 'place-furniture' && !stairs)
     || (phone ? document.body.classList.contains('sheet-library') && state.libraryTab === 'furniture' : pinned && state.libraryTab === 'furniture'));
   toggle('furnitureToolBtn', furnOpen);
   toggle('stairsToolBtn', stairs);

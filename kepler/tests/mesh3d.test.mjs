@@ -74,6 +74,7 @@ const sides = (faces) => faces.filter((f) => f.normal.z === 0);
 function twoStorey() {
   // 1 этаж: 10×6 м из двух комнат; 2 этаж — только над левой (5×6 м).
   const p = createProject();
+  p.envelope.roof.overhang = 0;
   p.settings.exterior = 250;
   p.rooms.push(createRoom('living', 0, 0, 5000, 6000), createRoom('kitchen', 5000, 0, 5000, 6000));
   p.levels.push(createLevel('2 этаж', 3000, 2800, 'L2'));
@@ -84,6 +85,7 @@ function twoStorey() {
 
 test('одноэтажный дом: одна кровля без швов по внешнему контуру', () => {
   const p = createProject();
+  p.envelope.roof.overhang = 0;
   p.settings.exterior = 250;
   p.rooms.push(createRoom('living', 0, 0, 5000, 4000), createRoom('kitchen', 5000, 0, 3000, 4000));
   const faces = buildHouseMesh(p, { roof: true });
@@ -134,6 +136,7 @@ test('лестничное помещение не вырезает нижнюю
 test('Г-образная комната: кровля без внутренних швов, внутренний угол на месте', () => {
   const p = createProject();
   p.settings.exterior = 250;
+  p.envelope.roof.overhang = 0;
   // Две смежные комнаты буквой Г: 6×3 и 3×3 под левой частью.
   p.rooms.push(createRoom('living', 0, 0, 6000, 3000), createRoom('hall', 0, 3000, 3000, 3000));
   const roof = buildHouseMesh(p, { roof: true }).filter((f) => f.kind === 'roof');

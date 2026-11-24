@@ -12,31 +12,91 @@ import { escapeHtml } from './dom.js';
 import { activeViewId, openView } from './props-views.js';
 import { state } from './state.js';
 import { selectObject } from './tools.js';
+import { closeSheets, isPhone } from './mobile.js';
+import { showPlanRect } from './view.js';
 
 const fmt = (v, d = 1) => v.toFixed(d).replace('.', ',');
 const row = (k, v) => `<div class="prop-row"><span>${k}</span><strong>${v}</strong></div>`;
+const roomQueries = new WeakMap();
+const searchText = (v) => v.toLocaleLowerCase('ru').replaceAll('ё', 'е');
+const numberedFloor = /(?:^|\s)(?:(-?\d+)(?:-й)?\s+этаж|этаж\s+(-?\d+))(?=\s|$)/u;
 
 function scheduleHtml(schedule) {
   const multi = schedule.length > 1;
   const active = state.project.activeLevel;
   const levels = schedule.map(({ level, rows, totals }) => {
-    const body = rows.map((r) => `<tr data-sched-room="${r.id}" data-sched-level="${level.id}" tabindex="0" title="Показать на плане">
+    const body = rows.map((r) => `<tr data-sched-room="${escapeHtml(r.id)}" data-sched-level="${escapeHtml(level.id)}" title="Показать на плане">
         <td class="num">${r.number}</td>
-        <td>${r.parent ? '↳ ' : ''}${escapeHtml(r.name)}${r.open ? ' <small>летн.</small>' : ''}</td>
+        <td><button type="button" class="sched-go" aria-label="${escapeHtml(`Показать на плане: ${r.name}, ${r.number}, ${level.name}`)}">${r.parent ? '↳ ' : ''}${escapeHtml(r.name)}</button>${r.open ? ' <small>летн.</small>' : ''}</td>
         <td class="area">${fmt(r.area, 2)}</td></tr>`).join('');
-    return `${multi ? `<tr class="sched-level${level.id === active ? ' active' : ''}"><th colspan="3">${escapeHtml(level.name)}</th></tr>` : ''}
+    return `<tbody data-sched-group="${escapeHtml(level.name)}">${multi ? `<tr class="sched-level${level.id === active ? ' active' : ''}"><th scope="rowgroup" colspan="3">${escapeHtml(level.name)}</th></tr>` : ''}
       ${body || '<tr><td colspan="3" class="empty">нет помещений</td></tr>'}
-      ${multi && rows.length ? `<tr class="sched-sub"><td></td><td>Итого по этажу</td><td class="area">${fmt(totals.total, 2)}</td></tr>` : ''}`;
+      ${multi && rows.length ? `<tr class="sched-sub"><td></td><td>Итого по этажу</td><td class="area">${fmt(totals.total, 2)}</td></tr>` : ''}</tbody>`;
   }).join('');
   const t = scheduleTotals(schedule);
-  return `<table class="sched-table" id="schedTable">
+  return `<input type="search" id="schedSearch" class="furn-search" aria-label="Найти комнату на плане" placeholder="Название, номер или этаж">
+    <p class="empty-hint sched-status" id="schedStatus" role="status"></p>
+    <table class="sched-table" id="schedTable">
       <thead><tr><th>№</th><th>Помещение</th><th class="area">м²</th></tr></thead>
-      <tbody>${levels}</tbody>
+      ${levels}
       <tfoot>
         <tr><td></td><td>Общая</td><td class="area">${fmt(t.total, 2)}</td></tr>
         <tr><td></td><td>Жилая</td><td class="area">${fmt(t.living, 2)}</td></tr>
         ${t.summer > 0 ? `<tr><td></td><td>Летние</td><td class="area">${fmt(t.summer, 2)}</td></tr>` : ''}
       </tfoot></table>`;
+}
+
+function bindSchedule(panel, project) {
+  const input = panel.querySelector('#schedSearch');
+  if (!input) return;
+  const table = panel.querySelector('#schedTable');
+  const status = panel.querySelector('#schedStatus');
+  const groups = Array.from(table.tBodies, (body) => ({
+    body, floor: searchText(body.dataset.schedGroup).match(numberedFloor), subtotal: body.querySelector('.sched-sub'),
+    rows: Array.from(body.querySelectorAll('[data-sched-room]'), (tr) => ({
+      tr, text: searchText([tr.cells[0].textContent, tr.querySelector('button').textContent, body.dataset.schedGroup].join(' ')),
+    })),
+  }));
+  function filter() {
+    const query = searchText(input.value.trim());
+    const floor = query.match(numberedFloor);
+    const terms = query.replace(numberedFloor, ' ').split(/\s+/).filter(Boolean);
+    let matches = 0;
+    for (const { body, floor: level, subtotal, rows } of groups) {
+      let onLevel = 0;
+      const onRequestedFloor = !floor || (level && (level[1] || level[2]) === (floor[1] || floor[2]));
+      for (const { tr, text } of rows) {
+        tr.hidden = !onRequestedFloor || !terms.every((term) => text.includes(term));
+        if (!tr.hidden) onLevel++;
+      }
+      body.hidden = Boolean(query) && !onLevel;
+      if (subtotal) subtotal.hidden = Boolean(query);
+      matches += onLevel;
+    }
+    table.tFoot.hidden = Boolean(query);
+    table.hidden = !matches;
+    status.textContent = !query ? '' : matches ? `Найдено помещений: ${matches}` : 'Помещений не найдено. Попробуйте другое название или номер.';
+  }
+  input.value = roomQueries.get(project) || '';
+  if (input.value) filter();
+  input.addEventListener('input', () => {
+    roomQueries.set(project, input.value);
+    filter();
+  });
+  table.addEventListener('click', (event) => {
+    const tr = event.target.closest('[data-sched-room]');
+    if (!tr) return;
+    const target = `plan:${tr.dataset.schedLevel}`;
+    if (state.analyticalView) document.dispatchEvent(new CustomEvent('kepler:close-analytical-view'));
+    if (activeViewId() !== target) openView(target);
+    else if (isPhone()) closeSheets();
+    const room = state.project.rooms.find((r) => r.id === tr.dataset.schedRoom);
+    if (!room) return;
+    state.propsTab = 'props';
+    selectObject({ type: 'room', id: room.id });
+    showPlanRect(room);
+    if (event.detail === 0 && !isPhone()) panel.querySelector('#roomName')?.focus({ preventScroll: true });
+  });
 }
 
 const TEP_TABS = [
@@ -92,13 +152,5 @@ export function renderTepPanel(panel) {
     renderTepPanel(panel);
     panel.querySelector(`[data-tep-tab="${state.tepTab}"]`)?.focus();
   }));
-  panel.querySelectorAll('[data-sched-room]').forEach((tr) => {
-    const go = () => {
-      const target = `plan:${tr.dataset.schedLevel}`;
-      if (activeViewId() !== target) openView(target);
-      selectObject({ type: 'room', id: tr.dataset.schedRoom });
-    };
-    tr.addEventListener('click', go);
-    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
-  });
+  if (tab === 'rooms') bindSchedule(panel, project);
 }

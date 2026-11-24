@@ -14,8 +14,10 @@
 // в осях дома; участок — в координатах съёмки;
 // world = origin + R(rotation) · local, Y вниз, угол по часовой.
 
+import { levelWindowOpenings } from './spanning-windows.js';
+import { exportRoofBodies } from './roof-export.js';
 import { buildDxf } from './zamer/dxf.js';
-import { openingHeight } from './opening-preset.js';
+import { openingHeight, openingSill } from './opening-preset.js';
 import { deriveWalls, doorLeaves, doorLink, openingRect, wallOutline } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
@@ -57,6 +59,7 @@ function buildLevelExport(project, level) {
     void: isShaft(room),
     name: room.name,
     parent: room.parentId || null,
+    ...(room.linkedRoof === false ? { linked_roof: false } : {}),
     polygon: roomPolygon(room),
     size: { w: room.w, h: room.h },
     ceiling_height: roomCeiling(room, level), // чистая высота, мм
@@ -94,10 +97,11 @@ function buildLevelExport(project, level) {
     } : {}),
   }));
 
-  const openings = project.openings.map((opening) => {
+  const openings = levelWindowOpenings(project, walls).map((opening) => {
     const placed = openingRect(project, opening, walls);
     return {
-      id: opening.id,
+      id: opening.cornerWing === 'return' ? `${opening.id}-return` : opening.id,
+      ...(opening.cornerWing ? { assembly_id: opening.id, wing: opening.cornerWing, joint: opening.corner.joint } : {}),
       kind: opening.kind,
       room: opening.roomId,
       side: opening.side,
@@ -108,8 +112,10 @@ function buildLevelExport(project, level) {
         : null,
       wallKey: placed ? placed.wall.key : null,
       type: opening.type || (opening.kind === 'door' ? 'single' : 'standard'),
-      height: openingHeight(opening, project.levels?.find((level) => level.id === project.activeLevel)),
-      sill: opening.kind === 'door' ? 0 : opening.sill ?? 900,
+      height: openingHeight(opening, level),
+      ...(opening.spanPart ? { owner_level: opening.spanOwnerLevelId, top_level: opening.span.levelId,
+        part: opening.spanPart, top_from_owner_floor: opening.spanTop } : {}),
+      sill: openingSill(opening, level),
       swingIn: opening.swingIn,
       hingeStart: opening.hingeStart,
       ...(opening.presetId ? { preset_id: opening.presetId } : {}),
@@ -177,6 +183,7 @@ function buildLevelExport(project, level) {
     // Проёмы в перекрытии под этажом (core/slab-openings.js): авто — по лестнице.
     slab_openings: slabOpenings(project, level.id).map((o) => ({
       id: o.id, source: o.auto ? 'stair' : 'manual', stair: o.stairId || null,
+      ...(o.atrium ? { atrium: { ...o.atrium, lowerLevelId: o.fromLevelId } } : {}),
       polygon: slabOpeningPolygon(o),
       size: { w: o.w, h: o.h }, area_m2: Number((slabOpeningArea(o) / 1_000_000).toFixed(3)),
     })),
@@ -232,6 +239,7 @@ export function buildStructuredExport(project) {
       slabs: structuredClone(envelope.slabs),
       earthworks: structuredClone(envelope.earthworks),
     },
+    linked_roofs: exportRoofBodies(project),
     foundation_system: {
       type: foundationSystem.type,
       level_id: foundationSystem.levelId,
@@ -409,7 +417,7 @@ export function planEntities(project, { dims = true } = {}) {
     });
   }
 
-  for (const opening of project.openings) {
+  for (const opening of levelWindowOpenings(project, walls)) {
     if (opening.kind === 'door') {
       const type = opening.type || 'single';
       if (type === 'sliding') {

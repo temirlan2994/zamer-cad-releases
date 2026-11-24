@@ -6,8 +6,9 @@ import {
 } from '../ui/cloud-draft-metadata.js';
 
 test('локальный autosave создаёт ленивый draft без разбора и миниатюры', () => {
-  const draft = lazyCloudDraft('{"levels":[]}', 7);
-  assert.deepEqual(draft, { text: '{"levels":[]}', order: 7, metadataReady: false });
+  const capturedAt = '2026-11-24T00:15:00.000Z';
+  const draft = lazyCloudDraft('{"levels":[]}', 7, capturedAt);
+  assert.deepEqual(draft, { text: '{"levels":[]}', order: 7, capturedAt: Date.parse(capturedAt), metadataReady: false });
   assert.equal('preview' in draft, false);
   assert.equal('stats' in draft, false);
 });

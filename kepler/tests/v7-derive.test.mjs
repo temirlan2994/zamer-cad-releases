@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { area, pointInPolygon, rectRing, union } from '../core/geom/index.js';
 import {
-  addBlock, addOpening, addWall, createBlock, createOpening7, createProject7, createWall, moveBlock, raiseBlock,
+  addBlock, addOpening, addWall, blockHasWalls, createBlock, createOpening7, createProject7, createWall, moveBlock, raiseBlock,
   removeBlock, resizeBlock,
 } from '../core/v7/model.js';
 import { derive, totalArea } from '../core/v7/derive.js';
@@ -221,7 +221,7 @@ test('explodeBlock не меняет помещения (шаблоны и съ�
       const base = fresh(p, { levelId: L.id });
       for (const b of L.blocks) {
         const q = clone(p);
-        assert.equal(explodeBlock(q, b.id, { levelId: L.id }).ok, true);
+        assert.equal(explodeBlock(q, b.id, { levelId: L.id }).ok, blockHasWalls(b));
         const res = fresh(q, { levelId: L.id });
         assert.deepEqual(roomsView(res), roomsView(base), `${name}/${L.id}: разобран ${b.id}`);
         assert.ok(Math.abs(area(res.outline) - area(base.outline)) < 1, `${name}: тело стен то же`);

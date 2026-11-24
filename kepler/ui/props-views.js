@@ -15,7 +15,7 @@ import { floorAnalyticalViewById, floorAnalyticalViews } from '../core/analytica
 import {
   ROOF_PLAN_VIEW, VIEW_SCALES, facadeViews, sectionViews, userSheets, viewById, viewPlacement, viewScale,
 } from '../core/views.js';
-import { setRoofPlanOpener } from './plan-roofs.js';
+import { planLinkedRoofs, setRoofPlanOpener } from './plan-roofs.js';
 import { setRoofPlan } from './roof-plan.js';
 import { customViewAngle, isPlanEmpty, viewAngle } from '../core/view-angles.js';
 import { el, escapeHtml } from './dom.js';
@@ -40,7 +40,7 @@ import {
 } from './sheet-view.js';
 import { state } from './state.js';
 import { requestDraw } from './view.js';
-import { close3d, is3dOpen, open3d } from './view3d.js';
+import { close3d, is3dOpen, open3d, view3dScopeLabel } from './view3d.js';
 import { applyViewAngle, axesToViewCmd, resetViewAngleCmd, startAlignView } from './view-align.js';
 
 const fmtAngle = (deg) => String(Math.round(deg * 10) / 10);
@@ -262,14 +262,11 @@ function massBlock() {
     </div>`;
 }
 
-// Контур кровли (ui/render-roofs.js) — только когда в проекте есть крыши-плиты.
 function roofBlock() {
-  const count = state.project.roofs?.length || 0;
-  if (!count) return '';
   const pref = planRoofPref();
   return `
-    <div class="prop-block" id="viewsRoofs">
-      <label class="check-row"><input type="checkbox" id="viewsRoofOn" ${pref.on ? 'checked' : ''}><span>Контур кровли</span><em>${count}</em></label>
+    <div class="prop-block" id="viewsRoofs" hidden>
+      <label class="check-row"><input type="checkbox" id="viewsRoofOn" ${pref.on ? 'checked' : ''}><span>Контур кровли</span><em></em></label>
       <label class="check-row"><input type="checkbox" id="viewsRoofPrint" ${pref.print ? 'checked' : ''}><span>Печатать контур на листах</span></label>
       ${state.roofPlan ? '' : '<button type="button" id="viewsRoofPlanBtn">Открыть план крыши</button>'}
     </div>`;
@@ -295,7 +292,7 @@ export function viewSettingsHtml() {
   if (is3dOpen()) {
     return `
     <div class="prop-block" id="viewsSettings">
-      <div class="prop-row"><span>Состав вида</span><strong>Вся модель</strong></div>
+      <div class="prop-row"><span>Состав вида</span><strong id="v3Scope">${escapeHtml(view3dScopeLabel())}</strong></div>
     </div>${placeBlockHtml('3d')}`;
   }
   const mode = state.modeName || 'plan';
@@ -435,7 +432,18 @@ export function bindViewSettings(panel, rerender) {
     const outer = state.project.settings?.dimOuter !== false;
     if (outer !== e.target.checked) el('dimModeBtn')?.click();
   });
-  // Разделы: раскрытость помнится.
+  // Контуры могут строиться впервые. В закрытой панели расчёт не нужен.
+  const layers = panel.querySelector('[data-sec="layers"]');
+  const showRoofCount = () => {
+    if (!layers?.open) return;
+    const roofs = [...(state.project.roofs || []), ...planLinkedRoofs()];
+    const block = layers.querySelector('#viewsRoofs');
+    block.hidden = !roofs.length;
+    block.querySelector('em').textContent = state.roofPlan
+      ? roofs.length : roofs.filter((roof) => roof.levelId === state.project.activeLevel).length;
+  };
+  showRoofCount();
+  layers?.addEventListener('toggle', showRoofCount);
   panel.querySelectorAll('details.vs-sec').forEach((d) => d.addEventListener('toggle', () => setSectionOpen(d.dataset.sec, d.open)));
   // Отображение и освещение вида (core/view-display.js) — у каждого вида свои.
   const display = (patch) => {

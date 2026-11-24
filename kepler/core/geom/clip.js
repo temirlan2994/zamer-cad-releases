@@ -432,3 +432,18 @@ function boxesTouch(a, b) {
   const p = geomBox(a); const q = geomBox(b);
   return p.x0 <= q.x1 && q.x0 <= p.x1 && p.y0 <= q.y1 && q.y0 <= p.y1;
 }
+
+// Обрезать 3D-многоугольник полуплоскостью f(p) ≥ 0 (Сазерленд — Ходжмен).
+export function clipFace(pts, f) {
+  const out = [];
+  for (let i = 0; i < pts.length; i += 1) {
+    const p = pts[i]; const q = pts[(i + 1) % pts.length];
+    const fp = f(p); const fq = f(q);
+    if (fp >= 0) out.push(p);
+    if ((fp >= 0) !== (fq >= 0)) {
+      const k = fp / (fp - fq);
+      out.push({ x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k, z: p.z + (q.z - p.z) * k });
+    }
+  }
+  return out;
+}

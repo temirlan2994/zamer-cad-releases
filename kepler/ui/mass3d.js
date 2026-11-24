@@ -36,7 +36,7 @@
 // те же ручки с увеличенной зоной попадания.
 
 import {
-  FACE_NORMAL, MASS_H_DEFAULT, MASS_MIN, createMass, createMassVoid, faceSize, floorsLabel, massBox,
+  FACE_NORMAL, MASS_H_DEFAULT, MASS_MIN, massMinimum, createMass, createMassVoid, faceSize, floorsLabel, massBox,
   massStep, setFaceSize,
 } from '../core/masses.js';
 import {
@@ -45,6 +45,7 @@ import {
 } from '../core/mass-gizmo.js';
 import { axisTargets, snapContact, snapLabel, snapMove, snapTolerances } from '../core/mass-snap.js';
 import { basePlane, pickMass, rayPlaneZ } from '../core/pick3d.js';
+import { updateFacadeAttachment } from '../core/facade.js';
 import { massFaces } from '../core/mesh3d.js';
 import { toast } from './dom.js';
 import {
@@ -75,7 +76,7 @@ export const massDragging = () => Boolean(drag);
 export const massHover = () => hover;
 
 export function massBoxes() {
-  return solidMassList().map((m) => ({ id: m.id, ...massBox(m) }));
+  return solidMassList().map((m) => ({ id: m.id, ...(m.facadeKind ? { facadeKind: m.facadeKind } : {}), ...massBox(m) }));
 }
 
 // Отдельно для 3D-pick: cutter не считается опорой, но его каркас можно
@@ -618,12 +619,12 @@ function dragGizmo(e) {
   const snaps = [];
   for (const c of axes) {
     const r = snapAlong(c, b, cur, raw[c], e, d.held, {
-      skip: d.id, ground: c === 'z' ? groundZs(d.start) : [], step, accept: c === 'z' ? (v) => b.z0 + v >= 0 : null,
+      skip: d.id, ground: c === 'z' ? groundZs(d.start) : [], step, accept: c === 'z' && !d.start.facadeKind ? (v) => b.z0 + v >= 0 : null,
     });
     shift[c] = r.value;
     if (r.snap) snaps.push({ t: r.snap, c });
   }
-  shift.z = Math.max(-d.start.z0, shift.z);
+  if (!d.start.facadeKind) shift.z = Math.max(-d.start.z0, shift.z);
   const next = { ...d.start, x: d.start.x + shift.x, y: d.start.y + shift.y, z0: Math.round(d.start.z0 + shift.z) };
   const nb = massBox(next);
   d.snaps = snaps.map((s) => ({ t: s.t, box: nb }));
@@ -638,6 +639,7 @@ function dragHandle(e) {
   const b = massBox(d.start);
   const s = d.handle.s;
   const p0 = handlePoint(b, s);
+  const minimum = d.start.facadeKind ? massMinimum(d.start) : MASS_GRIP_MIN;
   const shift = { x: 0, y: 0, z: 0 };
   const snaps = [];
   const step = massStep(1 / env.worldPerPx());
@@ -646,8 +648,8 @@ function dragHandle(e) {
     const hi = s[c] > 0;
     const accept = (dv) => {
       const q = p + dv;
-      if (hi) return q - b[`${c}0`] >= MASS_GRIP_MIN;
-      return b[`${c}1`] - q >= MASS_GRIP_MIN && (c !== 'z' || q >= 0);
+      if (hi) return q - b[`${c}0`] >= minimum;
+      return b[`${c}1`] - q >= minimum && (c !== 'z' || d.start.facadeKind || q >= 0);
     };
     const pt = { ...b, [`${c}0`]: p, [`${c}1`]: p };
     const r = snapAlong(c, pt, b, v, e, d.held, {
@@ -667,7 +669,7 @@ function dragHandle(e) {
     shift.x = snapTo('x', p.x - d.p0.x);
     shift.y = snapTo('y', p.y - d.p0.y);
   }
-  const next = resizeByHandle(d.start, s, shift);
+  const next = resizeByHandle(d.start, s, shift, minimum);
   const nb = massBox(next);
   d.snaps = snaps.map((t) => ({ t, box: nb }));
   return next;
@@ -679,6 +681,7 @@ export function moveMassDrag(e) {
   if (!drag) return;
   const next = drag.handle ? dragHandle(e) : dragGizmo(e);
   if (!next) return;
+  updateFacadeAttachment(state.project, drag.start, next);
   replaceMassLive(drag.id, next);
   drag.changed = JSON.stringify(next) !== JSON.stringify(drag.start);
   const b = massBox(next);
@@ -742,6 +745,7 @@ const FIELD_LABEL = { w: 'Ширина', d: 'Глубина', h: 'Высота' 
 function showNum(kind, value, extra = {}) {
   const input = numInput();
   if (!input) return;
+  input.min = String(kind === 'face' ? massMinimum(massById(extra.id)) : MASS_MIN);
   numField = { kind, ...extra };
   const at = lastCursor || { x: innerWidth / 2, y: innerHeight / 2 };
   const r = input.parentElement.getBoundingClientRect();
@@ -792,7 +796,8 @@ function applyNum(e) {
   const f = numField;
   if (!f || !input) return;
   const v = Number(String(input.value).replace(',', '.'));
-  if (!Number.isFinite(v) || v < MASS_MIN) { toast(`Нужно число от ${MASS_MIN} мм`, true); return; }
+  const minimum = f.kind === 'face' ? massMinimum(massById(f.id)) : MASS_MIN;
+  if (!Number.isFinite(v) || v < minimum) { toast(`Нужно число от ${minimum} мм`, true); return; }
   const t = tool();
   if (f.kind === 'face') {
     hideNum();

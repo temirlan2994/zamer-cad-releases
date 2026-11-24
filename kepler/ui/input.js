@@ -1,3 +1,5 @@
+import { cornerWindowHandles } from '../core/corner-windows.js';
+import { atriumClick, atriumHover } from './atrium-ui.js';
 // Ввод мышью на канвасе: выбор, перетаскивания, рамка, колесо, drag-and-drop.
 
 import { furnitureDef, isOpenRoom, roomType } from '../core/catalog.js';
@@ -15,7 +17,7 @@ import { dragManualWallEnd } from '../core/wall-manual.js';
 import {
   boundRoomClick, boundRoomHover, finishWallChain, wallPointMagnet, wallToolClick, wallToolHover,
 } from './wall-tool.js';
-import { fitOpeningOffset, snapOpeningOffset } from '../core/opening-spacing.js';
+import { fitOpeningOffset, resizeCornerWing, snapOpeningOffset } from '../core/opening-spacing.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import {
   captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, reanchorOpenings,
@@ -52,6 +54,7 @@ import {
   LANDSCAPE_MIME, applyLandscapeMarquee, cancelLandscapeDrag, dropLandscape, landscapeDblClick, landscapeDragEnd, landscapeDragMove,
   landscapeHover, landscapePointerDown,
 } from './landscape.js';
+import { switchLevel } from './levels.js';
 import { closeLibrarySheet } from './mobile.js';
 import {
   addBedsideNightstand, addFurnitureAt, autoDockAfterGesture, computeOpeningParams, eatOverlapsAfter, openingSnapOpts, placeOpeningAt,
@@ -455,6 +458,7 @@ function updateHoverAndGhost(world, plan, event) {
     requestDraw();
     return;
   }
+  if (state.tool?.kind === 'atrium') { atriumHover(plan); return; }
   if (state.tool?.kind === 'slab-opening') { slabToolHover(plan, event); return; }
   if (state.draft) {
     // Возврат к первой точке (от 3 точек) — замыкание; иначе привязки черчения.
@@ -807,6 +811,7 @@ export function bindCanvasInput() {
         return;
       }
       if (t.kind === 'place-opening') { state.openingFree = event.shiftKey; tapOrNow(event, screen, () => placeOpeningAt(plan)); return; }
+      if (t.kind === 'atrium') { tapOrNow(event, screen, () => atriumClick(plan)); return; }
       if (t.kind === 'slab-opening') { tapOrNow(event, screen, () => slabToolClick(plan, event)); return; }
       if (t.kind === 'wall') {
         const mods = { shiftKey: event.shiftKey };
@@ -1073,7 +1078,14 @@ export function bindCanvasInput() {
 
     if (picked?.type === 'opening') {
       const opening = picked.entity;
+      if (opening.spanPart === 'upper') {
+        switchLevel(opening.spanOwnerLevelId, { planView: false });
+        selectObject({ type: 'opening', id: opening.id });
+        toast(`Витраж на два этажа · ${activeLevel(state.project).name}`);
+        return;
+      }
       selectObject({ type: 'opening', id: opening.id });
+      if (opening.corner) return;
       drag = { kind: 'opening', id: opening.id, before: snapshot(), moved: false };
       return;
     }
@@ -1635,6 +1647,16 @@ export function bindCanvasInput() {
     if (drag.kind === 'opening-handle') {
       const opening = state.project.openings.find((o) => o.id === drag.id);
       if (!opening) return;
+      if (opening.corner) {
+        const handle = cornerWindowHandles(state.project, opening, state.walls).find((h) => h.end === drag.end);
+        if (!handle) return;
+        const along = handle.wall.orient === 'h' ? plan.x : plan.y;
+        const step = event.shiftKey ? 1 : 50;
+        const width = Math.max(600, Math.round((along - handle.start) * handle.sign / step) * step);
+        if (resizeCornerWing(state.project, opening, state.walls, drag.end, width)) drag.moved = true;
+        requestDraw();
+        return;
+      }
       const placedNow = openingRect(state.project, opening, state.walls);
       const frame = openingFrame(state.project, opening, state.walls);
       if (!placedNow || !frame) return;

@@ -79,6 +79,140 @@ describe('этажи', () => {
   });
 });
 
+describe('общие отступы окон в пол', () => {
+  let app;
+  before(async () => {
+    app = await startApp({ width: 1280, height: 800 });
+    await openNew(app.page);
+    await app.page.evaluate(async () => {
+      const { createOpening, createRoom } = await import('./core/model.js');
+      const { mutate } = await import('./ui/store.js');
+      const project = window.__kepler.state.project;
+      const room = createRoom('living', 0, 0, 8000, 5000);
+      const linkedA = createOpening('window', room.id, 0, 1800, 1200);
+      Object.assign(linkedA, {
+        id: 'linked-a', type: 'panoramic', heightMode: 'level', sill: 0, height: 1800,
+      });
+      const linkedB = createOpening('window', room.id, 0, 4200, 1200);
+      Object.assign(linkedB, {
+        id: 'linked-b', type: 'lift-slide', heightMode: 'level', sill: 300, height: 2700,
+      });
+      const custom = createOpening('window', room.id, 0, 6500, 900);
+      Object.assign(custom, {
+        id: 'custom', type: 'fixed', heightMode: 'custom', sill: 700, height: 1600,
+      });
+      mutate(() => {
+        project.rooms = [room];
+        project.openings = [linkedA, linkedB, custom];
+      });
+    });
+  });
+  after(async () => { await app?.close(); });
+
+  it('одной парой полей меняет все связанные окна, но не индивидуальные', async () => {
+    const { page } = app;
+    const signatureBefore = await page.evaluate(async () => {
+      const { layoutSignature } = await import('./ui/auto-layout.js');
+      const project = window.__kepler.state.project;
+      return layoutSignature(project, project.rooms[0]);
+    });
+    if (!(await page.isVisible('#tallWindowBottomGap'))) await page.click('#projectSummary');
+    await page.fill('#tallWindowBottomGap', '0');
+    await page.press('#tallWindowBottomGap', 'Tab');
+    await page.fill('#tallWindowTopGap', '200');
+    await page.press('#tallWindowTopGap', 'Tab');
+
+    const geometry = () => page.evaluate(async () => {
+      const { activeLevel } = await import('./core/model.js');
+      const { openingHeight, openingSill } = await import('./core/opening-preset.js');
+      const project = window.__kepler.state.project;
+      const level = activeLevel(project);
+      return Object.fromEntries(project.openings.map((opening) => [opening.id, {
+        sill: openingSill(opening, level), height: openingHeight(opening, level),
+        mode: opening.heightMode,
+      }]));
+    });
+    let values = await geometry();
+    assert.deepEqual(values['linked-a'], { sill: 0, height: 2800, mode: 'level' });
+    assert.deepEqual(values['linked-b'], values['linked-a']);
+    assert.deepEqual(values.custom, { sill: 700, height: 1600, mode: 'custom' });
+    assert.match(await page.textContent('#tallWindowComputedHeight'), /2800 мм · 2 окна/);
+    assert.notEqual(await page.evaluate(async () => {
+      const { layoutSignature } = await import('./ui/auto-layout.js');
+      const project = window.__kepler.state.project;
+      return layoutSignature(project, project.rooms[0]);
+    }), signatureBefore, 'общие отступы инвалидируют готовый вариант авторасстановки');
+
+    await page.evaluate(async () => {
+      const { selectObject } = await import('./ui/tools.js');
+      selectObject({ type: 'opening', id: 'linked-a' });
+    });
+    assert.equal(await page.inputValue('#openH'), '2800');
+    assert.equal(await page.inputValue('#openSill'), '0');
+    assert.equal(await page.isDisabled('#openH'), true);
+    assert.equal(await page.isDisabled('#openSill'), true);
+    await page.uncheck('#openHeightLinked');
+
+    await page.evaluate(async () => {
+      const { selectObject } = await import('./ui/tools.js');
+      selectObject(null);
+    });
+    if (!(await page.isVisible('#tallWindowBottomGap'))) await page.click('#projectSummary');
+    await page.fill('#tallWindowBottomGap', '100');
+    await page.press('#tallWindowBottomGap', 'Tab');
+    await page.fill('#tallWindowTopGap', '400');
+    await page.press('#tallWindowTopGap', 'Tab');
+    values = await geometry();
+    assert.deepEqual(values['linked-a'], { sill: 0, height: 2800, mode: 'custom' }, 'отвязанное окно сохраняет геометрию');
+    assert.deepEqual(values['linked-b'], { sill: 100, height: 2500, mode: 'level' });
+    assert.deepEqual(values.custom, { sill: 700, height: 1600, mode: 'custom' });
+    assert.deepEqual(app.errors, []);
+  });
+});
+
+describe('надстройка комнаты', () => {
+  it('из каталога 3D на план → комната этажом выше → общие отступы → отмена', async () => {
+    const app = await startApp();
+    try {
+      const { page } = app;
+      await openNew(page);
+      await page.click('#view3dBtn');
+      await page.click('#furnitureToolBtn');
+      await page.click('#modelAddRoom');
+      assert.equal(await page.isVisible('#roomSearch'), true);
+      await dropOnCanvas(page, 'application/x-kepler-room', 'living');
+      await page.click('#roomAbove');
+      const result = await levels(page);
+      assert.equal(result.list.length, 2);
+      assert.deepEqual(result.list[0].rooms, result.list[1].rooms);
+      assert.equal(result.active, result.list[1].id);
+      await page.keyboard.press('Control+z');
+      assert.equal((await levels(page)).list.length, 1);
+      await page.keyboard.press('Control+y');
+      assert.equal((await levels(page)).list.length, 2);
+      await page.click('#levelBar button:first-child');
+      await page.click('#projectSummary');
+      assert.equal(await page.isChecked('#allLevelWindowGaps'), true);
+      await page.fill('#tallWindowTopGap', '240');
+      await page.press('#tallWindowTopGap', 'Tab');
+      const gaps = () => page.evaluate(() => window.__kepler.state.project.levels.map((level) => level.tallWindowTopOffset));
+      assert.deepEqual(await gaps(), [240, 240]);
+      await page.uncheck('#allLevelWindowGaps');
+      await page.fill('#tallWindowTopGap', '320');
+      await page.press('#tallWindowTopGap', 'Tab');
+      assert.deepEqual(await gaps(), [320, 240]);
+      await page.evaluate(async () => {
+        const { selectObject } = await import('./ui/tools.js');
+        selectObject({ type: 'room', id: window.__kepler.state.project.rooms[0].id });
+      });
+      await page.click('#roomAbove');
+      assert.match(await page.textContent('#toast'), /место занимает/);
+      assert.deepEqual((await levels(page)).list.map((l) => l.rooms.length), [1, 1]);
+      assert.deepEqual(app.errors, []);
+    } finally { await app.close(); }
+  });
+});
+
 describe('этажи на телефоне', () => {
   it('добавление, свойства, переход с участка и удаление через меню видов', async () => {
     const app = await startApp({ mobile: true });
@@ -106,6 +240,14 @@ describe('этажи на телефоне', () => {
       await page.fill('#levelHeight', '3.6');
       await page.press('#levelHeight', 'Tab');
       await page.waitForFunction(() => window.__kepler.state.project.levels.at(-1).height === 3600);
+      await page.fill('#tallWindowBottomGap', '80');
+      await page.press('#tallWindowBottomGap', 'Tab');
+      await page.fill('#tallWindowTopGap', '320');
+      await page.press('#tallWindowTopGap', 'Tab');
+      assert.deepEqual(await page.evaluate(() => {
+        const level = window.__kepler.state.project.levels.at(-1);
+        return [level.tallWindowBottomOffset, level.tallWindowTopOffset, level.tallWindowHeight];
+      }), [80, 320, 3200]);
       await pickWorkspaceView(page, 'model', 'site');
       await picker.tap();
       await menu.getByRole('tab', { name: 'Планы' }).tap();

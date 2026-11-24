@@ -2,22 +2,32 @@
 // инструменте): тип, ширина, высота, подоконник. Чистый модуль без DOM.
 
 import { DOOR_WIDTH, WINDOW_WIDTH } from './catalog.js';
-import { DEFAULT_TALL_WINDOW_HEIGHT } from './model.js';
+import {
+  DEFAULT_TALL_WINDOW_HEIGHT, levelTallWindowOffsets,
+} from './model.js';
 
 export const HIGH_WINDOW_TYPES = new Set(['panoramic', 'lift-slide', 'sliding-tall', 'french']);
 
 export function levelTallWindowHeight(level) {
-  return Number(level?.tallWindowHeight) >= 300
-    ? Number(level.tallWindowHeight) : DEFAULT_TALL_WINDOW_HEIGHT;
+  return level ? levelTallWindowOffsets(level).height : DEFAULT_TALL_WINDOW_HEIGHT;
+}
+
+// Фактическая отметка низа. У связанного витража сохранённый sill служит
+// только совместимостью со старыми файлами: весь этаж следует одному отступу.
+export function openingSill(opening, level) {
+  if (opening?.kind === 'door') return 0;
+  if (opening?.kind === 'window' && opening.heightMode === 'level') {
+    return levelTallWindowOffsets(level).bottom;
+  }
+  const value = Number(opening?.sill);
+  return Number.isFinite(value) && value >= 0 ? value : 900;
 }
 
 // Фактическая высота проёма. Связанный витраж хранит лишь режим, поэтому
 // изменение параметра этажа сразу обновляет 2D, 3D, расчёты и экспорт.
 export function openingHeight(opening, level) {
   if (opening?.kind === 'window' && opening.heightMode === 'level') {
-    const sill = Math.max(0, Number(opening.sill) || 0);
-    const max = Math.max(300, (Number(level?.height) || 3000) - 100 - sill);
-    return Math.max(300, Math.min(levelTallWindowHeight(level), max));
+    return levelTallWindowOffsets(level).height;
   }
   return Math.max(0, Number(opening?.height) || (opening?.kind === 'door' ? 2100 : 1500));
 }
@@ -42,7 +52,8 @@ export function applyOpeningPreset(opening, preset) {
   opening.width = preset.width;
   opening.height = preset.height;
   if (opening.kind === 'window') {
-    opening.heightMode = preset.heightMode === 'level' || HIGH_WINDOW_TYPES.has(preset.type) ? 'level' : 'custom';
+    opening.heightMode = preset.heightMode === 'custom' ? 'custom'
+      : preset.heightMode === 'level' || HIGH_WINDOW_TYPES.has(preset.type) ? 'level' : 'custom';
     opening.frameMaterial = preset.frameMaterial || 'aluminum';
     opening.frameColor = preset.frameColor || 'anthracite';
   }

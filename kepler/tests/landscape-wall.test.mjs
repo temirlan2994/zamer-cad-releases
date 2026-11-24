@@ -7,7 +7,10 @@ import {
   applyStairsDrop, createLandscapeObject, fmtElev, landscapeDef, normalizeElev, normalizeLandscape, retainingEdges,
   retainingInfo, stairsDrop, stairsInfo,
 } from '../core/landscape.js';
-import { landscapeFaces } from '../core/mesh3d-landscape.js';
+import { pointInPolygon, ringArea } from '../core/geom/poly.js';
+import { loungeParts } from '../core/landscape-lounge.js';
+import { platformLevelEdit, setPlatformLevel, stairsAtPlatformEdge } from '../core/landscape-tools.js';
+import { cutLandscapeGround, landscapeFaces } from '../core/mesh3d-landscape.js';
 import { landscapeDxfEntities, landscapeSchedule, retainingTotals } from '../core/landscape-report.js';
 import { buildSitePlanDxf, buildStructuredExport } from '../core/export.js';
 import { tepReport, tepRows } from '../core/tep.js';
@@ -79,6 +82,7 @@ test('отметки: нормализация, подпись, перепад �
   assert.equal('elev' in createLandscapeObject('bench', 0, 0, { elev: 300 }), false);
   const st = createLandscapeObject('stairs-out', 0, 0, { elev: 0, elevTo: 600 });
   assert.equal(stairsDrop(st), 600);
+  assert.equal(st.height, 600, 'по двум отметкам при создании');
   assert.equal(applyStairsDrop(st), true);
   assert.equal(st.height, 600);
   assert.equal(stairsInfo(st).steps, 4);
@@ -157,4 +161,81 @@ test('ведомость, ТЭП, экспорт JSON и DXF: длина, выс
   assert.equal(lines.length, 2 + 2 + ticks.length);
   assert.equal(ents.find((e) => e.type === 'text').text, '−0.30 / +0.70');
   assert.match(buildSitePlanDxf(p), /LANDSCAPE_WALLS/);
+});
+
+test('перепад участка: верх настила и лестницы совпадают на склоне, лестница примыкает к выбранному краю', () => {
+  const deck = createLandscapeObject('terrace-deck', 2000, 3000, { elev: 875, rotation: 90 });
+  const stair = stairsAtPlatformEdge(deck, { x: 4000, y: 3100 }, { lower: 125 });
+  assert.equal(stair.rotation, 270);
+  assert.equal(stair.x - stair.h / 2, deck.x + deck.h / 2);
+  assert.equal(stair.elevTo, 875);
+  assert.equal(stair.height, 750);
+  assert.equal(stairsInfo(stair).steps, 5);
+  assert.equal(stairsAtPlatformEdge(deck, { x: 4000, y: 3100 }, { lower: 900 }), null);
+  const p = deserializeProject(serializeProject(project(deck, stair)));
+  const terrain = (x, y) => -450 + x * 0.02 + y * 0.04;
+  terrain.siteDatum = -450;
+  const all = landscapeFaces(p, terrain);
+  const tops = (o) => all.filter((f) => f.landscapeId === o.id && f.normal.z > 0).flatMap((f) => f.pts.map((pt) => pt.z));
+  assert.deepEqual([...new Set(tops(deck))], [425]);
+  assert.deepEqual([...new Set(tops(stair))], [-175, -25, 125, 275, 425]);
+});
+
+test('заглублённая терраса вырезает землю точно по контуру', () => {
+  const pad = createLandscapeObject('pad', 0, 0, { w: 1600, h: 1000, elev: -450 });
+  const p = project(pad);
+  const face = { kind: 'ground', pts: [
+    { x: -2500, y: -2500, z: -5 }, { x: 2500, y: -2500, z: -5 },
+    { x: 2500, y: 2500, z: -5 }, { x: -2500, y: 2500, z: -5 },
+  ] };
+  const clipped = cutLandscapeGround([face], p, null);
+  const area = clipped.reduce((sum, f) => sum + Math.abs(ringArea(f.pts)), 0);
+  assert.equal(area, 25000000 - 1600000);
+  assert.ok(clipped.every((f) => f.pts.every((pt) => pt.z === -5)));
+  const inset = landscapeFaces(p);
+  assert.deepEqual([...new Set(zs(inset))].sort((a,b) => a-b), [-450, 0]);
+  assert.ok(inset.some((f) => f.twoSided && f.normal.z === 0));
+});
+
+test('круглый лаунж: сквозной вход по развороту, ступени, сиденья и сухое дно внутри воды', () => {
+  const pool = createLandscapeObject('pool-area', 0, 0, { points: [{x: -6000, y: -6000}, {x: 6000, y: -6000}, {x: 6000, y: 6000}, {x: -6000, y: 6000}] });
+  const lounge = createLandscapeObject('sunken-lounge', 0, 0, { w: 4600, h: 4600, rotation: 270, elev: -450 });
+  const parts = loungeParts(lounge, 450);
+  const steps = parts.filter((p) => p.material === 'step');
+  assert.deepEqual(steps.map((p) => p.top), [150, 300, 450]);
+  assert.ok(steps.every((p) => p.poly.every((q) => q.x > 0)));
+  assert.ok(parts.filter((p) => p.material === 'cushion').every((p) => !pointInPolygon(p.poly, { x: 1800, y: 0 })));
+  const loaded = deserializeProject(serializeProject(project(lounge, pool)));
+  const faces = landscapeFaces(loaded);
+  const coversCenter = (f) => f.normal.z > 0 && pointInPolygon(f.pts, {x: 33, y: 66});
+  assert.ok(faces.some((f) => f.landscapeId === lounge.id && coversCenter(f) && f.pts.every((p) => p.z === -450)));
+  assert.ok(!faces.some((f) => f.landscapeId === pool.id && coversCenter(f)));
+  assert.ok(faces.some((f) => f.landscapeId === pool.id && f.kind === 'landscape-water'));
+  const ground = { pts: pool.points.map((q) => ({...q, z: -5})), normal: {z: 1} };
+  assert.ok(!cutLandscapeGround([ground], loaded, null).some(coversCenter));
+});
+
+test('изменение отметки площадки сохраняет верхнюю кромку лестницы и учитывает замок и допустимый перепад', () => {
+  const deck = createLandscapeObject('terrace-deck', 2000, 3000, { height: 600, rotation: 90 });
+  const stair = stairsAtPlatformEdge(deck, { x: 5000, y: 3100 }, { ground: 100, lower: -50 });
+  const other = { ...stair, x: stair.x + 30, id: 'detached' };
+  const objects = [deck, stair, other];
+  const edit = platformLevelEdit(objects, deck, 100);
+  assert.deepEqual(edit.stairs, [stair]);
+  assert.equal(edit.level, 700);
+  assert.equal(setPlatformLevel(edit, -50), false);
+  assert.equal(deck.elev, undefined);
+  const landing = stair.x - stair.h / 2;
+  assert.equal(setPlatformLevel(edit, 1150), true);
+  assert.equal(stair.x - stair.h / 2, landing);
+  assert.equal(stair.elevTo, 1150);
+  assert.equal(stair.height, 1200);
+  assert.equal(stairsInfo(stair).steps, 8);
+  assert.equal(other.elevTo, 700);
+  stair.locked = true;
+  const blocked = platformLevelEdit(objects, deck, 100);
+  assert.equal(setPlatformLevel(blocked, 1200), false);
+  const loaded = deserializeProject(serializeProject(project(deck, stair, other)));
+  const persisted = loaded.site.landscape.objects;
+  assert.equal(platformLevelEdit(persisted, persisted[0], 100).stairs[0].id, stair.id);
 });

@@ -350,10 +350,8 @@ describe('B4: телефон — щипок и сдвиг листа', () => {
     assert.ok(Math.abs(sx0 - sx1) < 2, `якорь щипка: ${sx0} / ${sx1}`);
     assert.deepEqual((await page.evaluate(() => window.__kepler.state.project.sheets))[0].viewports.map((v) => [v.x, v.y]), [[120, 80]], 'вид не сдвинут');
     // Один палец по пустому месту листа (угол за видом) — сдвиг.
-    // Низ листа на телефоне перекрывает плавающая палитра этапов (#projectRoute, 0.4.5) —
-    // берём пустое место у левого края над ней.
-    const route = await page.locator('#projectRoute .project-route-bar').boundingBox();
-    const free = { x: 10, y: Math.min(box.height, route.y - box.y) - 20 };
+    assert.equal(await page.locator('#projectRoute .project-route-bar').isVisible(), false);
+    const free = { x: 10, y: box.height - 20 };
     await touch(page, 'touchStart', [free]);
     for (let i = 1; i <= 5; i += 1) await touch(page, 'touchMove', [{ x: free.x + i * 12, y: free.y - i * 8 }]);
     await touch(page, 'touchEnd', []);
@@ -362,5 +360,50 @@ describe('B4: телефон — щипок и сдвиг листа', () => {
     assert.equal(Math.round(d2.k * 1000), Math.round(d1.k * 1000));
     if (OUT) await page.screenshot({ path: `${OUT}b4-phone-pinch.png` });
     assert.deepEqual(app.errors, []);
+  });
+});
+
+describe('Вилла у воды → перспектива на листе', () => {
+  it('На лист… переносит камеру с уровня глаз, участок и фасадные слои', async () => {
+    const app = await startApp({ width: 1440, height: 900 });
+    try {
+      const page = app.page;
+      await page.click('[data-template="garden-villa"]');
+      await page.waitForSelector('#view3d:not([hidden])');
+      const cam = await page.evaluate(async () => {
+        const v = await import('./ui/view3d.js');
+        return (await import('./core/views.js')).normalizeCam(v.camera3dSnapshot());
+      });
+      assert.equal(cam.projection, 'perspective');
+      await page.click('#propsTabMain');
+      await page.click('#viewPlaceBtn');
+      await page.click('#viewPlaceNew');
+      await page.waitForSelector('#sheetCanvas');
+      const sheet = await vpOf(page, '3d');
+      assert.equal(sheet.empty, false);
+      assert.deepEqual(sheet.cam, cam);
+      const painted = await page.evaluate(async () => {
+        const project = window.__kepler.state.project;
+        const vp = project.sheets.at(-1).viewports[0];
+        const { viewportRaster } = await import('./ui/sheet-viewports.js');
+        const canvas = viewportRaster(project, vp).canvas, ctx = canvas.getContext('2d');
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let ink = 0;
+        for (let i = 3; i < data.length; i += 4) if (data[i]) ink++;
+        return ink / (canvas.width * canvas.height);
+      });
+      assert.ok(painted > 0.1, `доля заполненного кадра ${painted}`);
+      const saved = await page.evaluate(async () =>
+        (await import('./core/model.js')).serializeProject(window.__kepler.state.project));
+      await page.click('#sheetViewClose');
+      await uploadText(page, '#fileInput', 'villa.kepler.json', saved);
+      await page.click('#propsTabSheets');
+      await page.dblclick('#sheetsList [data-sheet="user:sh-1"] .sheets-name');
+      assert.deepEqual((await vpOf(page, '3d')).cam, cam);
+      await page.click('#propsTabMain');
+      const pdf = await download(page, () => page.click('#sheetPropPdfOne'));
+      assert.match(pdf.bytes.toString('latin1'), /\/Count 1/);
+      assert.deepEqual(app.errors, []);
+    } finally { await app.close(); }
   });
 });

@@ -14,7 +14,7 @@ describe('smoke', () => {
     assert.equal(await app.page.isVisible('#startProjectsView'), true, 'локальная разработка открывает выбор проектов');
     assert.equal(await app.page.isVisible('#startNew'), true);
     assert.equal(await app.page.isVisible('#startOpen'), true);
-    assert.equal(await app.page.$$eval('#startTemplates .startup-project-card', (nodes) => nodes.length), 4);
+    assert.equal(await app.page.$$eval('#startTemplates .startup-project-card', (nodes) => nodes.length), 5);
   });
 
   it('пример загружается без ошибок', async () => {

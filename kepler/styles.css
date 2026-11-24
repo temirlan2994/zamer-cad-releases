@@ -1111,6 +1111,9 @@ body.v3-open .level-dock { z-index: 46; }
   font-size: 12px; line-height: 1.35; text-align: center; color: var(--text, inherit); pointer-events: none;
 }
 .view3d-hint:empty { display: none; }
+@media (min-width: 641px) {
+  body:has(#projectRoute.has-project) .view3d-hint { bottom: 70px; }
+}
 .view3d-num {
   position: absolute; width: 96px; height: 28px; transform: translate(-50%, -130%);
   padding: 0 8px; border-radius: 8px; border: 1px solid var(--accent); background: var(--surface);
@@ -1347,6 +1350,12 @@ body.v3-open .level-dock { z-index: 46; }
 .sched-table tr.sched-sub td, .sched-table tfoot td { font-weight: 600; }
 .sched-table tfoot td { border-bottom: 0; }
 .sched-table .empty { color: var(--muted); }
+.sched-table .sched-go { font: inherit; color: inherit; text-align: left; background: transparent; border: 0; padding: 2px 0; cursor: pointer; }
+.sched-table .sched-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sched-status:empty { margin: 0; }
+@media (max-width: 640px), (pointer: coarse) {
+  .sched-table .sched-go { min-height: 44px; width: 100%; }
+}
 .props {
   width: 284px;
   flex: none;
@@ -2038,6 +2047,20 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 }
 .projects-save { display: flex; gap: 8px; margin: 10px 0; }
 .projects-save input { flex: 1; min-width: 0; }
+.project-search { display: flex; align-items: stretch; gap: 6px; }
+.project-search input {
+  width: 100%; min-width: 0; min-height: 44px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text);
+}
+.project-search input::-webkit-search-cancel-button { display: none; }
+.project-search input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.project-search button, .project-more { min-height: 44px; }
+.project-more { align-self: center; }
+#projectFilter { margin: 10px 0; }
+#projectSearchStatus:empty { display: none; }
+@media (min-width: 641px) {
+  .start-card:has(.project-search:not([hidden])) { align-self: flex-start; }
+}
 .projects-list { display: flex; flex-direction: column; gap: 8px; }
 .prj-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
 .prj-row.current { border-color: var(--accent); }
@@ -2069,6 +2092,7 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   .projects-account-profile small { overflow: visible; white-space: normal; }
   .projects-account-actions > button { flex: 1; min-height: 40px; }
   .projects-transfer { align-items: stretch; flex-direction: column; }
+  .project-search input { font-size: 16px; }
   #accountBtn { display: none; }
 }
 
@@ -2651,6 +2675,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
 }
 @media (max-width: 640px) {
   .sheet-view-bar { padding: 6px 8px; gap: 6px; }
+  .sheet-view-bar button { min-height: 44px; }
   .sheet-view-gap { display: none; }
   .sheet-view-body { padding: 8px; }
 }
@@ -2821,7 +2846,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   .canvas-hint[data-touch]::after { content: attr(data-touch); font-size: 12.5px; }
   #v3Hint[data-touch]::after { content: attr(data-touch); font-size: 12px; }
   #toast[data-touch]::after { content: attr(data-touch); font-size: 13px; }
-  body.v3-open .view3d-hint { bottom: calc(var(--ribbon-h) + 12px); }
+  body.v3-open .view3d-hint { bottom: calc(max(var(--ribbon-h), var(--route-h)) + 12px); }
 
   /* --- Вторые ряды «Рисовать» и «Каталог»: над нижней навигацией, «Готово» в конце --- */
   .mobile-cat {
@@ -4761,4 +4786,44 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   .home-deliverables-checks li > button,
   .home-deliverables > section > button,
   .home-deliverables-exports button { min-height: 44px; font-size: 12px; }
+}
+
+/* На телефоне общая команда комнаты уже находится в её карточке. */
+#v3Atrium { display: none; }
+.canvas-wrap:has(> #selectionToolbar [data-selection-action="atrium"]) #v3Atrium { display: inline-flex; }
+.atrium-panel {
+  position: absolute; z-index: 27; top: 62px; right: 12px;
+  display: grid; gap: 8px; width: min(290px, calc(100% - 20px)); box-sizing: border-box;
+  padding: 12px; border: 1px solid var(--border); border-radius: 14px;
+  color: var(--text); background: var(--surface); box-shadow: var(--shadow);
+  font-size: 13px; max-height: calc(100% - 74px); overflow-y: auto;
+}
+.atrium-panel[hidden], .atrium-panel [hidden],
+.canvas-wrap:has(.atrium-panel:not([hidden])) > .tool-done { display: none; }
+.atrium-panel header, .atrium-panel footer, .atrium-area {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+}
+.atrium-panel header strong { font-size: 15px; }
+.atrium-panel header button { width: 36px; height: 36px; padding: 0; font-size: 20px; }
+.atrium-area button { flex: 1; }
+.atrium-area button[aria-pressed="true"] {
+  color: var(--text); background: color-mix(in srgb, var(--accent-2) 18%, var(--surface)); border-color: var(--accent-2);
+}
+.atrium-panel p { margin: 0; font-size: 12px; line-height: 1.4; }
+.atrium-panel .atrium-options { display: grid; gap: 6px; }
+.atrium-panel .atrium-options:has(> [hidden] + [hidden]) { display: none; }
+.atrium-panel label { display: flex; align-items: center; gap: 7px; }
+.atrium-panel label select { flex: 1; min-width: 0; }
+.atrium-panel footer { justify-content: flex-end; }
+.atrium-panel button:disabled { opacity: .55; }
+@media (max-width: 760px), (pointer: coarse) {
+  .atrium-panel { top: auto; bottom: 74px; right: 8px; max-height: calc(100% - 86px); padding: 10px; gap: 6px; }
+  .atrium-panel button, .atrium-panel select { min-height: 44px; }
+  .atrium-panel header button { width: 44px; }
+  .atrium-panel[data-picking="true"] { grid-template-columns: 1fr auto; align-items: center; }
+  .atrium-panel[data-picking="true"] header { display: contents; }
+  .atrium-panel[data-picking="true"] header button { grid-column: 2; grid-row: 1 / 3; }
+  .atrium-panel[data-picking="true"] p { grid-column: 1; grid-row: 2; }
+  .atrium-panel[data-picking="true"] .atrium-area,
+  .atrium-panel[data-picking="true"] footer { display: none; }
 }

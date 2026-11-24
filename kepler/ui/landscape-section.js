@@ -4,9 +4,10 @@
 // взгляда, глубина вида, скачивание SVG и DXF (слой LANDSCAPE_SECTION).
 
 import {
-  SECTION_DEPTH, SECTION_DEPTH_MAX, SECTION_DEPTH_MIN, nextSectionName, normalizeSection, polylineLength,
+  SECTION_DEPTH, SECTION_DEPTH_MAX, SECTION_DEPTH_MIN, nextSectionName, normalizeSection, polylineLength, stairsInfo,
 } from '../core/landscape.js';
-import { buildSectionDxf, sectionProfile } from '../core/landscape-section.js';
+import { buildSectionDxf, groundFn, sectionProfile } from '../core/landscape-section.js';
+import { platformLevelEdit, setPlatformLevel } from '../core/landscape-tools.js';
 import { saveFile } from './cloud.js';
 import { escapeHtml, toast } from './dom.js';
 import { closeElevation } from './elevation-view.js';
@@ -25,9 +26,10 @@ import { afterChange, mutate, pushHistory, snapshot } from './store.js';
 import { cancelTool, selectObject, setTool } from './tools.js';
 import { requestDraw, worldToScreen } from './view.js';
 
-const HINT = 'Отметьте точки разреза. Двойной клик или Enter завершит линию.';
+const HINT = 'Проведите линию через дом и террасу. После второй точки нажмите «Готово», Enter или дважды щёлкните, чтобы открыть профиль.';
 let view = null; // { id } открытого разреза
 let secStyle = null;
+let markerResize = null;
 
 export const isSectionTool = () => state.tool?.kind === 'ls-section';
 
@@ -126,7 +128,7 @@ export function sectionsBlockHtml() {
         <label class="ls-sec-sheet" title="Вывести на лист PDF"><input type="checkbox" data-ls-sec-sheet="${escapeHtml(s.id)}" ${off.has(s.id) ? '' : 'checked'} ${pref.on ? '' : 'disabled'}><span>Разрез ${escapeHtml(s.name)}–${escapeHtml(s.name)} · ${(polylineLength(s.points) / 1000).toFixed(1).replace('.', ',')} м</span></label>
         <button type="button" class="link" data-ls-sec="${escapeHtml(s.id)}">Открыть</button></div>`).join('')}
       ${list.length ? `<label class="check-row"><input type="checkbox" id="lsSecSheetOn" ${pref.on ? 'checked' : ''}><span>Включить выбранные в PDF</span></label>` : ''}
-      <button type="button" id="lsSectionNew">Новый разрез</button>
+      <button type="button" id="lsSectionNew">Провести линию разреза</button>
     </div>`;
 }
 
@@ -183,6 +185,7 @@ export function openSection(id, { full = false } = {}) {
 }
 
 export function closeSection() {
+  markerResize?.disconnect();
   view = null;
   state.lsSectionId = null;
   state.lsSecVertex = null;
@@ -206,11 +209,14 @@ function profileOf(sec) {
 }
 
 function renderSectionView() {
+  markerResize?.disconnect();
   const sec = current();
   const box = host();
   if (!sec) { closeSection(); return; }
   const prof = profileOf(sec);
-  const svg = prof ? sectionSvg(prof, { style: secStyle }) : '<p class="hint">Линия слишком короткая</p>';
+  const selected = !state.editLocked && (prof?.platforms.find((item) => item.id === view.platformId) ?? prof?.platforms[0]);
+  view.platformId = selected?.id ?? null;
+  const svg = prof ? sectionSvg(prof, { style: secStyle, editId: view.platformId }) : '<p class="hint">Линия слишком короткая</p>';
   box.hidden = false;
   box.classList.toggle('cut-full', view.full);
   const toggleTitle = view.full ? 'Показать линию на плане' : 'Развернуть разрез';
@@ -236,7 +242,14 @@ function renderSectionView() {
       </select></label>
       <label class="ls-section-field"><span>Глубина, м</span><input id="lsSecDepth" type="number" min="${SECTION_DEPTH_MIN / 1000}" max="${SECTION_DEPTH_MAX / 1000}" step="1" value="${Math.round(sec.depth / 1000)}"></label>
     </div>
-    <div class="ls-section-body" id="lsSecBody" title="Разрез — как лист печати: белый фон в любой теме">${svg}</div>`;
+    ${selected ? `<div class="section-level-controls">
+      <label><span>Поверхность</span><select id="lsSecPlatform">${prof.platforms.map((p, i) =>
+        `<option value="${escapeHtml(p.id)}" ${p.id === selected.id ? 'selected' : ''}>${prof.platforms.length > 1 ? (i + 1) + ' · ' : ''}${escapeHtml(p.title)}</option>`).join('')}</select></label>
+      <label><span>Отметка от нуля участка, мм</span><input type="number" id="lsSecLevel" step="1" value="${selected.level}"></label>
+      <small id="lsSecStairResult" role="status"></small>
+    </div>` : ''}
+    <div class="ls-section-body" id="lsSecBody">${svg}</div>`;
+  if (selected) bindProfileLevels(box, sec, prof);
   box.querySelector('[data-section-layout]').addEventListener('click', () => {
     view.full = !view.full;
     renderSectionView();
@@ -279,6 +292,124 @@ function renderSectionView() {
     toast(`Разрез ${sec.name}–${sec.name} удалён · Ctrl+Z — вернуть`);
   });
   box.querySelector('#lsSecClose').addEventListener('click', closeSection);
+}
+
+function bindProfileLevels(box, sec, profile) {
+  const select = box.querySelector('#lsSecPlatform');
+  const input = box.querySelector('#lsSecLevel');
+  const result = box.querySelector('#lsSecStairResult');
+  const body = box.querySelector('#lsSecBody');
+  const project = state.project;
+  const landscape = project.site.landscape;
+  const sizeMarkers = () => {
+    const scale = body.querySelector('svg')?.getScreenCTM()?.a;
+    if (scale > 0) body.style.setProperty('--profile-icon-scale', String(1 / scale));
+  };
+  sizeMarkers();
+  markerResize = new ResizeObserver(sizeMarkers);
+  markerResize.observe(body);
+  const activeEdit = () => {
+    const platform = landscape.objects.find((o) => o.id === select.value);
+    const marker = profile.platforms.find((p) => p.id === select.value);
+    return platformLevelEdit(landscape.objects, platform, marker?.ground);
+  };
+  const showNumbers = (edit, level) => {
+    input.value = String(level);
+    input.min = String(edit.min);
+    input.max = String(edit.max);
+    input.disabled = edit.min === edit.max;
+    if (input.disabled) { result.textContent = 'Примыкающая лестница заблокирована'; return; }
+    result.textContent = edit.stairs.length ? edit.stairs.map((stair) => {
+      const data = stairsInfo({ ...stair, height: level - stair.elev });
+      return `${data.steps} ступ. × ${Math.round(data.riser)} мм`;
+    }).join(' · ') : 'Потяните ручку ↕ на разрезе';
+  };
+  showNumbers(activeEdit(), Number(input.value));
+  select.addEventListener('change', () => {
+    view.platformId = select.value;
+    renderSectionView();
+    box.querySelector('#lsSecPlatform')?.focus();
+  });
+  input.addEventListener('change', () => {
+    const edit = activeEdit();
+    const level = input.valueAsNumber;
+    if (!edit || state.editLocked || !Number.isInteger(level) || level < edit.min || level > edit.max) {
+      if (edit) {
+        toast(`Задайте отметку от ${edit.min} до ${edit.max} мм`);
+        showNumbers(edit, edit.level);
+      }
+      return;
+    }
+    if (level !== edit.level) mutate(() => setPlatformLevel(edit, level));
+  });
+  input.addEventListener('keydown', (event) => { if (event.key === 'Enter') input.blur(); });
+
+  let gesture = null;
+  const drawPreview = () => {
+    if (!gesture || !body.isConnected) return;
+    const { edit, source, previewProject, level, terrain, house, scale } = gesture;
+    gesture.frame = 0;
+    edit.stairs.forEach((stair, index) => Object.assign(stair, source.stairs[index]));
+    setPlatformLevel(edit, level);
+    const preview = sectionProfile(previewProject, sec, sec.side, { depth: sec.depth, ground: terrain, house });
+    // While the pointer is down the vertical scale and origin stay fixed.
+    preview.box = profile.box;
+    body.innerHTML = sectionSvg(preview, { style: secStyle, scale, editId: view.platformId });
+    showNumbers(edit, level);
+  };
+  body.addEventListener('pointerdown', (event) => {
+    const handle = event.target.closest('[data-platform]');
+    if (!handle || state.editLocked || gesture || event.button !== 0) return;
+    const svg = handle.ownerSVGElement;
+    const matrix = svg.getScreenCTM();
+    if (!matrix?.d) return;
+    event.preventDefault();
+    select.value = handle.dataset.platform;
+    view.platformId = select.value;
+    const source = activeEdit();
+    showNumbers(source, source.level);
+    if (source.min === source.max) return;
+    // Only the moving platform and its flights have mutable preview copies.
+    const movers = new Set([source.platform, ...source.stairs]);
+    const copies = new Map([...movers].map((o) => [o, { ...o }]));
+    const objects = landscape.objects.map((o) => copies.get(o) ?? o);
+    const previewProject = { ...project, site: { ...project.site, landscape: { ...landscape, objects } } };
+    const terrain = groundFn(project);
+    const scale = Number(svg.dataset.scale);
+    gesture = {
+      source, edit: { ...source, platform: copies.get(source.platform), stairs: source.stairs.map((o) => copies.get(o)) },
+      previewProject, terrain, scale, mmPerPixel: scale / matrix.d, y: event.clientY, level: source.level,
+      pointerId: event.pointerId, frame: 0, moved: false,
+      house: { prims: profile.prims.filter((p) => p.cat === 'house'), marks: profile.marks.filter((m) => m.kind === 'floor') },
+    };
+    body.setPointerCapture(event.pointerId);
+  });
+  const dragLevel = (event) => {
+    const { y, source, mmPerPixel } = gesture;
+    const distance = y - event.clientY;
+    if (Math.abs(distance) >= 3) gesture.moved = true;
+    if (!gesture.moved) return source.level;
+    return Math.max(source.min, Math.min(source.max, Math.round((source.level + distance * mmPerPixel) / 10) * 10));
+  };
+  body.addEventListener('pointermove', (event) => {
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    const level = dragLevel(event);
+    if (level === gesture.level) return;
+    gesture.level = level;
+    if (!gesture.frame) gesture.frame = requestAnimationFrame(drawPreview);
+  });
+  const end = (event) => {
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    const { source, frame } = gesture;
+    const level = event.type === 'pointerup' ? dragLevel(event) : source.level;
+    if (frame) cancelAnimationFrame(frame);
+    gesture = null;
+    if (level !== source.level && !state.editLocked) mutate(() => setPlatformLevel(source, level));
+    else renderSectionView();
+  };
+  body.addEventListener('pointerup', end);
+  body.addEventListener('pointercancel', end);
+  body.addEventListener('lostpointercapture', end);
 }
 
 function fileBase(sec) {

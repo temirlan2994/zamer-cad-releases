@@ -6,10 +6,13 @@
 // y вниз по плану, z вверх; объекты ландшафта — в мире (участок),
 // переводятся toLocal(building).
 
+import { LOUNGE_COLORS, loungeParts } from './landscape-lounge.js';
+import { bbox, boxesOverlap, orientRing, ringArea } from './geom/poly.js';
+import { clipFace } from './geom/clip.js';
 import { toLocal } from './building.js';
 import {
   LS_COLORS, curbLines, insetPolygon, isPathShape, isRoundObject, landscapeDef, lineLayout, objectColors, objectOutline,
-  elevOf, objectPath, planterInner, retainingInfo, ribbonOutline, seededRandom, stairsInfo, steppingSlabs,
+  PLATFORM_KINDS, distanceToPolygon, elevOf, loungeEntranceLevel, objectPath, platformTop, planterInner, retainingInfo, ribbonOutline, seededRandom, stairsInfo, steppingSlabs, waterCurtainParts,
 } from './landscape.js';
 
 const v = (x, y, z) => ({ x, y, z });
@@ -60,7 +63,7 @@ function flat(poly, z, color, hz, extra = {}) {
 }
 
 // Призма: верх (треугольниками) и бока; низ — по земле.
-function prism(poly, z0, z1, color, hz, { side = color, top = true } = {}) {
+function prism(poly, z0, z1, color, hz, { side = color, top = true, bottomAt } = {}) {
   const faces = top ? flat(poly, z1, color, hz) : [];
   const cx = poly.reduce((t, p) => t + p.x, 0) / poly.length;
   const cy = poly.reduce((t, p) => t + p.y, 0) / poly.length;
@@ -72,7 +75,10 @@ function prism(poly, z0, z1, color, hz, { side = color, top = true } = {}) {
     if (nx * ((a.x + b.x) / 2 - cx) + ny * ((a.y + b.y) / 2 - cy) < 0) { nx = -nx; ny = -ny; }
     const len = Math.hypot(nx, ny) || 1;
     const za = hz(a.x, a.y); const zb = hz(b.x, b.y);
-    faces.push({ pts: [v(a.x, a.y, za + z0), v(b.x, b.y, zb + z0), v(b.x, b.y, zb + z1), v(a.x, a.y, za + z1)], normal: v(nx / len, ny / len, 0), color: side, kind: KIND });
+    const lowA = bottomAt ? bottomAt(a.x, a.y) : za + z0;
+    const lowB = bottomAt ? bottomAt(b.x, b.y) : zb + z0;
+    if (lowA === za + z1 && lowB === zb + z1) continue;
+    faces.push({ pts: [v(a.x, a.y, lowA), v(b.x, b.y, lowB), v(b.x, b.y, zb + z1), v(a.x, a.y, za + z1)], normal: v(nx / len, ny / len, 0), color: side, kind: KIND, ...(lowA > za + z1 || lowB > zb + z1 ? { twoSided: true } : {}) });
   }
   return faces;
 }
@@ -123,6 +129,19 @@ function ellipsoid(cx, cy, cz, rx, ry, rz, color, { lat = 4, lon = 8, jitter = 0
 }
 
 // Конус: основание радиуса r на z0, вершина на z1.
+function pineBranch(start, end, radius) {
+  const sideCount = 5;
+  const faces = [];
+  for (let i = 0; i < sideCount; i += 1) {
+    const a = i * TAU / sideCount;
+    const b = (i + 1) * TAU / sideCount;
+    const p = (center, angle, r) => v(center.x + Math.cos(angle) * r, center.y + Math.sin(angle) * r, center.z);
+    faces.push({ pts: [p(start, a, radius), p(start, b, radius), p(end, b, radius / 3), p(end, a, radius / 3)],
+      normal: v(Math.cos((a + b) / 2), Math.sin((a + b) / 2), 0), color: '#716251', kind: KIND, twoSided: true });
+  }
+  return faces;
+}
+
 function cone(cx, cy, r, z0, z1, color, n = 8) {
   const faces = [];
   const base = circlePoly(cx, cy, r, r, n);
@@ -177,7 +196,7 @@ function norm(a, b) {
 const GREEN_FLAT = new Set(['lawn-patch', 'lawn-area', 'parking-guest']);
 
 // Грани одного объекта (точки — уже в осях дома: o.x, o.y, outline, path).
-function objectFaces(o, def, outline, path, hz) {
+function objectFaces(o, def, outline, path, hz, dryOutlines) {
   const C = objectColors(o, def);
   const h = Math.max(0, o.height ?? def.height ?? 0);
   const at = (x, y) => hz(x, y);
@@ -198,7 +217,19 @@ function objectFaces(o, def, outline, path, hz) {
     faces.push(...prism(circlePoly(o.x, o.y, trunk, trunk, 6), 0, trunkTop + (conifer ? H * 0.1 : 0), '#6b4a33', hz));
     if (look === 'spruce') faces.push(...cone(o.x, o.y, Math.min(rx, ry), z0 + trunkTop, z0 + H, C[0], 10));
     else if (look === 'thuja') faces.push(...ellipsoid(o.x, o.y, z0 + (trunkTop + H) / 2, rx, ry, (H - trunkTop) / 2, C[0], { lon: 8, rot }));
-    else if (look === 'pine') faces.push(...ellipsoid(o.x, o.y, z0 + H * 0.75, rx, ry, H * 0.25, C[0], { lon: 10 }));
+    else if (look === 'pine') {
+      const phase = rand() * TAU;
+      for (let i = 0; i < 5; i += 1) {
+        const a = phase + i * 2.4;
+        const spread = 0.62 - i * 0.08;
+        const z = z0 + H * (0.63 + i * 0.056);
+        const tip = v(o.x + Math.cos(a) * rx * spread, o.y + Math.sin(a) * ry * spread, z);
+        faces.push(...pineBranch(v(o.x, o.y, z0 + H * (0.43 + i * 0.034)), tip, trunk * 0.6));
+        faces.push(...ellipsoid(tip.x, tip.y, z, rx * (1 - spread), ry * (1 - spread), H * 0.1,
+          C[i % 3 === 0 ? 1 : 0], { lat: 3, lon: 7, jitter: 0.18, rand, rot: a }));
+      }
+      faces.push(...ellipsoid(o.x, o.y, z0 + H * 0.92, rx * 0.49, ry * 0.52, H * 0.08, C[0], { lat: 3, lon: 8, jitter: 0.13, rand }));
+    }
     else if (look === 'bonsai') {
       faces.push(...ellipsoid(o.x, o.y, z0 + H * 0.65, rx * 0.8, ry * 0.8, H * 0.18, C[0], { lon: 8 }));
       faces.push(...ellipsoid(o.x + rx * 0.45, o.y - ry * 0.2, z0 + H * 0.92, rx * 0.4, ry * 0.4, H * 0.1, C[1], { lon: 6, lat: 3 }));
@@ -261,7 +292,7 @@ function objectFaces(o, def, outline, path, hz) {
     const at2 = (lx, ly) => ({ x: o.x + lx * Math.cos(rot) - ly * Math.sin(rot), y: o.y + lx * Math.sin(rot) + ly * Math.cos(rot) });
     for (let i = 0; i < n; i += 1) {
       const ly = o.h / 2 - (i + 0.5) * t; // снизу (+Y) вверх
-      const zTop = Math.max(20, (i + 1) * st.riser);
+      const zTop = (i + 1) * st.riser;
       const c = at2(0, ly);
       faces.push(...prism(rectPoly(c.x, c.y, fw, t, rot), 0, zTop, C[0], hz, { side: C[1] }));
       if (st.cheek > 0) {
@@ -302,16 +333,69 @@ function objectFaces(o, def, outline, path, hz) {
     return faces;
   }
   if (look === 'pond' || look === 'area-pond') {
-    faces.push(...flat(outline, 20, C[1], hz, { kind: 'landscape-water' }));
+    const surface = () => z0;
+    const mirror = o.variant === 'mirror';
+    faces.push(...flat(outline, 20, mirror && !o.color ? '#587878' : C[1], surface, { kind: 'landscape-water' }));
+    if (mirror) {
+      // Subtle horizontal ripples stay inside even a concave shoreline.
+      const samples = triangulate(outline);
+      for (const [i, t] of samples.entries()) {
+        if (i % 2) continue;
+        const center = v((t[0].x + t[1].x + t[2].x) / 3, (t[0].y + t[1].y + t[2].y) / 3, z0 + 24);
+        const rim = t.map((p) => v(center.x + (p.x - center.x) * 0.48, center.y + (p.y - center.y) * 0.48, center.z));
+        const xs = [];
+        for (let k = 0; k < 3; k += 1) {
+          const a = rim[k]; const b = rim[(k + 1) % 3];
+          if ((a.y > center.y) !== (b.y > center.y)) xs.push(a.x + (b.x - a.x) * (center.y - a.y) / (b.y - a.y));
+        }
+        if (xs.length === 2 && Math.abs(xs[1] - xs[0]) > 150) {
+          faces.push({ pts: [v(xs[0], center.y, center.z), v((xs[0] + xs[1]) / 2, center.y + 10, center.z), v(xs[1], center.y, center.z)],
+            normal: v(0, 0, 1), color: '#789391', kind: 'landscape-water', twoSided: true });
+        }
+      }
+    }
     // Берег — камни по контуру.
     let total = 0;
     const ring = [...outline, outline[0]];
     for (let i = 1; i < ring.length; i += 1) total += Math.hypot(ring[i].x - ring[i - 1].x, ring[i].y - ring[i - 1].y);
-    const n = Math.min(60, Math.max(8, Math.round(total / 700)));
+    const n = mirror ? Math.min(16, Math.ceil(total / 2300)) : Math.min(60, Math.max(8, Math.round(total / 700)));
     for (let k = 0; k < n; k += 1) {
       const p = along(ring, (total * k) / n);
       const s = 180 + rand() * 160;
+      if (dryOutlines.some((cut) => distanceToPolygon(p, cut) <= s)) continue;
       faces.push(...ellipsoid(p.x, p.y, at(p.x, p.y), s, s, s * 0.6, LS_COLORS.stone[k % 3], { lat: 2, lon: 5, jitter: 0.2, rand }));
+    }
+    return faces;
+  }
+  if (look === 'water-curtain') {
+    const { rim, backDepth, lipDepth, streamWidth } = waterCurtainParts(o);
+    const level = () => z0;
+    const basinHeight = Math.min(180, h * 0.16);
+    const waterZ = basinHeight * 0.72;
+    const inner = outlineInset(o, rim, rot);
+    faces.push(...wallRing(rectPoly(o.x, o.y, o.w, o.h, rot), inner, 0, basinHeight, C[0], C[1], level));
+    faces.push(...flat(inner, waterZ, LS_COLORS.water[1], level, { kind: 'landscape-water' }));
+    if (h <= 0) return faces;
+    const dx = Math.cos(rot); const dy = Math.sin(rot);
+    const atLocal = (x, y, z) => v(o.x + dx * x - dy * y, o.y + dy * x + dx * y, z0 + z);
+    const back = -o.h / 2;
+    const post = atLocal(0, back + backDepth / 2, 0);
+    faces.push(...box(post.x, post.y, o.w, backDepth, 0, h, C[0], level, rot));
+    const lip = atLocal(0, back + lipDepth / 2, 0);
+    const lipZ = h - Math.min(75, h * 0.08);
+    faces.push(...box(lip.x, lip.y, o.w, lipDepth, lipZ, h, C[1], level, rot));
+    const topY = back + lipDepth;
+    const bottomY = topY + Math.min(100, o.h * 0.08);
+    const face = (left, right, offset, color, alpha) => ({
+      pts: [atLocal(left, bottomY + offset, waterZ), atLocal(right, bottomY + offset, waterZ),
+        atLocal(right, topY + offset, lipZ), atLocal(left, topY + offset, lipZ)],
+      normal: v(-dy, dx, 0), kind: 'landscape-water', twoSided: true, color, alpha,
+    });
+    faces.push(face(-streamWidth / 2, streamWidth / 2, 0, LS_COLORS.water[0], 0.72));
+    const ribbons = Math.min(18, Math.max(3, Math.round(streamWidth / 240)));
+    for (let i = 0; i < ribbons; i += 1) {
+      const x = streamWidth * ((i + 0.5) / ribbons - 0.5);
+      faces.push(face(x - 6, x + 6, 4, LS_COLORS.water[2], 0.8));
     }
     return faces;
   }
@@ -447,6 +531,49 @@ function along(line, s) {
   return line[0];
 }
 
+function cutFootprint(faces, outline) {
+  let result = faces;
+  const convex = outline.every((a, i) => ringArea([a, outline[(i + 1) % outline.length], outline[(i + 2) % outline.length]]) >= 0);
+  const cuts = convex ? [outline] : triangulate(outline);
+  for (const cut of cuts) {
+    const box = bbox(cut);
+    result = result.flatMap((face) => {
+      if (!boxesOverlap(box, bbox(face.pts))) return [face];
+      let inside = face.pts;
+      const outside = [];
+      for (let i = 0; i < cut.length && inside.length >= 3; i += 1) {
+        const a = cut[i]; const b = cut[(i + 1) % cut.length];
+        const side = (p) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+        const piece = clipFace(inside, (p) => -side(p));
+        if (piece.length >= 3 && Math.abs(ringArea(piece)) > 0.1) outside.push({ ...face, pts: piece });
+        inside = clipFace(inside, side);
+      }
+      return inside.length >= 3 && Math.abs(ringArea(inside)) > 0.1 ? outside : [face];
+    });
+  }
+  return result;
+}
+
+// Cut the original ground surface only under terraces or stairs that sit below
+// grade. Intersections inherit the original triangle plane, including on slopes.
+export function cutLandscapeGround(faces, project, hz) {
+  const ground = hz || (() => 0);
+  const datum = ground.siteDatum ?? ground(0, 0);
+  let result = faces;
+  for (const o of project.site?.landscape?.objects || []) {
+    const lounge = o.kind === 'sunken-lounge';
+    if (!lounge && (!Number.isFinite(o.elev) || (!PLATFORM_KINDS.has(o.kind) && o.kind !== 'stairs-out'))) continue;
+    const c = toLocal(project.building, o);
+    const level = datum + platformTop(o, ground(c.x, c.y) - datum);
+    if (level >= (ground.maxRel ?? (hz ? Infinity : 0))) continue;
+    const outline = orientRing(objectOutline(o, lounge ? 48 : 16).map((p) => toLocal(project.building, p)));
+    const footprint = bbox(outline);
+    if (!result.some((face) => face.pts.some((p) => p.z > level - 5) && boxesOverlap(footprint, bbox(face.pts)))) continue;
+    result = cutFootprint(result, outline);
+  }
+  return result;
+}
+
 // Все грани ландшафта в осях дома. hz(x, y) — рельеф (оси дома) или null.
 export function landscapeFaces(project, hz = null) {
   const objects = project.site?.landscape?.objects || [];
@@ -455,6 +582,7 @@ export function landscapeFaces(project, hz = null) {
   const local = (p) => toLocal(b, p);
   const rotB = b?.rotation || 0;
   const ground = hz || (() => 0);
+  const lounges = objects.filter((o) => o.kind === 'sunken-lounge').map((o) => objectOutline(o, 48).map(local));
   const faces = [];
   // Посадки в коробе стоят на засыпке: подъём = высота борта − 60.
   const lift = new Map(objects.filter((o) => o.kind === 'planter-box' || o.kind === 'planter-area')
@@ -466,20 +594,51 @@ export function landscapeFaces(project, hz = null) {
     // Копия объекта в осях дома: центр, поворот, вершины.
     const o = { ...o0, x: c.x, y: c.y, rotation: (o0.rotation || 0) - rotB };
     if (o0.points) o.points = o0.points.map(local);
-    const outline = objectOutline(o, 16);
+    const lounge = o.kind === 'sunken-lounge';
+    const outline = objectOutline(o, lounge ? 48 : 16);
     const path = isPathShape(def) ? objectPath(o) : [];
     // Подъём: посадки в коробе — на засыпку; площадки с отметкой — на отметку.
     const elev = elevOf(o0);
     const up = (o0.parent ? lift.get(o0.parent) || 0 : 0) + elev;
-    const hz2 = up ? (x, y) => ground(x, y) + up : ground;
+    const datum = ground.siteDatum ?? ground(0, 0);
+    const platform = PLATFORM_KINDS.has(o.kind);
+    const fixedPlatform = platform && (Number.isFinite(o.elev) || o.height > 0 || lounge);
+    const fixedStair = o.kind === 'stairs-out' && Number.isFinite(o.elev);
+    const hz2 = fixedStair ? () => datum + elev : up ? (x, y) => ground(x, y) + up : ground;
     const firstFace = faces.length;
-    for (const f of objectFaces(o, def, outline, path, hz2)) faces.push(f);
-    // Приподнятая площадка/лестница — на подиуме: бока от земли до отметки.
-    if (elev > 0 && outline.length >= 3) {
-      const C = objectColors({ kind: 'curb', variant: o.kind === 'deck-area' ? 'wood' : 'stone' });
-      faces.push(...prism(outline, 0, elev, C[1], ground, { top: false }));
+    if (platform) {
+      const top = fixedPlatform ? () => datum + platformTop(o, ground(c.x, c.y) - datum) : ground;
+      const colors = objectColors(o, def);
+      faces.push(...prism(outline, 0, 0, colors[0], top, { side: colors[1], bottomAt: ground }));
+      if (lounge) {
+        const upper = loungeEntranceLevel(o0, objects, (p) => {
+          const q = local(p);
+          return ground(q.x, q.y) - datum;
+        });
+        const drop = Math.max(0, datum + upper - top());
+        for (const part of loungeParts(o, drop)) {
+          const color = part.material === 'wall' ? colors[1] : LOUNGE_COLORS[part.material];
+          faces.push(...prism(part.poly, part.bottom, part.top, color, top));
+        }
+      }
+      if (o.curb) faces.push(...curbFaces(o, top));
+    } else {
+      const built = objectFaces(o, def, outline, path, hz2, lounges);
+      if (lounges.length && ['pond', 'pond-area', 'pool', 'pool-area'].includes(o.kind)) {
+        const water = built.filter((f) => f.kind === 'landscape-water');
+        // Pool coping is a solid polygon too; its dry inner footprint must clear the lounge.
+        let surface = (o.kind.startsWith('pool') ? built : water);
+        for (const cut of lounges) surface = cutFootprint(surface, cut);
+        if (!o.kind.startsWith('pool')) faces.push(...built.filter((f) => f.kind !== 'landscape-water'));
+        faces.push(...surface);
+      } else for (const face of built) faces.push(face);
     }
-    if (o.curb) for (const f of curbFaces(o, hz2)) faces.push(f);
+    // Приподнятая площадка/лестница — на подиуме: бока от земли до отметки.
+    if (!platform && (elev > 0 || fixedStair) && outline.length >= 3) {
+      const C = objectColors({ kind: 'curb', variant: o.kind === 'deck-area' ? 'wood' : 'stone' });
+      faces.push(...prism(outline, 0, 0, C[1], hz2, { top: false, bottomAt: ground }));
+    }
+    if (!platform && o.curb) for (const f of curbFaces(o, hz2)) faces.push(f);
     // Идентификатор хранится на каждой грани: 3D выбирает не условную
     // категорию «ландшафт», а конкретное дерево, дорожку или сооружение.
     for (let i = firstFace; i < faces.length; i += 1) {

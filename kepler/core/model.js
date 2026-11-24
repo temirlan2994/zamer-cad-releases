@@ -19,7 +19,7 @@ import { normalizeMasses, normalizeMassVoids } from './masses.js';
 import { normalizeRoofs } from './roofs.js';
 import { normalizeGrids } from './grid-axes.js';
 import { cleanRoomPins, cleanWallPins } from './grid-pins-model.js';
-import { normalizeSlabOpenings } from './slab-openings.js';
+import { normalizeSlabOpenings, removeOwnedAtriums } from './slab-openings.js';
 import {
   layoutBriefIsEmpty, normalizeCatalogItemMetadata, normalizeLayoutBrief,
 } from './layout-brief.js';
@@ -43,6 +43,55 @@ export function makeId(prefix) {
 export const DEFAULT_LEVEL_HEIGHT = 3000; // от пола до пола следующего этажа, мм
 export const DEFAULT_SLAB = 300; // перекрытие: чистая высота = высота этажа − плита
 export const DEFAULT_TALL_WINDOW_HEIGHT = 2400; // единая высота витражей этажа
+export const DEFAULT_TALL_WINDOW_TOP_OFFSET = 500; // от верха стены до витража
+export const DEFAULT_TALL_WINDOW_BOTTOM_OFFSET = 100; // от пола до витража
+export const MIN_TALL_WINDOW_HEIGHT = 300;
+
+function legacyTallWindowBottom(level) {
+  const opening = (level?.openings || []).find((entry) => entry?.kind === 'window'
+    && entry.heightMode === 'level' && Number(entry.sill) >= 0);
+  return opening ? Number(opening.sill) : DEFAULT_TALL_WINDOW_BOTTOM_OFFSET;
+}
+
+// Единый вертикальный стандарт высоких окон этажа. В старых проектах был
+// только tallWindowHeight: восстанавливаем верхний отступ из прежней высоты,
+// а нижний — из уже поставленного связанного витража (или из дефолта).
+export function levelTallWindowOffsets(level) {
+  const levelHeight = Number(level?.height) > 0 ? Number(level.height) : DEFAULT_LEVEL_HEIGHT;
+  const maxOffsets = Math.max(0, levelHeight - MIN_TALL_WINDOW_HEIGHT);
+  const rawBottom = Number(level?.tallWindowBottomOffset);
+  const bottomDefault = legacyTallWindowBottom(level);
+  const bottom = Math.min(maxOffsets, Math.max(0,
+    Number.isFinite(rawBottom) && rawBottom >= 0 ? rawBottom : bottomDefault));
+  const rawTop = Number(level?.tallWindowTopOffset);
+  const legacyHeight = Number(level?.tallWindowHeight);
+  const topDefault = Number.isFinite(legacyHeight) && legacyHeight >= MIN_TALL_WINDOW_HEIGHT
+    ? levelHeight - bottom - legacyHeight : DEFAULT_TALL_WINDOW_TOP_OFFSET;
+  const top = Math.min(Math.max(0, maxOffsets - bottom), Math.max(0,
+    Number.isFinite(rawTop) && rawTop >= 0 ? rawTop : topDefault));
+  return { top, bottom, height: Math.max(MIN_TALL_WINDOW_HEIGHT, levelHeight - top - bottom) };
+}
+
+// Записывает оба отступа как источник истины и поддерживает прежнее поле
+// tallWindowHeight для старых копий приложения и старых экспортов.
+export function setLevelTallWindowOffsets(level, { top, bottom } = {}) {
+  if (!level || typeof level !== 'object') return null;
+  const current = levelTallWindowOffsets(level);
+  const levelHeight = Number(level.height) > 0 ? Number(level.height) : DEFAULT_LEVEL_HEIGHT;
+  const maxOffsets = Math.max(0, levelHeight - MIN_TALL_WINDOW_HEIGHT);
+  let nextTop = current.top;
+  let nextBottom = current.bottom;
+  // Ограничиваем именно редактируемое поле: изменение низа не должно
+  // неожиданно сбрасывать уже заданный верх, и наоборот.
+  if (Number.isFinite(Number(top)) && Number.isFinite(Number(bottom))) nextBottom = Math.min(maxOffsets, Math.max(0, Number(bottom)));
+  if (Number.isFinite(Number(top))) nextTop = Math.min(maxOffsets - nextBottom, Math.max(0, Number(top)));
+  if (Number.isFinite(Number(bottom))) nextBottom = Math.min(maxOffsets - nextTop, Math.max(0, Number(bottom)));
+  const next = { top: nextTop, bottom: nextBottom, height: levelHeight - nextTop - nextBottom };
+  level.tallWindowTopOffset = next.top;
+  level.tallWindowBottomOffset = next.bottom;
+  level.tallWindowHeight = next.height;
+  return next;
+}
 
 // Чистая высота помещения (от пола до потолка): своя или по этажу.
 export function roomCeiling(room, level) {
@@ -53,8 +102,15 @@ export function roomCeiling(room, level) {
 export const LEVEL_KEYS = ['rooms', 'openings', 'items', 'wallOverrides', 'walls'];
 
 export function createLevel(name, elevation = 0, height = DEFAULT_LEVEL_HEIGHT, id = makeId('level')) {
+  const tallWindowHeight = Math.max(
+    MIN_TALL_WINDOW_HEIGHT,
+    height - DEFAULT_TALL_WINDOW_TOP_OFFSET - DEFAULT_TALL_WINDOW_BOTTOM_OFFSET,
+  );
   return {
-    id, name, elevation, height, slabThickness: DEFAULT_SLAB, tallWindowHeight: DEFAULT_TALL_WINDOW_HEIGHT,
+    id, name, elevation, height, slabThickness: DEFAULT_SLAB,
+    tallWindowHeight,
+    tallWindowTopOffset: DEFAULT_TALL_WINDOW_TOP_OFFSET,
+    tallWindowBottomOffset: DEFAULT_TALL_WINDOW_BOTTOM_OFFSET,
     rooms: [], openings: [], items: [], wallOverrides: {}, walls: [],
   };
 }
@@ -125,6 +181,7 @@ export function createProject(name = 'Новый дом') {
       bearing: DEFAULT_BEARING, // внутренняя несущая стена по умолчанию
       dimOuter: true, // наружные размеры по внешней грани стен (иначе — по оси)
       units: 'mm', // подписи размеров на плане: 'mm' (5000) или 'm' (5,00)
+      linkTallWindowsAcrossLevels: true,
     },
     levels: [level], // этажи: rooms, openings, items, wallOverrides (ключ стены → { thickness, kind })
     activeLevel: level.id,
@@ -316,6 +373,7 @@ export function normalizeRoom(r) {
   const type = str(r.type) || 'living';
   const room = { ...r, id: str(r.id) || makeId('room'), type, x, y, w, h };
   if (typeof room.name !== 'string') room.name = roomType(type)?.title || type;
+  if (room.linkedRoof !== false) delete room.linkedRoof;
   if ('parentId' in room) room.parentId = str(room.parentId);
   if ('outline' in room) {
     const outline = cleanPoints(room.outline, 4);
@@ -397,11 +455,33 @@ function normalizeHostOpening(o) {
   for (const key of ['height', 'sill']) {
     if (key in out) { const n = num(out[key]); if (n == null || n < 0) delete out[key]; else out[key] = n; }
   }
-  if ('heightMode' in out) {
-    if (out.kind === 'window') out.heightMode = out.heightMode === 'level' ? 'level' : 'custom';
-    else delete out.heightMode;
-  }
+  normalizeOpeningHeightMode(out);
   return out;
+}
+
+const LEGACY_LINKED_WINDOW_TYPES = new Set(['panoramic', 'lift-slide', 'sliding-tall', 'french']);
+
+function normalizeOpeningHeightMode(opening) {
+  if ('corner' in opening) {
+    const spec = opening.corner;
+    const width = pos(spec?.returnWidth);
+    if (opening.kind === 'window' && !opening.host && ['from', 'to'].includes(spec?.end) && width >= 600 && opening.width >= 600) {
+      opening.corner = { end: spec.end, returnWidth: Math.round(width), joint: spec.joint === 'pier' ? 'pier' : 'post' };
+      delete opening.span;
+    } else delete opening.corner;
+  }
+  if (opening.kind !== 'window') { delete opening.heightMode; delete opening.span; return; }
+  if ('span' in opening) {
+    const levelId = str(opening.span?.levelId);
+    const topGap = num(opening.span?.topGap);
+    if (levelId && topGap != null && topGap >= 0) opening.span = { levelId, topGap };
+    else delete opening.span;
+  }
+  // Современное custom — осознанное индивидуальное исключение. Только в
+  // старых файлах, где режима ещё не было, высокие типы подключаем к общему
+  // стандарту этажа автоматически.
+  if ('heightMode' in opening) opening.heightMode = opening.heightMode === 'level' ? 'level' : 'custom';
+  else if (LEGACY_LINKED_WINDOW_TYPES.has(opening.type)) opening.heightMode = 'level';
 }
 
 export function normalizeOpening(o) {
@@ -418,10 +498,7 @@ export function normalizeOpening(o) {
   for (const key of ['height', 'sill']) {
     if (key in out) { const n = num(out[key]); if (n == null || n < 0) delete out[key]; else out[key] = n; }
   }
-  if ('heightMode' in out) {
-    if (out.kind === 'window') out.heightMode = out.heightMode === 'level' ? 'level' : 'custom';
-    else delete out.heightMode;
-  }
+  normalizeOpeningHeightMode(out);
   return out;
 }
 
@@ -492,17 +569,23 @@ export function normalizeProject(data) {
   data.name = normalizeProjectName(data.name);
   data.revision = Number(data.revision) || 0;
   const levels = Array.isArray(data.levels) ? data.levels.filter(isObj) : [];
-  data.levels = levels.map((l, i) => ({
-    ...normalizeLevelContent(l),
-    id: typeof l.id === 'string' && l.id ? l.id : makeId('level'),
-    name: typeof l.name === 'string' && l.name ? l.name : `${i + 1} этаж`,
-    elevation: Number(l.elevation) || 0,
-    height: Number(l.height) > 0 ? Number(l.height) : DEFAULT_LEVEL_HEIGHT,
-    slabThickness: Number(l.slabThickness) >= 120 && Number(l.slabThickness) <= 600
-      ? Number(l.slabThickness) : DEFAULT_SLAB,
-    tallWindowHeight: Number(l.tallWindowHeight) >= 300
-      ? Number(l.tallWindowHeight) : DEFAULT_TALL_WINDOW_HEIGHT,
-  }));
+  data.levels = levels.map((l, i) => {
+    const content = normalizeLevelContent(l);
+    const height = Number(l.height) > 0 ? Number(l.height) : DEFAULT_LEVEL_HEIGHT;
+    const tall = levelTallWindowOffsets({ ...l, ...content, height });
+    return {
+      ...content,
+      id: typeof l.id === 'string' && l.id ? l.id : makeId('level'),
+      name: typeof l.name === 'string' && l.name ? l.name : `${i + 1} этаж`,
+      elevation: Number(l.elevation) || 0,
+      height,
+      slabThickness: Number(l.slabThickness) >= 120 && Number(l.slabThickness) <= 600
+        ? Number(l.slabThickness) : DEFAULT_SLAB,
+      tallWindowHeight: tall.height,
+      tallWindowTopOffset: tall.top,
+      tallWindowBottomOffset: tall.bottom,
+    };
+  });
   if (!data.levels.length) data.levels = [createLevel('1 этаж', 0, DEFAULT_LEVEL_HEIGHT, 'L1')];
   if (!data.levels.some((l) => l.id === data.activeLevel)) data.activeLevel = data.levels[0].id;
   data.variants = Array.isArray(data.variants)
@@ -608,6 +691,7 @@ export function removeRoom(project, roomId) {
   for (const r of project.rooms) if (r.parentId === roomId) doomed.add(r.id);
   // Копии форм (с outline/notch): мебель соседа в вырезе Г-комнаты не трогаем.
   const shapes = project.rooms.filter((r) => doomed.has(r.id)).map((r) => ({ ...r }));
+  removeOwnedAtriums(project, project.activeLevel, doomed);
   project.rooms = project.rooms.filter((r) => !doomed.has(r.id));
   project.openings = project.openings.filter((o) => !doomed.has(o.roomId));
   // Мебель, центр которой внутри контура удалённых помещений, удаляется с ними.

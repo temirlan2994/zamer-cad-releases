@@ -2,6 +2,7 @@
 // Ближняя к фасаду цепочка проходит через грани наружных проёмов и оси
 // внутренних стен, которые примыкают к этому фасаду.
 
+import { cornerWindowProjections } from './corner-windows.js';
 import { hostOpeningRoom, openingRect, sideEdge, wallBounds } from './walls.js';
 
 const EPS = 2;
@@ -22,7 +23,7 @@ export function facadeDimensionStations(project, walls, edge, expand) {
   const horizontal = edge.orient === 'h';
   const rooms = new Map(project.rooms.map((room) => [room.id, room]));
 
-  for (const opening of project.openings || []) {
+  for (const opening of cornerWindowProjections(project, project.openings || [], walls)) {
     if (opening.host) {
       // Проём ручной стены на фасаде: помещение со стороны дома, контур дома —
       // по его внутренней грани (как у комнат), выдвинутой на expand.

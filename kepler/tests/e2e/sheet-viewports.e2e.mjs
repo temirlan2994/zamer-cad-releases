@@ -211,9 +211,9 @@ describe('листы пользователя — компьютер 1440', () =
     assert.deepEqual(app.errors, []);
   });
 
-  it('«Скачать PDF» — альбом с листом пользователя; PDF одного листа A2 книжного', async () => {
+  it('альбом включает лист пользователя, предпросмотр скачивает только этот лист A2 книжного', async () => {
     const { page } = app;
-    const f = await download(page, () => page.click('#sheetViewPdf'));
+    const f = await download(page, () => page.getByRole('button', { name: 'PDF всего альбома' }).click());
     assert.match(f.name, /\.pdf$/);
     const text = f.bytes.toString('latin1');
     assert.match(text, /\/Count 3/);
@@ -227,7 +227,7 @@ describe('листы пользователя — компьютер 1440', () =
     await page.selectOption('#sheetPropFormat', 'A2');
     await page.selectOption('#sheetPropOrient', 'portrait');
     assert.match(await page.textContent('#sheetViewMeta'), /A2 · 420×594 мм · книжная/);
-    const one = await download(page, () => page.click('#sheetPropPdfOne'));
+    const one = await download(page, () => page.getByRole('button', { name: 'Скачать PDF этого листа' }).click());
     const t1 = one.bytes.toString('latin1');
     assert.match(one.name, /лист-3\.pdf$/);
     assert.match(t1, /\/Count 1/);
@@ -286,6 +286,11 @@ describe('листы пользователя — телефон', () => {
     assert.ok(await inkIn(page, d.viewports[0].box) > 0.03);
     const bar = await page.locator('#sheetViewClose').boundingBox();
     assert.ok(bar.x >= 0 && bar.x + bar.width <= 390.5);
+    const pdfButton = page.getByRole('button', { name: 'Скачать PDF этого листа' });
+    assert.ok((await pdfButton.boundingBox()).height >= 44);
+    const one = await download(page, () => pdfButton.tap());
+    assert.match(one.name, /лист-3\.pdf$/);
+    assert.match(one.bytes.toString('latin1'), /\/Count 1/);
     assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
     if (OUT) await page.screenshot({ path: `${OUT}b3-phone.png` });
     // Вид уже на листе — в «Свойствах» вида: «Открыть лист».

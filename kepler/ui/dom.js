@@ -50,3 +50,11 @@ export function toast(message, long = false) {
 export function escapeHtml(text) {
   return String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
+
+export function roomCountLabel(count) {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  const word = mod10 === 1 && mod100 !== 11 ? 'помещение'
+    : mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14) ? 'помещения' : 'помещений';
+  return `${count} ${word}`;
+}

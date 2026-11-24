@@ -117,6 +117,7 @@ export function bindKeyboard() {
     // Пока окно проектов открыто (в том числе во время облачной записи или
     // удаления), никакие команды плана — даже Ctrl+Z/Y — не проходят вниз.
     if (isProjectsOpen()) return;
+    if (event.key === 'Escape' && state.tool?.kind === 'atrium') { document.getElementById('atriumClose').click(); return; }
     // Вид открыт двойным кликом на листе — Esc закрывает его и возвращает лист.
     // В 3D Esc сначала отменяет жест и снимает выбор, без выбора — закрывает вид.
     if (event.key === 'Escape' && is3dOpen()) {

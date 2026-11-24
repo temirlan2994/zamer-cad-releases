@@ -203,10 +203,25 @@ export function normalizeCam(c) {
   // Готовый дом на листе по умолчанию закрыт кровлей; false хранится явно,
   // чтобы интерьерный 3D-вид не менялся после сохранения.
   out.roof = c.roof !== false;
+  // Полный кадр сохраняется только целиком. Старые снимки содержат углы
+  // и продолжают строиться как аксонометрия с автоматическими границами.
+  const target = c.target;
+  if (['perspective', 'orthographic'].includes(c.projection) && out.dist > 0 &&
+    Number.isFinite(c.eyeDist) && c.eyeDist > 0 && Number.isFinite(c.aspect) && c.aspect > 0 &&
+    [target?.x, target?.y, target?.z].every(Number.isFinite)) {
+    Object.assign(out, {
+      projection: c.projection, eyeDist: c.eyeDist, target: { x: target.x, y: target.y, z: target.z },
+      aspect: clamp(c.aspect, 0.05, 20), site: Boolean(c.site), landscape: Boolean(c.landscape),
+      furniture: Boolean(c.furniture), masses: Boolean(c.masses),
+      levels: ['only', 'upto'].includes(c.levels) ? c.levels : 'all',
+      terrainScale: clamp(Number(c.terrainScale) || 1, 1, 5),
+    });
+    if (str(c.levelId)) out.levelId = c.levelId;
+  }
   return out;
 }
 
-export const camKey = (cam) => (cam ? `${cam.yaw}/${cam.pitch}/${cam.roof !== false ? 1 : 0}` : 'axo');
+export const camKey = (cam) => cam ? JSON.stringify(normalizeCam(cam)) : 'axo';
 
 // ------------------------------------------------------------ номера видов
 //
@@ -512,7 +527,7 @@ export const snapMm = (v, step = VIEWPORT_SNAP) => Math.round(v / step) * step;
 
 // Положить вид на лист. Вид уже на листе — { error: 'placed', sheet };
 // нет листа или вида — { error: 'missing' }; иначе { viewport, sheet }.
-export function placeView(project, sheetId, viewId, { x = null, y = null, scale = DEFAULT_VIEW_SCALE, title = null } = {}) {
+export function placeView(project, sheetId, viewId, { x = null, y = null, scale = DEFAULT_VIEW_SCALE, title = null, cam = null } = {}) {
   const sheet = findSheetById(project, sheetId);
   if (!sheet || !viewById(project, viewId)) return { error: 'missing' };
   const other = sheetOfView(project, viewId);
@@ -527,6 +542,8 @@ export function placeView(project, sheetId, viewId, { x = null, y = null, scale 
     scale: Math.round(Number(scale)) || DEFAULT_VIEW_SCALE,
   };
   if (str(title)) vp.title = title;
+  const snapshot = viewId === '3d' && normalizeCam(cam);
+  if (snapshot) vp.cam = snapshot;
   sheet.viewports.push(vp);
   return { viewport: vp, sheet };
 }

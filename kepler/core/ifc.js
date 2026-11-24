@@ -14,15 +14,17 @@
 // GlobalId устойчивые: выводятся из id элемента — повторный экспорт того же
 // проекта сохраняет идентичность элементов.
 
+import { levelWindowOpenings } from './spanning-windows.js';
 import { FURNITURE, isOpenRoom, isRoundItem, isStructural, roomCategory, roomType } from './catalog.js';
 import { KITCHEN_PARTS, SOFA_MODULES, isFixedSizeComp, partsInHouse } from './composite.js';
 import { KITCHEN_PART_HEIGHT } from './kitchen.js';
 import { levelProject, roomCeiling, sortedLevels } from './model.js';
-import { openingHeight } from './opening-preset.js';
+import { openingHeight, openingSill } from './opening-preset.js';
 import { roomPolygon } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
 import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js';
 import { rectsCycles } from './ortho-grid.js';
+import { exportRoofBodies } from './roof-export.js';
 import { foundationFaces } from './mesh3d.js';
 import { houseTerrain } from './terrain.js';
 
@@ -219,7 +221,7 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
   const voidsProfile = (outer, holes) => (holes.length
     ? add(`IFCARBITRARYPROFILEDEFWITHVOIDS(.AREA.,$,${ifcRing(outer, true)},${list(holes.map((h) => ifcRing(h, false)))})`)
     : polyProfile(outer));
-  const shape = (item) => add(`IFCPRODUCTDEFINITIONSHAPE($,$,${list([add(`IFCSHAPEREPRESENTATION(${body},'Body','SweptSolid',${list(Array.isArray(item) ? item : [item])})`)])})`);
+  const shape = (item, representation = 'SweptSolid') => add(`IFCPRODUCTDEFINITIONSHAPE($,$,${list([add(`IFCSHAPEREPRESENTATION(${body},'Body',${stepString(representation)},${list(Array.isArray(item) ? item : [item])})`)])})`);
 
   // Наборы свойств стен — по одному на тип, общие для всех этажей.
   const wallPsets = new Map();
@@ -235,8 +237,10 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     return wallPsets.get(type);
   };
 
+  const roofBodies = exportRoofBodies(project, { manual: true });
+  const roofTypes = { flat: '.FLAT_ROOF.', shed: '.SHED_ROOF.', gable: '.GABLE_ROOF.', hip: '.HIP_ROOF.' };
   const storeys = [];
-  const counts = { walls: 0, doors: 0, windows: 0, spaces: 0, columns: 0, foundations: 0, furniture: 0, furnitureParts: 0 };
+  const counts = { walls: 0, doors: 0, windows: 0, spaces: 0, columns: 0, foundations: 0, roofs: 0, furniture: 0, furnitureParts: 0 };
   const foundationTops = foundationFaces(project)
     .filter((face) => (face.kind === 'foundation' || face.kind === 'plinth') && face.normal?.z > 0.5 && Number.isFinite(face.cutZ0));
   const schedule = roomSchedule(project);
@@ -259,6 +263,16 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
       const footing = add(`IFCFOOTING(${guid(`foundation-${level.id}`)},${owner},${stepString('Фундамент и цоколь (концепция)')},$,$,${placement},${shape(solids)},$,.NOTDEFINED.)`);
       contained.push(footing);
       counts.foundations += 1;
+    }
+
+    for (const roof of roofBodies.filter((r) => r.level_id === level.id)) {
+      const coordinates = roof.mesh.vertices.map(([x, y, z]) => list([real(x), real(-y), real(z - level.elevation)]));
+      const points = add(`IFCCARTESIANPOINTLIST3D(${list(coordinates)})`);
+      // Отражение оси Y меняет порядок обхода; индексы IFC начинаются с 1.
+      const triangles = roof.mesh.triangles.map(([a, b, c]) => list([a + 1, c + 1, b + 1]));
+      const tessellation = add(`IFCTRIANGULATEDFACESET(${points},$,$,${list(triangles)},$)`);
+      contained.push(add(`IFCROOF(${guid(`roof-${roof.source}-${roof.id}`)},${owner},${stepString(roof.name || 'Крыша')},$,$,${placement},${shape(tessellation, 'Tessellation')},$,${roofTypes[roof.type] || '.NOTDEFINED.'})`));
+      counts.roofs += 1;
     }
 
     // Стены: каждая полоса плана — прямоугольник, выдавленный на высоту этажа.
@@ -302,20 +316,24 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     }
 
     // Проёмы: вычитание из стены + дверь/окно в проёме.
-    for (const o of lp.openings) {
+    for (const o of levelWindowOpenings(lp, walls)) {
       const placed = openingRect(lp, o, walls);
       if (!placed || !wallRef.has(placed.wall)) continue;
       const r = placed.rect;
       const horiz = placed.wall.orient === 'h';
-      const bottom = o.kind === 'door' ? 0 : Math.max(0, o.sill ?? 900);
-      const height = Math.min(level.height - bottom - 50, openingHeight(o, level));
+      const bottom = openingSill(o, level);
+      const height = Math.max(0, Math.min(level.height - bottom, openingHeight(o, level)));
       const cx = r.x + r.w / 2;
       const cy = -(r.y + r.h / 2);
       // Проём чуть толще стены — режет насквозь.
       const cut = rectProfile(cx, cy, horiz ? r.w : r.w + 20, horiz ? r.h + 20 : r.h);
-      const opening = add(`IFCOPENINGELEMENT(${guid(`opening-${o.id}`)},${owner},${stepString(o.kind === 'door' ? 'Проём двери' : 'Проём окна')},$,$,${placement},${shape(solid(cut, bottom, height))},$,.OPENING.)`);
-      add(`IFCRELVOIDSELEMENT(${guid(`void-${o.id}`)},${owner},$,$,${wallRef.get(placed.wall)},${opening})`);
+      const voidId = o.cornerWing === 'return' ? `${o.id}-return` : o.spanPart === 'upper' ? `${o.id}-${level.id}` : o.id;
+      const opening = add(`IFCOPENINGELEMENT(${guid(`opening-${voidId}`)},${owner},${stepString(o.kind === 'door' ? 'Проём двери' : 'Проём окна')},$,$,${placement},${shape(solid(cut, bottom, height))},$,.OPENING.)`);
+      add(`IFCRELVOIDSELEMENT(${guid(`void-${voidId}`)},${owner},$,$,${wallRef.get(placed.wall)},${opening})`);
       // Полотно двери / стекло окна — тонкая плита посередине стены.
+      // В IFC у окна одна связь заполнения. В верхней стене отдельный вырез,
+      // само полноразмерное окно принадлежит этажу его установки.
+      if (o.spanPart === 'upper') continue;
       const panel = rectProfile(cx, cy, horiz ? r.w : 50, horiz ? 50 : r.h);
       let filler;
       if (o.kind === 'door') {
@@ -324,10 +342,11 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
         filler = add(`IFCDOOR(${guid(`door-${o.id}`)},${owner},${stepString('Дверь')},$,$,${placement},${shape(solid(panel, bottom, height))},$,${real(height)},${real(o.width)},.DOOR.,${op},$)`);
         counts.doors += 1;
       } else {
-        filler = add(`IFCWINDOW(${guid(`window-${o.id}`)},${owner},${stepString(o.type === 'panoramic' ? 'Окно панорамное' : 'Окно')},$,$,${placement},${shape(solid(panel, bottom, height))},$,${real(height)},${real(o.width)},.WINDOW.,.SINGLE_PANEL.,$)`);
+        const glassHeight = o.spanPart ? o.spanTop - bottom : height;
+        filler = add(`IFCWINDOW(${guid(`window-${voidId}`)},${owner},${stepString(o.type === 'panoramic' ? 'Окно панорамное' : 'Окно')},$,$,${placement},${shape(solid(panel, bottom, glassHeight))},$,${real(glassHeight)},${real(o.width)},.WINDOW.,.SINGLE_PANEL.,$)`);
         counts.windows += 1;
       }
-      add(`IFCRELFILLSELEMENT(${guid(`fill-${o.id}`)},${owner},$,$,${opening},${filler})`);
+      add(`IFCRELFILLSELEMENT(${guid(`fill-${voidId}`)},${owner},$,$,${opening},${filler})`);
       contained.push(filler);
     }
 

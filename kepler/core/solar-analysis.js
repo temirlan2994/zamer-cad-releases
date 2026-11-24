@@ -189,7 +189,7 @@ export function roomSunlightAnalysisKey(project, options = {}) {
   ];
   const windowShape = (opening) => opening.kind === 'window' ? [
     opening.id, opening.roomId || '', opening.side ?? '', opening.offset ?? '', opening.width,
-    opening.height, opening.heightMode || '', opening.sill, opening.orphan || false, opening.host || null,
+    opening.height, opening.heightMode || '', opening.sill, opening.orphan || false, opening.host || null, opening.span || null,
   ] : null;
   const wallShape = (wall) => [
     wall.id, wall.axis || null, wall.justify || '', wall.thickness, wall.typeId || '', wall.wallType || '',
@@ -224,7 +224,10 @@ export function roomSunlightAnalysisKey(project, options = {}) {
       id: level.id,
       elevation: level.elevation,
       height: level.height,
+      slabThickness: level.slabThickness,
       tallWindowHeight: level.tallWindowHeight,
+      tallWindowTopOffset: level.tallWindowTopOffset,
+      tallWindowBottomOffset: level.tallWindowBottomOffset,
       rooms: (level.rooms || []).map(roomShape),
       windows: (level.openings || []).map(windowShape).filter(Boolean),
       wallOverrides: level.wallOverrides || {},

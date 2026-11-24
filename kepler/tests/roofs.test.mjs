@@ -256,7 +256,7 @@ test('3D: плита на отметке, толщина, вынос, фасци
   assert.ok(fascia.flatMap((f) => f.pts.map((q) => q.x)).some((x) => x === 6850 + 40), 'борт снаружи плиты');
   assert.equal(faces.filter((f) => f.kind === 'parapet').length, 0);
   // Автокровля (флажок «Крыша»): над накрытым помещением — нет второй плиты.
-  const auto = buildHouseMesh(p, { roof: true }).filter((f) => f.kind === 'roof' && !f.roofId && f.normal.z > 0.5);
+  const auto = buildHouseMesh(p, { roof: true }).filter((f) => f.kind === 'roof' && f.roofSource === 'linked' && f.normal.z > 0.5);
   assert.ok(auto.length > 0, 'над кухней автокровля есть');
   for (const f of auto) assert.ok(f.pts.every((q) => q.x >= 6850 - 0.5), `автоплита не над крышей: ${JSON.stringify(f.pts[0])}`);
   // Без крыш автокровля — над обеими комнатами.

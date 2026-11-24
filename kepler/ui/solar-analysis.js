@@ -1,7 +1,7 @@
 // UI двух световых оценок: прямое солнце и предварительные КЕО/люксы.
 // Расчёты и кэш живут в core/daylight-analysis.js и ui/render-solar.js.
 
-import { el, escapeHtml } from './dom.js';
+import { el, escapeHtml, roomCountLabel } from './dom.js';
 import {
   bindLightAnalysisRedraw,
   cancelPendingLightAnalysis,
@@ -74,10 +74,9 @@ function syncLegend(a = null) {
   legendKey = key;
   if (p.scope === 'level') {
     const levelLabel = level?.name || 'Этаж';
-    const countLabel = `${levelRooms.length} ${levelRooms.length === 1 ? 'помещение' : 'помещений'}`;
-    const progressLabel = progress.total > 0 && progress.ready < progress.total
-      ? `Расчёт ${progress.ready}/${progress.total}`
-      : `Готово · ${countLabel}`;
+    const progressLabel = !levelRooms.length ? 'Добавьте помещение на план'
+      : progress.ready < progress.total ? `Расчёт ${progress.ready}/${progress.total}`
+        : `Готово · ${roomCountLabel(levelRooms.length)}`;
     if (p.mode === 'daylight') {
       box.className = 'solar-legend daylight estimated';
       box.innerHTML = `<span class="solar-legend-title">Освещённость · все помещения</span>

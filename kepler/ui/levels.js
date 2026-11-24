@@ -4,13 +4,15 @@
 // на активном этаже project.activeLevel. Этаж ниже рисуется бледно.
 
 import {
-  createItem, createLevel, createRoom, levelBelow, sortedLevels,
+  createItem, createLevel, createRoom, levelBelow, levelTallWindowOffsets, setLevelTallWindowOffsets, sortedLevels,
 } from '../core/model.js';
+import { removeOwnedAtriums } from '../core/slab-openings.js';
+import { roomsIntersect } from '../core/v7/eat-bridge.js';
 import { el, refs, toast } from './dom.js';
 import { setEditorMode } from './modes.js';
 import { state } from './state.js';
 import { afterChange, mutate, refreshDerived } from './store.js';
-import { cancelTool } from './tools.js';
+import { cancelTool, selectObject } from './tools.js';
 import { scaleLabel } from './view.js';
 
 export function renderLevelBar() {
@@ -145,41 +147,76 @@ const inside = (item, r) => item.x >= r.x && item.x <= r.x + r.w && item.y >= r.
 
 // Новый этаж над верхним. Лестница связывает этажи, поэтому помещения
 // «Лестница» (вместе с маршем внутри) переносятся на то же место.
+function makeNextLevel(list) {
+  const top = list.at(-1);
+  const level = createLevel(`${list.length + 1} этаж`, top.elevation + top.height, top.height);
+  setLevelTallWindowOffsets(level, levelTallWindowOffsets(top));
+  const stairs = top.rooms.filter((r) => r.type === 'stairs-room');
+  for (const s of stairs) {
+    const copy = createRoom('stairs-room', s.x, s.y, s.w, s.h);
+    copy.name = s.name;
+    level.rooms.push(copy);
+    for (const it of top.items) {
+      if (!inside(it, s)) continue;
+      const copyItem = createItem(it.kind, it.x, it.y, it.w, it.h, it.rotation || 0);
+      if (it.comp) copyItem.comp = JSON.parse(JSON.stringify(it.comp));
+      if (it.kind === 'stairs') {
+        copyItem.stairShape = it.stairShape;
+        // Марши и площадки — как у нижней (core/stairs.js), этаж — свой.
+        for (const key of ['flightWidth', 'going', 'flights', 'gap', 'landingDepth', 'landings', 'mirrored']) {
+          if (it[key] !== undefined) copyItem[key] = structuredClone(it[key]);
+        }
+        copyItem.floorHeight = level.height;
+      }
+      level.items.push(copyItem);
+    }
+  }
+  return level;
+}
+
 export function addLevel() {
   const project = state.project;
-  const list = sortedLevels(project);
-  const top = list[list.length - 1];
   if (state.modeName === 'plan' && !state.analyticalView) rememberPlan(project);
-  const level = createLevel(`${list.length + 1} этаж`, top.elevation + top.height, top.height);
-  const stairs = top.rooms.filter((r) => r.type === 'stairs-room');
+  const level = makeNextLevel(sortedLevels(project));
   cancelTool();
   state.selection = null;
-  mutate(() => {
-    for (const s of stairs) {
-      const copy = createRoom('stairs-room', s.x, s.y, s.w, s.h);
-      copy.name = s.name;
-      level.rooms.push(copy);
-      for (const it of top.items) {
-        if (!inside(it, s)) continue;
-        const copyItem = createItem(it.kind, it.x, it.y, it.w, it.h, it.rotation || 0);
-        if (it.comp) copyItem.comp = JSON.parse(JSON.stringify(it.comp));
-        if (it.kind === 'stairs') {
-          copyItem.stairShape = it.stairShape;
-          // Марши и площадки — как у нижней (core/stairs.js), этаж — свой.
-          for (const key of ['flightWidth', 'going', 'flights', 'gap', 'landingDepth', 'landings', 'mirrored']) {
-            if (it[key] !== undefined) copyItem[key] = structuredClone(it[key]);
-          }
-          copyItem.floorHeight = level.height;
-        }
-        level.items.push(copyItem);
-      }
-    }
+  const added = mutate(() => {
     project.levels.push(level);
     project.activeLevel = level.id;
   });
-  toast(stairs.length
+  if (added) toast(level.rooms.length
     ? `Добавлен «${level.name}»: лестница перенесена с этажа ниже, его стены видны бледно`
     : `Добавлен «${level.name}»: стены этажа ниже видны бледно — ставьте комнаты над ними`, true);
+}
+
+export function addRoomAbove(room) {
+  const project = state.project;
+  if (state.editLocked || !project.rooms.includes(room)) return;
+  const levels = sortedLevels(project);
+  const index = levels.findIndex((level) => level.id === project.activeLevel);
+  const existing = levels[index + 1];
+  const level = existing || makeNextLevel(levels);
+  const occupied = level.rooms.find((other) => roomsIntersect(room, other));
+  if (occupied) {
+    toast(`На этаже «${level.name}» это место занимает «${occupied.name}»`, true);
+    return;
+  }
+  const copy = createRoom(room.type, room.x, room.y, room.w, room.h);
+  copy.name = room.name;
+  if (room.outline) copy.outline = structuredClone(room.outline);
+  if (room.notch) copy.notch = structuredClone(room.notch);
+  if (!document.body.classList.contains('v3-open')) rememberPlan(project);
+  cancelTool();
+  const added = mutate(() => {
+    if (!existing) project.levels.push(level);
+    level.rooms.push(copy);
+    project.activeLevel = level.id;
+    state.selection = { type: 'room', id: copy.id };
+  });
+  if (added) {
+    selectObject({ type: 'room', id: copy.id });
+    toast(`«${copy.name}» добавлена на «${level.name}». Тип и размеры можно изменить в свойствах.`);
+  }
 }
 
 export function deleteLevel(id) {
@@ -191,7 +228,11 @@ export function deleteLevel(id) {
   cancelTool();
   state.selection = null;
   mutate(() => {
+    removeOwnedAtriums(project, id);
     project.levels = project.levels.filter((l) => l.id !== id);
+    for (const other of project.levels) {
+      for (const opening of other.openings) if (opening.span?.levelId === id) delete opening.span;
+    }
     if (project.activeLevel === id) project.activeLevel = fallback.id;
   });
   toast(`«${level.name}» удалён — Ctrl+Z вернёт`);

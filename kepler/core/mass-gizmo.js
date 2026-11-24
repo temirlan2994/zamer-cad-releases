@@ -67,7 +67,10 @@ export function resizeByHandle(m, s, d, min = MASS_GRIP_MIN) {
   if (s.y > 0) b.y1 = Math.max(b.y0 + min, b.y1 + dy);
   else if (s.y < 0) b.y0 = Math.min(b.y1 - min, b.y0 + dy);
   if (s.z > 0) b.z1 = Math.max(b.z0 + min, b.z1 + dz);
-  else if (s.z < 0) b.z0 = Math.max(0, Math.min(b.z1 - min, b.z0 + dz));
+  else if (s.z < 0) {
+    const lower = Math.min(b.z1 - min, b.z0 + dz);
+    b.z0 = m.facadeKind ? lower : Math.max(0, lower);
+  }
   return massFromBox(m, b);
 }
 

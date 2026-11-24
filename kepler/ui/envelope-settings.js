@@ -96,6 +96,14 @@ function foundationFields(foundation) {
   return `<label class="prop-field"><span>Толщина плиты, м</span><input id="foundationSlabThickness" type="number" step="0.05" min="0.1" max="1.5" value="${meters(foundation.slabThickness)}"></label>`;
 }
 
+export function linkedRoofSettingsHtml(project = state.project) {
+  const envelope = envelopeOf(project);
+  return `<div class="envelope-roof-types">${roofTypes.map(([id, label, icon]) => `<button type="button" data-roof-type="${id}" aria-pressed="${envelope.roof.type === id}" class="${envelope.roof.type === id ? 'active' : ''}"><span>${icon}</span>${label}</button>`).join('')}</div>
+      <div class="prop-grid"><label class="prop-field"><span>Уклон, °</span><input id="roofPitch" type="number" min="1" max="60" step="1" value="${envelope.roof.pitchDeg}" ${envelope.roof.type === 'flat' ? 'disabled' : ''}></label>
+      <label class="prop-field"><span>Свес крыши, м</span><input id="roofOverhang" type="number" min="0" max="2" step="0.05" value="${meters(envelope.roof.overhang)}"></label></div>
+      <label class="prop-field"><span>Направление ската</span><select id="roofDirection" ${envelope.roof.type === 'flat' ? 'disabled' : ''}><option value="auto" ${envelope.roof.direction === 'auto' ? 'selected' : ''}>Авто по форме дома</option><option value="n" ${envelope.roof.direction === 'n' ? 'selected' : ''}>На север</option><option value="e" ${envelope.roof.direction === 'e' ? 'selected' : ''}>На восток</option><option value="s" ${envelope.roof.direction === 's' ? 'selected' : ''}>На юг</option><option value="w" ${envelope.roof.direction === 'w' ? 'selected' : ''}>На запад</option></select></label>`;
+}
+
 export function envelopeSettingsHtml(project = state.project) {
   const envelope = envelopeOf(project);
   const info = datumInfo(project);
@@ -124,11 +132,8 @@ export function envelopeSettingsHtml(project = state.project) {
       <div class="envelope-choice">${foundationTypes.map(([id, label]) => `<button type="button" data-foundation-type="${id}" class="${envelope.foundation.type === id ? 'active' : ''}">${label}</button>`).join('')}</div>
       <label class="prop-field"><span>Заглубление от земли, м</span><input id="foundationDepth" type="number" step="0.1" min="0" max="${MAX_FOUNDATION_DEPTH / 1000}" value="${meters(envelope.foundation.depth)}"></label>
       ${foundationFields(envelope.foundation)}<p class="envelope-flow">Концептуальная геометрия. Тип и размеры подтвердит конструктор по геологии.</p>`)}
-    ${panel('roof', 'Крыша', `<label class="check-row"><input id="autoRoofMode" type="checkbox" ${envelope.roofMode === 'linked' ? 'checked' : ''}><span>Следует за этажами</span></label>
-      <div class="envelope-roof-types">${roofTypes.map(([id, label, icon]) => `<button type="button" data-roof-type="${id}" class="${envelope.roof.type === id ? 'active' : ''}"><span>${icon}</span>${label}</button>`).join('')}</div>
-      <div class="prop-grid"><label class="prop-field"><span>Уклон, °</span><input id="roofPitch" type="number" min="1" max="60" step="1" value="${envelope.roof.pitchDeg}" ${envelope.roof.type === 'flat' ? 'disabled' : ''}></label>
-      <label class="prop-field"><span>Вынос, м</span><input id="roofOverhang" type="number" min="0" max="2" step="0.05" value="${meters(envelope.roof.overhang)}"></label></div>
-      <label class="prop-field"><span>Направление ската</span><select id="roofDirection"><option value="auto" ${envelope.roof.direction === 'auto' ? 'selected' : ''}>Авто по форме дома</option><option value="n" ${envelope.roof.direction === 'n' ? 'selected' : ''}>На север</option><option value="e" ${envelope.roof.direction === 'e' ? 'selected' : ''}>На восток</option><option value="s" ${envelope.roof.direction === 's' ? 'selected' : ''}>На юг</option><option value="w" ${envelope.roof.direction === 'w' ? 'selected' : ''}>На запад</option></select></label>`)}
+    ${panel('roof', 'Крыша', `<label class="check-row"><input id="autoRoofMode" type="checkbox" ${envelope.roofMode === 'linked' ? 'checked' : ''}><span>Автоматически накрывать помещения</span></label>
+      ${linkedRoofSettingsHtml(project)}`)}
     ${panel('drainage', 'Водоотвод', `<label class="prop-field"><span>Система</span><select id="roofDrainage"><option value="auto" ${envelope.roof.drainage === 'auto' ? 'selected' : ''}>Авто по низким краям</option><option value="external" ${envelope.roof.drainage === 'external' ? 'selected' : ''}>Наружная</option><option value="internal" ${envelope.roof.drainage === 'internal' ? 'selected' : ''}>Внутренняя</option><option value="off" ${envelope.roof.drainage === 'off' ? 'selected' : ''}>Не показывать</option></select></label>
       <p class="envelope-flow">Жёлоб и стояки следуют за формой и уклоном крыши.</p>`)}
     ${panel('entrance', 'Вход', `<label class="check-row"><input id="entranceEnabled" type="checkbox" ${envelope.entrance.enabled ? 'checked' : ''}><span>Крыльцо от входной двери</span></label>

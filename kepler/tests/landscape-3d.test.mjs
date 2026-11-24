@@ -1,10 +1,10 @@
 // Ландшафт в 3D (core/mesh3d-landscape.js): формы, высоты, рельеф, переключатель.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createLandscapeObject, steppingSlabs } from '../core/landscape.js';
+import { createLandscapeObject, hitLandscape, resizeObject, rotateObjectAbout, searchLandscape, steppingSlabs, translateObject } from '../core/landscape.js';
 import { landscapeFaces, offsetPolygon, triangulate } from '../core/mesh3d-landscape.js';
 import { buildHouseMesh } from '../core/mesh3d.js';
-import { createProject } from '../core/model.js';
+import { createProject, deserializeProject, serializeProject } from '../core/model.js';
 
 const project = (...objects) => {
   const p = createProject();
@@ -22,6 +22,28 @@ test('триангуляция невыпуклого контура: площа
   assert.equal(area, 6e6);
   const big = offsetPolygon([{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }], 100);
   assert.deepEqual(big.map((p) => [Math.round(p.x), Math.round(p.y)]), [[-100, -100], [1100, -100], [1100, 1100], [-100, 1100]]);
+});
+
+test('водная завеса: выбор, поворот, перемещение и сохранение размеров камня и струи', () => {
+  assert.ok(searchLandscape('водопад').some((def) => def.kind === 'water-curtain'));
+  const object = createLandscapeObject('water-curtain', 1200, 4000, { height: 3100, variant: 'limestone' });
+  resizeObject(object, 4400, 800);
+  rotateObjectAbout(object, object.x, object.y, 90);
+  translateObject(object, 800, 1000);
+  const p = deserializeProject(serializeProject(project(object)));
+  const saved = p.site.landscape.objects[0];
+  assert.deepEqual([saved.x, saved.y, saved.rotation, saved.w, saved.h, saved.height, saved.variant],
+    [2000, 5000, 90, 4400, 800, 3100, 'limestone']);
+  assert.equal(hitLandscape([saved], { x: 2000, y: 6500 })?.id, saved.id);
+  const faces = landscapeFaces(p, () => 350);
+  assert.ok(faces.every((f) => f.landscapeId === object.id));
+  assert.equal(Math.max(...zs(faces)), 3450);
+  const water = faces.filter((f) => f.kind === 'landscape-water');
+  const curtain = water.find((f) => Math.abs(f.normal.x) > 0.99);
+  assert.ok(curtain && Math.max(...zs([curtain])) - Math.min(...zs([curtain])) > 2800);
+  const ys = curtain.pts.map((pt) => pt.y);
+  assert.ok(Math.max(...ys) - Math.min(...ys) > 4100);
+  assert.ok(water.some((f) => Math.abs(f.normal.z) > 0.99));
 });
 
 test('дерево: ствол и крона, верх кроны — на высоте дерева, центр — где стоит', () => {
@@ -79,6 +101,7 @@ test('в модели участка: по рельефу, в осях дома,
   assert.equal(Math.min(...zs(lifted)), 1000 + Math.min(...zs(f)));
   const on = buildHouseMesh(p, { site: true });
   const off = buildHouseMesh(p, { site: true, landscape: false });
+  assert.ok(off.some((face) => face.kind === 'ground'), 'сад получает основание и до добавления дома или границы');
   assert.equal(on.length - off.length, f.length);
   assert.equal(buildHouseMesh(p).length, buildHouseMesh(p, { landscape: true }).length, 'без участка — без ландшафта');
   // Разметка парковки — белые полосы.

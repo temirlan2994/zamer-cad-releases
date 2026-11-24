@@ -77,7 +77,13 @@ function sideOf(room, side) {
 function openingPoint(room, o) {
   const e = sideOf(room, o.side);
   if (!e) return null;
-  const along = (e.orient === 'h' ? room.x : room.y) + Number(o.offset);
+  let along = (e.orient === 'h' ? room.x : room.y) + Number(o.offset);
+  // A shortened wall still owns its corner window even if the last cached
+  // centre falls beyond the edge during serialization.
+  if (o.corner) {
+    const boundary = roomBoundaryEdges(room).find((edge) => edge.side === o.side);
+    if (boundary) along = Math.min(boundary.to - 1, Math.max(boundary.from + 1, along));
+  }
   return { point: e.orient === 'h' ? { x: along, y: e.edge } : { x: e.edge, y: along }, canon: e.orient === 'h' ? { x: 1, y: 0 } : { x: 0, y: 1 } };
 }
 

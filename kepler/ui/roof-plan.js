@@ -35,7 +35,7 @@ import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from 
 import { renderProps } from './props.js';
 import { cancelTool, selectObject, setHint } from './tools.js';
 import { planToScreen, requestDraw } from './view.js';
-import { drawnRoofHandles, isRoofPlan, roofById, roofs, selectedRoof } from './plan-roofs.js';
+import { drawnRoofHandles, isRoofPlan, planRoofStack, roofById, roofs, selectedRoof } from './plan-roofs.js';
 import {
   ROOF_DRAW_HINT, addRoof, mergeRoofInPlace, roofSnapper, setRoofs, takeMergeNote, topLevelId, updateRoof,
 } from './roofs.js';
@@ -84,9 +84,14 @@ export function roofHandleAt(screen, event = null) {
 // Крыша под точкой (плита с выносом), верхняя — последняя в списке.
 export function roofBodyAt(plan) {
   const tol = 4 / (state.view?.scale || 1);
-  const list = roofs();
+  const list = planRoofStack();
   for (let i = list.length - 1; i >= 0; i -= 1) {
     const r = list[i];
+    if (r.roofSource === 'linked') {
+      if (r.outline.some(([outer, ...holes]) => pointInOutline(outer, plan.x, plan.y) &&
+          !holes.some((ring) => pointInOutline(ring, plan.x, plan.y)))) return r;
+      continue;
+    }
     if (roofIsSlanted(r)) {
       if (pointInOutline(roofSlabOutline(state.project, r), plan.x, plan.y)) return r;
       continue;
@@ -149,7 +154,7 @@ export function roofPlanHover(plan, screen, event) {
   const edge = h ? null : roofEdgeAt(selectedRoof(), plan, event);
   const body = h ? null : roofBodyAt(plan);
   if (canvas?.style) {
-    canvas.style.cursor = h ? (h.kind === 'vertex' ? 'move' : 'grab') : edge ? 'copy' : body ? 'move' : 'default';
+    canvas.style.cursor = h ? (h.kind === 'vertex' ? 'move' : 'grab') : edge ? 'copy' : body?.roofSource === 'linked' ? 'pointer' : body ? 'move' : 'default';
   }
   const next = body ? { type: 'roof', id: body.id } : null;
   if (JSON.stringify(next) !== JSON.stringify(state.hover)) { state.hover = next; requestDraw(); }
@@ -184,6 +189,7 @@ export function roofPlanPointerDown(event, screen, plan) {
   const body = roofBodyAt(plan);
   if (body) {
     selectObject({ type: 'roof', id: body.id });
+    if (body.roofSource === 'linked') return { kind: 'pan', start: screen, view: { ...state.view } };
     return {
       kind: 'roofplan-move', id: body.id, start: structuredClone(body), plan0: { x: plan.x, y: plan.y },
       screen0: screen, before: snapshot(), moved: false,
@@ -337,6 +343,7 @@ export function roofPlanDblClick(screen, plan) {
   const roof = selectedRoof() || roofBodyAt(plan);
   if (!roof) return;
   if (!selectedRoof()) selectObject({ type: 'roof', id: roof.id });
+  if (roof.roofSource === 'linked') return;
   const h = roofHandleAt(screen);
   // Двойной клик по ребру: первый клик уже поставил излом — он остаётся.
   const fresh = lastBreak && lastBreak.id === roof.id && Date.now() - lastBreak.time < 700

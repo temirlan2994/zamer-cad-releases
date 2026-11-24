@@ -1624,12 +1624,18 @@ export function activeAnalyticalViewId() {
   return id;
 }
 
-export function openAnalyticalView(id, { lightMode = 'daylight', detailRoomId = null } = {}) {
+export function openAnalyticalView(id, { lightMode, detailRoomId = null, showProperties = false } = {}) {
   const view = floorAnalyticalViewById(state.project, id);
   if (!view) return false;
+  if (showProperties) {
+    state.propsTab = 'props';
+    setIssuesOpen(false);
+  }
+  const nextLightMode = lightMode ?? (state.analyticalView?.analysis === 'light' ? state.solarAnalysis?.mode : 'daylight');
   if (activeAnalyticalViewId() === view.id && state.project.activeLevel === view.levelId
     && workspaceAnalyticalLayerIsOn(view)) {
     if (panelOpen) closePanel({ restoreFocus: false });
+    if (showProperties) renderProps();
     requestDraw();
     return true;
   }
@@ -1654,7 +1660,7 @@ export function openAnalyticalView(id, { lightMode = 'daylight', detailRoomId = 
   state.selection = null;
   state.analyticalView = { id: view.id, analysis: view.analysis, levelId: view.levelId };
   loadWorkspaceCamera(view.id, planCamera);
-  enableWorkspaceAnalyticalLayer(view, { lightMode });
+  enableWorkspaceAnalyticalLayer(view, { lightMode: nextLightMode });
   if (view.analysis === 'light' && detailRoomId
     && state.project.rooms.some((room) => room.id === detailRoomId)) {
     focusSolarRoom(detailRoomId);
@@ -1687,6 +1693,13 @@ export function closeAnalyticalView({ restoreFocus = false } = {}) {
     notifyWorkspaceViewChange();
   }
   return true;
+}
+
+export function openHomeMission(view, mission, opener) {
+  openPanel(view, null, opener);
+  if (mission) {
+    byId('projectRouteBody')?.querySelector(`[data-analysis-mission="${mission}"]`)?.click();
+  }
 }
 
 function openPanel(view, stageId, opener) {
@@ -1727,7 +1740,15 @@ function closePanel({ restoreFocus = true } = {}) {
   const opener = lastOpenerView
     ? byId('projectRouteSteps')?.querySelector(`[data-route-view="${lastOpenerView}"]`)
     : lastOpener;
-  if (restoreFocus) {
+  if (restoreFocus && opener?.dataset.floorMission) {
+    // Закрытие панели перерисует инспектор, а на телефоне оставит его свёрнутым.
+    const mission = opener.dataset.floorMission;
+    requestAnimationFrame(() => {
+      const source = isPhone() ? byId('mobileBar')?.querySelector('[data-sheet="props"]')
+        : byId('propsBody')?.querySelector(`[data-floor-mission="${mission}"]`);
+      source?.focus({ preventScroll: true });
+    });
+  } else if (restoreFocus) {
     const fallback = byId('projectRouteSteps')?.querySelector(`[data-route-view="${lastWorkflowView}"]`)
       || byId('projectRouteSteps')?.querySelector('[data-route-view]');
     routeFocusPreviewSuppressed = true;
@@ -2393,12 +2414,7 @@ export function bindProjectRoute() {
     const view = event.target.closest('[data-route-hover-view]');
     if (view) {
       const opener = routeMenuOpener || view;
-      const mission = view.dataset.routeHoverMission;
-      closeRouteMenu();
-      openPanel(view.dataset.routeHoverView, null, opener);
-      if (mission) {
-        byId('projectRouteBody')?.querySelector(`[data-analysis-mission="${mission}"]`)?.click();
-      }
+      openHomeMission(view.dataset.routeHoverView, view.dataset.routeHoverMission, opener);
     }
   });
   document.addEventListener('pointerdown', (event) => {
@@ -2496,6 +2512,10 @@ export function bindProjectRoute() {
     closeAnalyticalView({ restoreFocus: false });
   });
   document.addEventListener('kepler:view', () => {
+    if (state.sheetOpen) {
+      if (panelOpen) closePanel({ restoreFocus: false });
+      else closeRouteMenu();
+    }
     const current = floorAnalyticalViewById(state.project, state.analyticalView?.id);
     if (!current) return;
     if (activeViewId() !== `plan:${current.levelId}`) {

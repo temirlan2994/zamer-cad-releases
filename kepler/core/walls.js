@@ -12,6 +12,7 @@ import { DEFAULT_BEARING, DEFAULT_PARTITION, DEFAULT_EXTERIOR, isOpenRoom, isSha
 import {
   roomBoundaryEdges, roomContainsPoint, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon, roomRects,
 } from './room-shape.js';
+import { cornerWindowGeometry } from './corner-windows.js';
 import { overridePieces, spanHostId, spanOrigin } from './wall-spans.js';
 import { deriveWallsV2, resolveOpeningWall } from './walls-v2.js';
 
@@ -868,6 +869,10 @@ export function openingPosAt(project, opening, walls, along) {
 // ни на какой стене — null; вернётся, когда место появится.
 export function openingRect(project, opening, walls) {
   if (opening.orphan) return null;
+  if (opening.corner && !opening.cornerWing) {
+    const main = cornerWindowGeometry(project, opening, walls)?.[0];
+    return main ? openingRect(project, main.opening, walls) : null;
+  }
   if (opening.host) {
     const placed = resolveOpeningWall(project, opening, walls);
     if (!placed) return null;
@@ -1120,6 +1125,7 @@ export function doorSymbol(project, opening, walls) {
 // Допустимый диапазон offset для проёма на данной стороне (центр проёма).
 // Для проёма ручной стены (host) — позиция host.t от axis.a.
 export function clampOpeningOffset(project, opening, walls, desiredOffset) {
+  if (opening.corner) return cornerWindowGeometry(project, opening, walls)?.[0].opening.offset ?? null;
   const frame = openingFrame(project, opening, walls);
   if (frame === undefined) return desiredOffset;
   if (!frame) return null;

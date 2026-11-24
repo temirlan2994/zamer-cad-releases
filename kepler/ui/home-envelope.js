@@ -170,40 +170,32 @@ function roofRows(report, project) {
   const section = reportSection(report, ['roofs', 'roof'], ['roofs', 'roof']);
   const rows = Array.isArray(section) ? section
     : array(section?.records || section?.items || section?.rows || section?.roofs);
-  if (!rows.length && section?.autoLinked) {
-    const type = AUTO_ROOF_LABELS[section.autoType] || 'Связанная';
-    const pitch = section.autoType === 'flat' || !finite(section.autoPitchDeg)
-      ? '' : ` · ${number(section.autoPitchDeg, 0)}°`;
-    return array(project?.levels).filter((level) => array(level?.rooms).length).map((level) => ({
-      id: `auto-roof:${level.id}`,
-      name: `${type} автокровля`,
-      level: level.name || level.id,
-      vertices: 0,
-      thickness: section.autoThicknessMm,
-      status: 'observed',
-      note: `Связана с верхним контуром${pitch}`,
-    }));
-  }
-  const source = rows.length ? rows : array(project?.roofs);
+  const source = Array.isArray(section) || Array.isArray(section?.records) || rows.length
+    ? rows : array(project?.roofs);
   return source.map((roof, index) => ({
     id: String(roof?.id || `roof-${index + 1}`),
     name: roof?.name || roof?.title || `Кровля ${index + 1}`,
+    type: AUTO_ROOF_LABELS[roof?.roofType],
+    area: first(roof, ['areaM2']),
+    pitch: first(roof, ['pitchDeg']),
     level: roof?.levelName || roof?.levelTitle || roof?.levelId || 'этаж не указан',
-    vertices: countOf(first(roof, ['outlineVertexCount', 'vertexCount', 'vertices', 'outline']), array(roof?.outline).length),
     thickness: first(roof, ['thicknessMm', 'thickness']),
     status: normalizedStatus(roof?.status || 'observed'),
     note: textOf(roof?.note || roof?.warning || roof?.reason),
   }));
 }
 
-function roofsHtml(report, project) {
-  const rows = roofRows(report, project);
+function roofsHtml(rows) {
   if (!rows.length) {
-    return '<p class="home-envelope-empty">Кровля не задана. Включите автоматическую оболочку или создайте ручную крышу.</p>';
+    return '<p class="home-envelope-empty">Крыши в модели пока нет. Связь можно включить в свойствах помещения.</p>';
   }
   return `<ul class="home-envelope-roofs">${rows.map((roof) => `<li data-status="${escapeHtml(roof.status)}" data-home-envelope-roof="${escapeHtml(roof.id)}">
     <div><strong>${escapeHtml(roof.name)}</strong><span>${escapeHtml(STATUS_LABELS[roof.status])}</span></div>
-    <p>${escapeHtml(roof.level)} · ${roof.vertices ? `${number(roof.vertices, 0)} вершин` : 'контур не описан'}${finite(roof.thickness) ? ` · ${number(roof.thickness, 0)} мм` : ''}</p>
+    <p>${escapeHtml([roof.level, roof.type,
+      roof.pitch > 0 ? `${number(roof.pitch, 0)}°` : null,
+      finite(roof.area) ? `${number(roof.area)} м² в плане` : null,
+      finite(roof.thickness) ? `толщина ${number(roof.thickness, 0)} мм` : null,
+    ].filter(Boolean).join(' · '))}</p>
     ${roof.note ? `<small>${escapeHtml(roof.note)}</small>` : ''}
   </li>`).join('')}</ul>`;
 }
@@ -367,7 +359,7 @@ export function homeEnvelopeHtml(project, options = {}) {
       </details>
       <details class="home-mission-section" name="home-envelope-mission" data-analysis-fold="envelope-roofs" data-home-envelope-section="roofs" data-status="${roofs.length ? 'observed' : 'unknown'}">
         ${missionSummary(2, 'Кровли', roofs.length ? `${roofs.length} в модели` : 'Не заданы', roofs.length ? 'observed' : 'unknown')}
-        <div class="home-mission-body" id="homeEnvelopeRoofsTitle">${roofsHtml(report, project)}<button type="button" class="primary" data-home-envelope-action="open-roof-plan">Открыть план крыши</button></div>
+        <div class="home-mission-body" id="homeEnvelopeRoofsTitle">${roofsHtml(roofs)}<button type="button" class="primary" data-home-envelope-action="open-roof-plan">Открыть план крыши</button></div>
       </details>
       <details class="home-mission-section" name="home-envelope-mission" data-analysis-fold="envelope-vertical" data-home-envelope-section="vertical">
         ${missionSummary(3, 'Лестницы и проёмы', 'Связи между этажами', 'attention')}

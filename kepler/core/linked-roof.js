@@ -6,6 +6,9 @@
 // deterministic for elevations/sections and preserves the old flat-slab
 // meaning of roof thickness.
 
+import { intersection } from './geom/clip.js';
+import { pointInPolygon } from './geom/poly.js';
+
 export const LINKED_ROOF_TYPES = ['flat', 'shed', 'gable', 'hip'];
 export const LINKED_ROOF_DIRECTIONS = ['auto', 'n', 'e', 's', 'w'];
 
@@ -316,8 +319,28 @@ export function slopedRoofFaces(rawGrid, options = {}) {
       if (bottom) faces.push(bottom);
     }
 
+    // Тонкий торец двускатной плиты следует коньку. Соединять оба
+    // карниза одной горизонтальной полосой у фронтона нельзя.
+    const endEdges = type === 'gable' ? boundaries.flatMap((edge) => {
+      const axis = edge.normal.x ? 'y' : 'x';
+      const fixed = edge.normal.x ? 'x' : 'y';
+      const lo = Math.min(edge.a[axis], edge.b[axis]); const hi = Math.max(edge.a[axis], edge.b[axis]);
+      const along = [...new Set(patches.flat().filter((p) => p[fixed] === edge.a[fixed] && p[axis] >= lo && p[axis] <= hi)
+        .map((p) => p[axis]))].sort((a, b) => (a - b) * Math.sign(edge.b[axis] - edge.a[axis]));
+      const chain = [];
+      for (const value of along) {
+        const point = { ...edge.a, [axis]: value };
+        if (chain.length > 1) {
+          const a = chain.at(-2); const b = chain.at(-1);
+          const fraction = (b[axis] - a[axis]) / (value - a[axis]);
+          if (Math.abs(topAt(b) - (topAt(a) + (topAt(point) - topAt(a)) * fraction)) < EPS) chain.pop();
+        }
+        chain.push(point);
+      }
+      return chain.slice(1).map((b, i) => ({ ...edge, a: chain[i], b }));
+    }) : boundaries;
     const outlineEdges = [];
-    for (const edge of boundaries) {
+    for (const edge of endEdges) {
       const topA = { ...edge.a, z: topAt(edge.a) };
       const topB = { ...edge.b, z: topAt(edge.b) };
       const bottomA = { ...edge.a, z: bottomAt(edge.a) };
@@ -352,4 +375,103 @@ export function slopedRoofFaces(rawGrid, options = {}) {
   });
 
   return faces;
+}
+
+// Вертикальные полосы разбивают даже многоугольник с внутренними кольцами
+// на выпуклые трапеции и треугольники. Используется лишь при косом резаке.
+function convexStrips(polygon) {
+  const segments = polygon.flatMap((ring) => ring.map((a, i) => ({ a, b: ring[(i + 1) % ring.length] })));
+  const xs = [...new Set(segments.map(({ a }) => a.x))].sort((a, b) => a - b);
+  const yAt = ({ a, b }, x) => a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x);
+  const strips = [];
+  for (let i = 1; i < xs.length; i += 1) {
+    const lo = xs[i - 1]; const hi = xs[i];
+    const mid = (lo + hi) / 2;
+    const crossings = segments.filter(({ a, b }) => mid > Math.min(a.x, b.x) && mid < Math.max(a.x, b.x))
+      .sort((a, b) => yAt(a, mid) - yAt(b, mid));
+    for (let j = 1; j < crossings.length; j += 2) {
+      const top = crossings[j - 1]; const bottom = crossings[j];
+      strips.push(cleanPoly([{ x: lo, y: yAt(top, lo) }, { x: hi, y: yAt(top, hi) },
+        { x: hi, y: yAt(bottom, hi) }, { x: lo, y: yAt(bottom, lo) }]));
+    }
+  }
+  return strips;
+}
+
+// По окончательному наружному контуру вырезаем верхние объёмы и косые
+// ручные крыши, сохраняя плоскость исходного ската и толщину подшивки.
+export function clipLinkedRoofFaces(faces, region) {
+  const boundary = region.outline.flatMap((polygon) => polygon.flatMap((ring) =>
+    ring.map((a, i) => ({ a, b: ring[(i + 1) % ring.length] }))));
+  const result = [];
+  for (const face of faces.filter((f) => f.roofSurface === 'top')) {
+    const clipped = intersection(face.pts, region.outline);
+    const { x, y, z } = face.pts[0];
+    const normal = face.normal;
+    const lift = (p) => ({ ...p, z: z - ((p.x - x) * normal.x + (p.y - y) * normal.y) / normal.z });
+    const down = (p) => ({ ...p, z: p.z - region.thickness });
+    for (const polygon of clipped) {
+      for (const strip of convexStrips(polygon)) {
+        const pts = strip.map(lift);
+        const bottomPts = pts.map(down);
+        result.push({ ...face, pts, edges: [], bottomPts },
+          { ...face, kind: 'roof-soffit', roofSurface: 'bottom', pts: bottomPts.slice().reverse(),
+            normal: { x: -normal.x, y: -normal.y, z: -normal.z }, edges: [] });
+      }
+      for (const ring of polygon) {
+        for (let i = 0; i < ring.length; i += 1) {
+          const a = lift(ring[i]); const b = lift(ring[(i + 1) % ring.length]);
+          // Внутренние границы полос и соседних скатов не являются торцами.
+          if (!boundary.some((edge) => distanceToSegment(a, edge) < 0.75 && distanceToSegment(b, edge) < 0.75)) continue;
+          const length = Math.hypot(b.x - a.x, b.y - a.y);
+          if (length < EPS) continue;
+          const c = down(a); const d = down(b);
+          result.push({ kind: 'roof', color: face.color, roofSurface: 'edge',
+            roofType: region.roofType, pitchDeg: region.pitchDeg, level: region.levelId,
+            roofId: region.id, autoRoofId: region.id, roofSource: 'linked', roofThickness: region.thickness,
+            normal: { x: (b.y - a.y) / length, y: -(b.x - a.x) / length, z: 0 },
+            pts: [a, c, d, b], edges: [[a, b], [c, d], [a, c]] });
+        }
+      }
+    }
+  }
+  return result;
+}
+
+// На стыке с верхней стеной или ручной крышей наружного желоба нет.
+// Длинный прямолинейный карниз может быть занят лишь на части своей длины.
+export function freeDrainageEdges(edges, { blocked, oblique, outline }) {
+  if (!blocked.length && !oblique.length) return edges;
+  const result = [];
+  for (const edge of edges) {
+    const { a, b, normal } = edge;
+    const axis = Math.abs(a.x - b.x) > Math.abs(a.y - b.y) ? 'x' : 'y';
+    const cross = axis === 'x' ? 'y' : 'x';
+    const line = a[cross] + normal[cross] * 0.1;
+    const stops = [a[axis], b[axis]];
+    const lo = Math.min(...stops); const hi = Math.max(...stops);
+    const intervals = blocked.filter((r) => line > r[cross + '0'] && line < r[cross + '1'] &&
+      hi > r[axis + '0'] && lo < r[axis + '1']);
+    for (const rect of intervals) stops.push(rect[axis + '0'], rect[axis + '1']);
+    const inside = a[cross] - normal[cross] * 0.1;
+    const addCrossings = (ring, atLine) => {
+      ring.forEach((p, i) => {
+        const q = ring[(i + 1) % ring.length];
+        if ((p[cross] > atLine) === (q[cross] > atLine)) return;
+        stops.push(p[axis] + (q[axis] - p[axis]) * (atLine - p[cross]) / (q[cross] - p[cross]));
+      });
+    };
+    for (const ring of oblique) addCrossings(ring, line);
+    for (const polygon of outline) for (const ring of polygon) addCrossings(ring, inside);
+    const coords = [...new Set(stops.filter((v) => v >= lo && v <= hi))].sort((p, q) => p - q);
+    const at = (v) => ({ ...a, [axis]: v, z: a.z + (b.z - a.z) * (v - a[axis]) / (b[axis] - a[axis]) });
+    for (let i = 1; i < coords.length; i += 1) {
+      const mid = (coords[i - 1] + coords[i]) / 2;
+      if (intervals.some((r) => mid > r[axis + '0'] && mid < r[axis + '1'])) continue;
+      if (!pointInPolygon(outline, { [axis]: mid, [cross]: inside }, 0) ||
+          oblique.some((ring) => pointInPolygon(ring, { [axis]: mid, [cross]: line }, 0))) continue;
+      result.push({ ...edge, a: at(coords[i - 1]), b: at(coords[i]) });
+    }
+  }
+  return result;
 }

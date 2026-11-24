@@ -167,7 +167,7 @@ import { bindProjectRoute, renderProjectRoute } from './ui/project-route.js';
   if (!broken && openedFromCloud) tweak(() => {}); // сохранить облачную копию и локально
   else if (!broken && localNeedsCloudSync && saved.project) {
     document.dispatchEvent(new CustomEvent(AUTOSAVE_EVENT, {
-      detail: { text: serializeProject(saved.project, { pretty: false }) },
+      detail: { text: serializeProject(saved.project, { pretty: false }), capturedAt: saved.savedAt },
     }));
   }
   const resumed = !broken && (restoreById || sameDraft)

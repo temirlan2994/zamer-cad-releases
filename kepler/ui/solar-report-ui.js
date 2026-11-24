@@ -6,7 +6,7 @@ import {
 } from '../core/solar-report.js';
 import { roomDaylightAnalysis } from '../core/daylight-analysis.js';
 import { saveFile } from './cloud.js';
-import { el, escapeHtml, toast } from './dom.js';
+import { el, escapeHtml, roomCountLabel, toast } from './dom.js';
 import { safeProjectFileName } from './project-name.js';
 import { state } from './state.js';
 
@@ -17,14 +17,6 @@ let previousFocus = null;
 let returnToClimate = false;
 
 const finite = (value) => value !== null && value !== '' && Number.isFinite(Number(value));
-
-function roomCountLabel(count) {
-  const mod100 = count % 100;
-  const mod10 = count % 10;
-  const word = mod10 === 1 && mod100 !== 11 ? 'помещение'
-    : mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14) ? 'помещения' : 'помещений';
-  return `${count} ${word}`;
-}
 
 function number(value, digits = 1) {
   if (!finite(value)) return '—';

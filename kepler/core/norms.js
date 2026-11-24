@@ -14,6 +14,7 @@ import { isOpenRoom, isShaft, roomType } from './catalog.js';
 import { furnitureIssues } from './clearance.js';
 import { insolationReport } from './insolation.js';
 import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
+import { levelWindowOpenings } from './spanning-windows.js';
 import { openingHeight } from './opening-preset.js';
 import { roomContainsPoint, roomRects } from './room-shape.js';
 import { roomNetAreaM2 } from './rooms.js';
@@ -68,10 +69,10 @@ function bathroomMinWidth(project, room) {
   return hasBath ? SP55.minWidth.bathroom : SP55.minWidthToilet;
 }
 
-const windowGlass = (project, roomId, walls) => {
-  const hosted = project.openings.some((o) => o.kind === 'window' && o.host);
+const windowGlass = (project, roomId, walls, openings) => {
+  const hosted = openings.some((o) => o.kind === 'window' && o.host);
   const w = hosted ? (walls || deriveWalls(project)) : null;
-  return project.openings
+  return openings
     .filter((o) => o.kind === 'window' && (o.host ? openingOwnerId(project, o, w) : o.roomId) === roomId)
     .reduce((s, o) => s + (o.width * openingHeight(o, project.levels?.find((l) => l.id === project.activeLevel))) / 1e6, 0);
 };
@@ -112,9 +113,10 @@ export function roomChecks(project, room, level, walls = null, options = {}) {
     // Окна ручных стен (host) — по помещению со стороны дома (hostOpeningRoom).
     // Открытая планировка (скрытые общие стены) — свет общий: окна и
     // площадь всей зоны (кухня-ниша без своего окна у гостиной с окнами).
-    const own = windowGlass(project, room.id, walls);
+    const openings = options.openings || levelWindowOpenings(project, walls);
+    const own = windowGlass(project, room.id, walls, openings);
     const shared = zone.length > 1;
-    const glass = shared ? zone.reduce((s, r) => s + (r.id === room.id ? own : windowGlass(project, r.id, walls)), 0) : own;
+    const glass = shared ? zone.reduce((s, r) => s + (r.id === room.id ? own : windowGlass(project, r.id, walls, openings)), 0) : own;
     const zoneArea = shared ? zone.reduce((s, r) => s + (r.id === room.id ? area : roomNetAreaM2(project, r)), 0) : area;
     const ok = zoneArea > 0 && glass / zoneArea >= SP55.lightRatio - 1e-9;
     out.push({
@@ -223,8 +225,9 @@ export function normsReport(project, options = {}) {
     const normKinds = new Set();
     if (on('norms')) for (const kind of ['area', 'width', 'height']) normKinds.add(kind);
     if (on('light')) normKinds.add('light');
+    const openings = normKinds.has('light') ? levelWindowOpenings(lp, walls) : null;
     for (const room of lp.rooms) {
-      const checks = normKinds.size ? roomChecks(lp, room, level, walls, { kinds: normKinds }) : [];
+      const checks = normKinds.size ? roomChecks(lp, room, level, walls, { kinds: normKinds, openings }) : [];
       // Ручная стена через блок-комнату (раздел 2.5): «Разделить на два».
       for (const c of crossedByRoom.get(room.id) || []) {
         checks.push({

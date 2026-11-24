@@ -8,13 +8,14 @@
 // Модуль не меняет формат .kepler: он строит отдельный снимок для решателя и
 // применяет placements результата обратно к существующим/новым предметам.
 
+import { levelWindowOpenings } from './spanning-windows.js';
 import { northInBuilding } from './building.js';
 import { furnitureDef, isStructural } from './catalog.js';
 import { isFixedSizeComp } from './composite.js';
 import { furniture3d } from './furniture3d.js';
 import { normalizeLayoutBrief } from './layout-brief.js';
 import { createItem, levelProject, roomCeiling } from './model.js';
-import { openingHeight } from './opening-preset.js';
+import { openingHeight, openingSill } from './opening-preset.js';
 import { roomContainsPoint, roomPolygon } from './room-shape.js';
 import {
   deriveWalls, doorLink, doorSwingRect, doorSymbol, openingOwnerId, openingRect,
@@ -186,13 +187,14 @@ function openingRecord(project, opening, walls, level) {
   const symbol = single ? doorSymbol(project, opening, walls) : null;
   const swing = type === 'hinged_door' ? doorSwingRect(project, opening, walls) : null;
   const height = openingHeight(opening, level);
+  const sill = openingSill(opening, level);
   const result = {
     id: opening.id,
     kind: type,
-    room_ids: openingRooms(project, opening, walls),
+    room_ids: unique([...openingRooms(project, opening, walls), ...(opening.spanPart ? [opening.spanTargetRoomId] : [])]),
     clear_width_mm: opening.width ?? null,
-    sill_height_mm: opening.kind === 'door' ? 0 : opening.sill ?? 900,
-    head_height_mm: (opening.kind === 'door' ? 0 : opening.sill ?? 900) + height,
+    sill_height_mm: sill,
+    head_height_mm: opening.spanTop ?? (sill + height),
     pivot_mm: symbol ? keplerPointToContract(symbol.hinge) : null,
     required_open_angle_deg: type === 'hinged_door' ? 90 : null,
     swing_direction: single ? swingDirection(symbol) : null,
@@ -389,7 +391,9 @@ export function projectToLayoutInput(project, opts = {}) {
       rooms.push(record);
       allFunctions.push(...record.required_functions);
     }
-    for (const opening of level.openings) openings.push(openingRecord(lp, opening, walls, level));
+    for (const opening of levelWindowOpenings(lp, walls)) {
+      if (opening.spanPart !== 'upper') openings.push(openingRecord(lp, opening, walls, level));
+    }
     for (const item of furniture) {
       const room = roomForItem(level.rooms, item);
       catalog.push(catalogRecord(item));

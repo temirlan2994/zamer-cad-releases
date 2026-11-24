@@ -30,6 +30,8 @@ import { itemsInRoom } from './furnish.js';
 import { furniture3d } from './furniture3d.js';
 import { roomContainsPoint, roomPolygon, roomRects } from './room-shape.js';
 import { nestedOuterRect } from './rooms.js';
+import { levelWindowOpenings } from './spanning-windows.js';
+import { openingSill } from './opening-preset.js';
 import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
 import { doorLeaves, openingRect, wallRects } from './walls.js';
 
@@ -303,14 +305,18 @@ function dirWord(n) {
 // ---------------------------------------------------------------- контекст
 
 // Двери и окна этажа: геометрия считается один раз на проект (стены те же).
-export function ergoContext(project, walls) {
+export function ergoContext(project, walls, openings = levelWindowOpenings(project, walls)) {
   const doors = [];
   const windows = [];
-  for (const o of project.openings || []) {
+  const level = project.levels?.find((candidate) => candidate.id === project.activeLevel);
+  for (const o of openings) {
     if (o.kind !== 'door' && o.kind !== 'window') continue;
     const placed = openingRect(project, o, walls);
     if (!placed) continue;
-    const entry = { opening: o, rect: placed.rect, orient: placed.wall.orient };
+    const entry = {
+      opening: o, rect: placed.rect, orient: placed.wall.orient,
+      sill: openingSill(o, level),
+    };
     if (o.kind === 'door') {
       const required = Array.isArray(o.requiredLeafIndices)
         ? new Set(o.requiredLeafIndices.filter((index) => Number.isInteger(index) && index >= 0))
@@ -937,7 +943,7 @@ export function analyzeRoomErgonomics(project, room, walls, ctx = null, opts = {
   for (const win of c.windows) {
     const face = openingFace(win, inside);
     if (!face) continue;
-    const sill = Number.isFinite(win.opening.sill) ? win.opening.sill : 900;
+    const sill = win.sill;
     const limit = Math.max(ERGO_NORMS.windowTall, sill + 100);
     const D = ERGO_NORMS.windowDepth;
     const u0 = -face.L + 30; const u1 = face.L - 30;

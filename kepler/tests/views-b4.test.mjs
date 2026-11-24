@@ -143,3 +143,27 @@ test('камера 3D: нормализация, проекция по угла�
   const back = deserializeProject(serializeProject(p));
   assert.deepEqual(back.sheets[0].viewports[0].cam, cam);
 });
+
+test('перспективный кадр листа совпадает с экранной камерой, ближняя плоскость режет сцену', async () => {
+  const { projectPoint } = await import('../core/pick3d.js');
+  const { camKey } = await import('../core/views.js');
+  const cam = normalizeCam({ yaw: 0, pitch: 0, target: { x: 800, y: 200, z: 1800 }, dist: 25000,
+    projection: 'perspective', eyeDist: 10000, aspect: 1.6, roof: false,
+    site: true, furniture: false, landscape: true, masses: true, levels: 'only', levelId: 'L1', terrainScale: 2 });
+  const p = house(), sheet = addSheet(p, { no: '3' });
+  const vp = placeView(p, sheet.id, '3d', { cam, scale: 100 }).viewport;
+  const back = deserializeProject(serializeProject(p));
+  assert.deepEqual(back.sheets[0].viewports[0].cam, cam);
+  assert.notEqual(camKey(cam), camKey({ ...cam, masses: false }));
+  assert.notEqual(camKey(cam), camKey({ ...cam, eyeDist: 8000 }));
+  const proj = axoProjection(cam);
+  const near = { x: 7800, y: 700, z: 1000 }, far = { ...near, x: -2000 };
+  for (const point of [near, far]) {
+    const s = projectPoint(cam, 1600, 1000, point), q = proj.P(point);
+    assert.ok(Math.abs((q.u - proj.frame.x0) / (proj.frame.x1 - proj.frame.x0) * 1600 - s.x) < 1e-6);
+    assert.ok(Math.abs((q.v - proj.frame.y0) / (proj.frame.y1 - proj.frame.y0) * 1000 - s.y) < 1e-6);
+  }
+  assert.deepEqual(proj.polygon([11000, 12000, 13000].map((x) => ({ x, y: 0, z: 50 }))), []);
+  assert.ok(proj.polygon([10000, 10500, 11000].map((x) => ({ x, y: 0, z: 50 }))).every((q) => q.depth <= -50));
+  assert.ok(Math.abs(viewportFrame(p, vp).w - 4 - (proj.frame.x1 - proj.frame.x0) / 100) < 1e-6);
+});

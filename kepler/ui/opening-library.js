@@ -9,6 +9,7 @@ import { el } from './dom.js';
 import { closeLibrarySheet } from './mobile.js';
 import { renderToolOptions } from './props.js';
 import { requestDraw } from './view.js';
+import { openingPlacementHint, setHint } from './tools.js';
 import { state } from './state.js';
 
 const openCat = { door: OPENING_CATEGORIES.door[0].id, window: OPENING_CATEGORIES.window[0].id };
@@ -37,11 +38,14 @@ export function chooseOpeningPreset(preset) {
   // «Главный вход» от входной двери переходил на следующую выбранную карточку.
   delete t.preset.presetId;
   delete t.preset.entryRole;
+  delete t.preset.returnWidth;
+  delete t.preset.cornerJoint;
   Object.assign(t.preset, presetToOpening(preset, levelHeight()));
   if (preset.kind === 'window') Object.assign(t.preset, {
     heightMode: preset.heightMode === 'level' ? 'level' : 'custom',
     frameMaterial: 'aluminum', frameColor: 'anthracite',
   });
+  setHint(openingPlacementHint(t));
   selectedPresetId = preset.id;
   openCat[preset.kind] = preset.cat;
   renderToolOptions(true);
@@ -125,7 +129,7 @@ function renderOpeningItems() {
     preview.width = 240;
     preview.height = 132;
     chip.appendChild(preview);
-    const sizeLabel = `${preset.width} × ${preset.height} мм`;
+    const sizeLabel = preset.id === 'corner-glazing' ? 'Крылья 2400 и 1800 мм' : `${preset.width} × ${preset.height} мм`;
     const bareTitle = preset.title.replace(/\s+\d+(?:×\d+)?$/, '');
     const name = document.createElement('span');
     name.className = 'chip-name';
@@ -153,7 +157,15 @@ export function drawOpeningPreview(canvas, preset, colors) {
   ctx.clearRect(0, 0, W, H);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  if (preset.kind === 'door') drawDoorPlan(ctx, W, H, preset, colors);
+  if (preset.id === 'corner-glazing') {
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = colors.stroke;
+    for (const [x, top, bottom] of [[W * 0.13, H * 0.22, H * 0.72], [W * 0.83, H * 0.17, H * 0.67]]) {
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(W * 0.48, H * 0.36);
+      ctx.lineTo(W * 0.48, H * 0.91); ctx.lineTo(x, bottom); ctx.closePath();
+      ctx.fillStyle = 'rgba(76,151,170,.20)'; ctx.fill(); ctx.stroke();
+    }
+  } else if (preset.kind === 'door') drawDoorPlan(ctx, W, H, preset, colors);
   else drawWindowFront(ctx, W, H, preset, colors);
 }
 

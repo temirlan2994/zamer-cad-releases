@@ -10,6 +10,7 @@
 // раза в ERGO_THROTTLE мс. Управление (кнопка, клавиша E, «Виды»,
 // «Свойства», замечания) — ui/ergonomics.js.
 
+import { levelWindowOpenings } from '../core/spanning-windows.js';
 import { ERGO_GROUPS, ergoContext, analyzeRoomErgonomics, summarizeErgo } from '../core/ergonomics.js';
 import { itemsInRoom } from '../core/furnish.js';
 import { state } from './state.js';
@@ -63,9 +64,10 @@ export const ergoGroupsOn = () => GROUP_IDS.filter((id) => ergoPref().groups[id]
 const cache = { walls: null, openKey: '', ctx: null, ver: 0, rooms: new Map(), timer: null };
 
 function ctxFor(project, walls) {
-  const key = JSON.stringify(project.openings || []);
+  const openings = levelWindowOpenings(project, walls);
+  const key = JSON.stringify(openings);
   if (cache.walls !== walls || cache.openKey !== key || !cache.ctx) {
-    cache.ctx = ergoContext(project, walls);
+    cache.ctx = ergoContext(project, walls, openings);
     cache.walls = walls;
     cache.openKey = key;
     cache.ver += 1;

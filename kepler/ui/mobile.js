@@ -34,19 +34,20 @@ const anySheet = () => SHEETS.some(has);
 
 function libraryKindActive(kind) {
   if (!has(LIB)) return false;
-  if (state.modeName !== 'plan') return kind === 'rooms';
+  const context = toolContext();
+  if (context !== 'plan' && context !== 'model') return kind === 'rooms';
   if (state.tool?.kind === 'place-opening') return false;
   return state.libraryTab === kind;
 }
 
 // Мобильная кнопка «Листы» открывает листы и дерево видов для их оформления.
 const PANEL_TAB = { props: 'props', views: 'views', sheets: 'sheets' };
-const navTab = () => (['views', 'sheets'].includes(state.propsTab) ? state.propsTab : 'props');
+const navTab = () => (['views', 'sheets', 'tep'].includes(state.propsTab) ? state.propsTab : 'props');
 const viewsTab = () => navTab() !== 'props';
 
 function setPropsTab(tab) {
   if (state.propsTab === tab && !el('issuesBtn')?.getAttribute('aria-expanded')?.includes('true')) return;
-  const id = { props: 'propsTabMain', views: 'propsTabViews', sheets: 'propsTabSheets' }[tab];
+  const id = { props: 'propsTabMain', views: 'propsTabViews', sheets: 'propsTabSheets', tep: 'propsTabTep' }[tab];
   el(id)?.click(); // обработчик вкладок (ui/props.js) — закрывает замечания и перерисовывает
 }
 
@@ -147,15 +148,14 @@ export function syncMobileBar() {
     if (label.textContent !== text) label.textContent = text;
     // «Участок»: инструменты — в «Рисовать», каталога нет.
     lib.hidden = !catalog;
-    lib.classList.toggle('active', has(LIB));
+    lib.classList.toggle('active', has(LIB) || (context === 'plan' && has(CAT)));
   }
   const props = has(PROPS);
   btn('draw')?.classList.toggle('active', has(DRAW));
   btn('props')?.classList.toggle('active', props && !viewsTab());
   btn('sheets')?.classList.toggle('active', props && viewsTab());
   btn('props')?.classList.toggle('dot', Boolean(state.selection)); // есть что смотреть
-  if (lib && state.modeName === 'plan') lib.classList.toggle('active', has(CAT));
-  syncCatRow(state.modeName === 'plan');
+  syncCatRow(context === 'plan');
   syncDrawRow();
   syncGripButtons();
   for (const b of bar.querySelectorAll('[data-sheet]')) b.setAttribute('aria-pressed', String(b.classList.contains('active')));
@@ -466,9 +466,10 @@ function syncMobileToolFlyout() {
 }
 
 function drawSources() {
-  if (state.modeName === 'site') return [...(el('siteTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
-  if (state.modeName === 'landscape') return [...(el('landscapeTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
-  const model = toolContext() === 'model';
+  const context = toolContext();
+  if (context === 'site') return [...(el('siteTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
+  if (context === 'landscape') return [...(el('landscapeTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
+  const model = context === 'model';
   const entries = PLAN_DRAW.filter((entry) => !model || availableModelTool(entry.type === 'family' ? toolFamily(entry.id)?.parentId : entry.id));
   return entries.map((entry) => entry.type === 'family'
     ? { ...entry, family: toolFamily(entry.id) }

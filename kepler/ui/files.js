@@ -53,7 +53,7 @@ export function handleExport(kind) {
     buildSheetsPdf(state.project).then((pdf) => {
       if (!pdf) { toast('Нечего печатать: добавьте комнаты или границу участка', true); return; }
       download(`${name}-листы.pdf`, pdf, 'application/pdf');
-      toast('PDF: листы A3 с рамкой, штампом и экспликацией');
+      toast('PDF всего альбома готов');
     });
   } else if (kind === 'sheet-png') {
     const png = buildCurrentSheetPng(state.project, state.modeName === 'landscape' ? 'site' : state.modeName, {

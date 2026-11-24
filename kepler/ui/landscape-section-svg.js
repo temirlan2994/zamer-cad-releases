@@ -110,7 +110,7 @@ export function sectionSvgSize(profile, den) {
 }
 
 // SVG разреза. opts: style ('sketch' | 'drawing'), scale (знаменатель).
-export function sectionSvg(profile, { style = 'sketch', scale = null } = {}) {
+export function sectionSvg(profile, { style = 'sketch', scale = null, editId = null } = {}) {
   const sketch = style !== 'drawing';
   const den = scale || pickSectionScale(profile);
   const k = 1 / den;
@@ -327,6 +327,20 @@ export function sectionSvg(profile, { style = 'sketch', scale = null } = {}) {
   out.push(`<text x="${f(M.l + barW)}" y="${f(by - 1)}" font-size="2.2" fill="${ink}" text-anchor="middle">${niceM} м</text>`);
   out.push(`<text x="${f(M.l)}" y="${f(height - 4)}" font-size="5" fill="${ink}" class="sec-title">Разрез ${esc(profile.name)}–${esc(profile.name)}</text>`);
   out.push(`<text x="${f(M.l + textW(`Разрез ${profile.name}–${profile.name}`, 5) * 1.15 + 6)}" y="${f(height - 4)}" font-size="3" fill="${ink}">М 1:${den} · глубина вида ${(profile.depth / 1000).toFixed(0)} м</text>`);
+  if (editId != null) {
+    for (const platform of profile.platforms) {
+      const active = platform.id === editId;
+      const color = active ? '#145e4b' : '#47766b';
+      out.push(`<g class="section-level-handle" data-platform="${esc(platform.id)}" transform="translate(${f(X(platform.x))} ${f(Y(platform.z))})">
+        <title>${esc(platform.title)} · потяните вверх или вниз</title>
+        <g class="section-level-icon">
+          <rect x="-22" y="-22" width="44" height="44" fill="transparent"/>
+          <circle r="10" stroke="white" stroke-width="2" fill="${color}"/>
+          <path d="m-3 -2 3 -3 3 3 m-6 4 3 3 3 -3" stroke="white" fill="none" stroke-width="1.5"/>
+        </g>
+      </g>`);
+    }
+  }
   out.push('</svg>');
   return out.join('');
 }

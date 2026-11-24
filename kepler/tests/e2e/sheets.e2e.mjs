@@ -10,6 +10,14 @@ async function exportFile(page, kind) {
   return { name: dl.suggestedFilename(), bytes: await readFile(await dl.path()) };
 }
 
+function pdfPageImage(bytes, index) {
+  const images = [...bytes.toString('latin1').matchAll(/\/Filter \/DCTDecode \/Length (\d+) >>\nstream\n/g)];
+  const image = images[index];
+  assert.ok(image, `растр страницы ${index + 1}`);
+  const start = image.index + image[0].length;
+  return bytes.subarray(start, start + Number(image[1]));
+}
+
 describe('листы и экспликация', () => {
   let app;
   before(async () => { app = await startApp(); await openSample(app.page); });
@@ -33,6 +41,32 @@ describe('листы и экспликация', () => {
     assert.equal(f.bytes.readUInt32BE(16), 2480); // ширина
     assert.equal(f.bytes.readUInt32BE(20), 1754); // высота
     if (process.env.KEPLER_PNG_OUT) await writeFile(process.env.KEPLER_PNG_OUT, f.bytes);
+  });
+
+  it('выбор и предпросмотр второго автолиста выгружают именно вторую страницу альбома', async () => {
+    const { page } = app;
+    const album = await exportFile(page, 'sheet-pdf');
+    const second = pdfPageImage(album.bytes, 1);
+    assert.ok(!pdfPageImage(album.bytes, 0).equals(second), 'генплан отличается от поэтажного плана');
+    const downloadOne = async (button) => {
+      const [file] = await Promise.all([page.waitForEvent('download'), button.click()]);
+      assert.match(file.suggestedFilename(), /лист-2\.pdf$/);
+      const bytes = await readFile(await file.path());
+      assert.match(bytes.toString('latin1'), /\/Count 1/);
+      assert.ok(pdfPageImage(bytes, 0).equals(second), 'точная копия изображения второй страницы, со штампом');
+    };
+    await page.getByRole('tab', { name: 'Листы', exact: true }).click();
+    const sheet = page.getByRole('option').filter({ hasText: 'План: 1 этаж' });
+    await sheet.locator('.sheets-name').click();
+    await downloadOne(page.getByRole('button', { name: 'PDF выбранного листа' }));
+    await sheet.getByRole('button', { name: 'Открыть' }).click();
+    assert.equal(await page.locator('#projectRoute').isVisible(), false, 'палитра не перекрывает лист');
+    await downloadOne(page.getByRole('button', { name: 'Скачать PDF этого листа' }));
+    await page.getByRole('tab', { name: 'Свойства', exact: true }).click();
+    await downloadOne(page.locator('#sheetPropPdfOne'));
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#sheetView').isVisible(), false);
+    assert.equal(await page.locator('#projectRoute .project-route-bar').isVisible(), true, 'палитра вернулась');
   });
 
   it('CSV экспликации открывается в Excel (BOM, «;»)', async () => {

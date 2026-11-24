@@ -77,6 +77,11 @@ describe('раскладка: колонка инструментов, библ�
     await page.keyboard.press('ArrowRight');
     await page.waitForFunction(() => document.activeElement?.id === 'modeSiteBtn' && document.activeElement.getAttribute('aria-selected') === 'true');
     assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'site');
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForSelector('#view3d:not([hidden])');
+    assert.ok(await page.locator('#planTools').isVisible());
+    assert.equal(await page.locator('#siteTools').isVisible(), false);
+    assert.match(await page.locator('#viewPropsTitle').innerText(), /Вид: 3D/);
     await page.keyboard.press('Home');
     await page.waitForFunction(() => document.activeElement?.id === 'modePlanBtn' && document.activeElement.getAttribute('aria-selected') === 'true');
     assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'plan');

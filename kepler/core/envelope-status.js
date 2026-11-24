@@ -5,6 +5,8 @@
 // параметрические блоки. Неизвестное не выдаётся за успешно проверенное.
 
 import { levelProject } from './model.js';
+import { canHaveLinkedRoof } from './roofs.js';
+import { linkedRoofRegions } from './linked-roof-regions.js';
 import { deriveEntrances } from './entrance.js';
 import { deriveWalls, doorLink } from './walls.js';
 
@@ -230,15 +232,20 @@ function roofStatus(project) {
   const declared = declaredStatus(config);
   if (declared === 'blocked' || declared === 'attention') return declared;
 
-  const hasRooms = allRooms(project).length > 0;
+  const rooms = allRooms(project);
+  const hasRooms = rooms.length > 0;
   if (mode === 'manual') {
     if (records.length) return 'checked';
     return hasRooms ? 'blocked' : 'unknown';
   }
-  if (AUTO.has(mode)) return hasRooms ? 'checked' : 'unknown';
   if (records.length) return 'checked';
-  if ((typePresent || declared === 'checked') && hasRooms) return 'checked';
-  return 'unknown';
+  if (!(AUTO.has(mode) || typePresent || declared === 'checked')) return 'unknown';
+  const enclosed = rooms.filter(canHaveLinkedRoof);
+  if (!enclosed.length) return 'unknown';
+  if (!enclosed.some((room) => room.linkedRoof === false)) return 'checked';
+  // При исключённом верхнем этаже оставшаяся нижняя связь может быть
+  // целиком под его полом. Статус зависит от реального остатка кровли.
+  return linkedRoofRegions(project).length ? 'checked' : 'attention';
 }
 
 function drainageItemStatus(value) {

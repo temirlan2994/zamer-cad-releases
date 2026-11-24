@@ -30,7 +30,7 @@ const IMPORT_RE = /^\s*(?:import|export)\s[^'"]*?from\s*['"](\.{1,2}\/[^'"]+)['"
 const DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g;
 const MODULE_URL_RE = /new\s+URL\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url\s*\)/g;
 
-// Все локальные модули, достижимые из entry (пути от корня, через «/»).
+// Модули и файлы new URL(..., import.meta.url), достижимые из entry.
 export function moduleGraph(entry, root = ROOT) {
   const seen = new Set();
   const visit = (rel) => {
@@ -48,6 +48,7 @@ export function moduleGraph(entry, root = ROOT) {
     for (const m of code.matchAll(MODULE_URL_RE)) {
       const target = posix.normalize(posix.join(posix.dirname(rel), m[1]));
       if (target.endsWith('.js')) visit(target);
+      else seen.add(target);
     }
   };
   visit(entry);

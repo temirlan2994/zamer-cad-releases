@@ -137,6 +137,9 @@ export function layoutSignature(project, room) {
     },
     levels: (project.levels || []).map((level) => ({
       id: level.id, elevation: level.elevation, height: level.height,
+      tallWindowHeight: level.tallWindowHeight,
+      tallWindowTopOffset: level.tallWindowTopOffset,
+      tallWindowBottomOffset: level.tallWindowBottomOffset,
       rooms: level.rooms,
       openings: (level.openings || []).filter((opening) => opening.kind === 'window'),
       walls: level.walls || [],

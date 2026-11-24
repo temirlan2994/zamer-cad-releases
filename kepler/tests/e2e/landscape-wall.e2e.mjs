@@ -1,6 +1,6 @@
 // e2e «Ландшафт»: подпорная стенка и террасы-уровни — стенка рисуется по
 // точкам из каталога, панель (высота, перепад, сторона верха, капа, объём),
-// отметка площадки «+0.45» и лестница «Взять перепад», Ctrl+Z, 3D-грани,
+// отметка площадки «+0.45» и автоматический марш к краю площадки, Ctrl+Z, 3D-грани,
 // оба стиля без ошибок консоли.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -83,7 +83,7 @@ describe('ландшафт: подпорная стенка и отметки у
       });
       window.__kepler.select({ type: 'landscape', ids: ['pv'] });
     });
-    assert.match(await page.textContent('#propsPanel'), /Отметка, мм/);
+    assert.match(await page.textContent('#propsPanel'), /Отметка поверхности, мм/);
     await setField(page, '#lsElev', 450);
     await page.waitForFunction(() => window.__kepler.state.project.site.landscape.objects.find((o) => o.id === 'pv').elev === 450);
     const { measure } = await page.evaluate(async () => {
@@ -98,17 +98,50 @@ describe('ландшафт: подпорная стенка и отметки у
     await setField(page, '#lsElev', 450);
   });
 
-  it('лестница: отметки низа и верха → «Взять перепад» ставит высоту подъёма', async () => {
+  it('лестница: отметки низа и верха сразу меняют высоту подъёма', async () => {
     const { page } = app;
     await dropOnCanvas(page, MIME, 'stairs-out', await at(page, { x: 11500, y: 2000 }));
     assert.match(await page.textContent('#propsPanel'), /Отметка низа/);
     await setField(page, '#lsElev', 0);
     await setField(page, '#lsElevTo', 450);
-    await page.waitForSelector('#lsStDrop');
-    await page.click('#lsStDrop');
     const st = await byKind(page, 'stairs-out');
     assert.deepEqual([st.elev, st.elevTo, st.height, st.h], [0, 450, 450, 900]);
     assert.match(await page.textContent('#propsPanel'), /Подступенок\s*150 мм/);
+  });
+
+  it('лестница от выбранного края мощения: один клик и автоматический разворот', async () => {
+    const { page } = app;
+    await page.evaluate(() => window.__kepler.select({ type: 'landscape', ids: ['pv'] }));
+    await page.getByText('Лестница к краю площадки', { exact: true }).click();
+    await page.click('#lsAttachStairs');
+    await clickWorld(page, 11500, -500);
+    const stair = await page.evaluate(() => {
+      const state = window.__kepler.state;
+      return state.project.site.landscape.objects.find((o) => o.id === state.selection.ids[0]);
+    });
+    assert.deepEqual([stair.kind, stair.elev, stair.elevTo, stair.rotation], ['stairs-out', 0, 450, 0]);
+    assert.equal(stair.y - stair.h / 2, -500);
+    await page.evaluate(() => window.__kepler.select({ type: 'landscape', ids: ['pv'] }));
+    await setField(page, '#lsElev', 750);
+    const raised = (await objects(page)).find((o) => o.id === stair.id);
+    assert.deepEqual([raised.elevTo, raised.height, raised.h, raised.y - raised.h / 2], [750, 750, 1500, -500]);
+    await setField(page, '#lsElev', 450);
+  });
+
+  it('лаунж: карточка из каталога, диаметр, поворот и уровень пола', async () => {
+    const { page } = app;
+    await page.fill('#lsSearch', 'лаунж');
+    await page.click('#lsItems [data-ls-kind="sunken-lounge"]');
+    await clickWorld(page, 14000, 2500);
+    await page.keyboard.press('Escape');
+    const lounge = await byKind(page, 'sunken-lounge');
+    await page.evaluate((id) => window.__kepler.select({type: 'landscape', ids: [id]}), lounge.id);
+    await setField(page, '#lsW', 4.2);
+    await setField(page, '#lsRot', 90);
+    await setField(page, '#lsElev', -450);
+    await setField(page, '#lsElevTo', 150);
+    const updated = await byKind(page, 'sunken-lounge');
+    assert.deepEqual([updated.w, updated.h, updated.rotation, updated.elev, updated.elevTo], [4200, 4200, 90, -450, 150]);
   });
 
   it('3D: стенка и приподнятая площадка дают грани; оба стиля и подписи без ошибок', async () => {

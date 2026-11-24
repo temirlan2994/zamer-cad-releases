@@ -104,12 +104,56 @@ describe('ландшафт: разрез участка', () => {
     assert.match(await svgText(page), /Сосна обыкновенная/);
   });
 
+  it('отметка в разрезе: перетаскивание, пересчёт ступеней и точный ввод, каждая правка отменяется целиком', async () => {
+    const { page } = app;
+    await page.evaluate(async () => {
+      const { stairsAtPlatformEdge } = await import('./core/landscape-tools.js');
+      const { mutate } = await import('./ui/store.js');
+      const list = window.__kepler.state.project.site.landscape.objects;
+      mutate(() => list.push(stairsAtPlatformEdge(list.find((o) => o.id === 'pv'), { x: 12000, y: 1500 }, { id: 'attached' })));
+    });
+    const levels = () => page.evaluate(() => {
+      const objects = window.__kepler.state.project.site.landscape.objects;
+      const stair = objects.find((o) => o.id === 'attached');
+      return [objects.find((o) => o.id === 'pv').elev, stair.elevTo, stair.height, stair.y - stair.h / 2];
+    });
+    const before = await levels();
+    assert.deepEqual(before, [450, 450, 450, 1500]);
+    const undo0 = await undoLen(page);
+    const start = await page.locator('#lsSecBody [data-platform="pv"]').evaluate((handle) => {
+      const m = handle.getScreenCTM();
+      return { x: m.e, y: m.f, dy: 450 * m.d / Number(handle.ownerSVGElement.dataset.scale),
+        captured: document.elementFromPoint(m.e, m.f)?.closest('[data-platform]')?.dataset.platform };
+    });
+    assert.equal(start.captured, 'pv', JSON.stringify(start));
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x, start.y - start.dy, { steps: 4 });
+    await page.waitForFunction(() => document.querySelector('#lsSecStairResult').textContent.includes('6 ступ.'));
+    assert.deepEqual(await levels(), before, 'до отпускания показан предпросмотр');
+    await page.mouse.up();
+    const after = await levels();
+    assert.ok(Math.abs(after[0] - 900) <= 20, String(after));
+    assert.deepEqual(after, [after[0], after[0], after[0], 1500]);
+    assert.equal(await undoLen(page), undo0 + 1);
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(await levels(), before);
+    await page.fill('#lsSecLevel', '1050');
+    await page.press('#lsSecLevel', 'Enter');
+    assert.deepEqual(await levels(), [1050, 1050, 1050, 1500]);
+    assert.match(await page.textContent('#lsSecStairResult'), /7 ступ/);
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(await levels(), before);
+    await page.keyboard.press('Control+z'); // remove the flight added by this case
+  });
+
   it('скачивание SVG и DXF (слой LANDSCAPE_SECTION)', async () => {
     const { page } = app;
     await page.click('.cut-view-menu summary');
     const svg = await download(page, () => page.click('#lsSecSvg'));
     assert.match(svg.name, /разрез-А\.svg$/);
     assert.match(svg.text, /<svg[^>]+viewBox/);
+    assert.doesNotMatch(svg.text, /section-level-handle/, 'экспорт сохраняет только чертёж');
     await page.click('.cut-view-menu summary');
     const dxf = await download(page, () => page.click('#lsSecDxf'));
     assert.match(dxf.name, /\.dxf$/);
@@ -289,4 +333,33 @@ describe('ландшафт: разрез участка', () => {
     await page.check('[data-ls-sec-sheet="sec-b"]');
     assert.deepEqual(app.errors, []);
   });
+});
+
+it('телефон: движение пальцем по ручке меняет отметку и не прокручивает разрез', async () => {
+  const app = await startApp({ mobile: true });
+  const page = app.page;
+  try {
+    await openSample(page);
+    await page.evaluate(async () => {
+      const { createLandscapeObject, normalizeSection } = await import('./core/landscape.js');
+      const { openSection } = await import('./ui/landscape-section.js');
+      const landscape = window.__kepler.state.project.site.landscape;
+      landscape.objects.push(createLandscapeObject('terrace-deck', 12000, 0, { id: 'deck', elev: 450 }));
+      const cut = normalizeSection({ points: [{ x: 12000, y: -6500 }, { x: 12000, y: 3000 }] });
+      landscape.sections = [cut];
+      openSection(cut.id);
+    });
+    const { x, y, dy } = await page.locator('[data-platform="deck"]').evaluate((handle) => {
+      const m = handle.getScreenCTM();
+      return { x: m.e, y: m.f, dy: 450 * m.d / Number(handle.ownerSVGElement.dataset.scale) };
+    });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - dy }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    assert.equal(await page.inputValue('#lsSecLevel'), '900');
+    const level = await page.evaluate(() => window.__kepler.state.project.site.landscape.objects.find((o) => o.id === 'deck').elev);
+    assert.equal(level, 900);
+    assert.deepEqual(app.errors, []);
+  } finally { await app.close(); }
 });

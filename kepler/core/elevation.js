@@ -41,7 +41,7 @@ export const KIND_OF = {
   parapet: 'roof', fascia: 'roof', stair: 'stair', stairs: 'stair', entrance: 'stair', plinth: 'plinth', foundation: 'foundation',
 };
 // Цвет материала крыши-плиты (core/roofs.js) на фасаде — tint полигона.
-export const roofTint = (f) => (f.roofId || f.roofSource === 'linked' ? f.color : undefined);
+export const roofTint = (f) => (f.facadeKind || f.roofId || f.roofSource === 'linked' ? f.color : undefined);
 const EPS = 1e-6;
 
 // Сторона дома для фасада dir: { side (0..3), out — наружная нормаль,

@@ -10,7 +10,7 @@
 
 import {
   EDGE_HEIGHT, EDGE_TYPES, OVERHANG_MAX, PARAPET_HEIGHT, PARAPET_THICK, PARAPET_TYPES, ROOF_MATERIALS, ROOF_PRESETS,
-  ROOF_SIDES, ROOF_THICK, SIDE_TITLES, applyRoofPreset, baseEdge, overhangLabel, patchRoof, rectsOutline,
+  ROOF_SIDES, ROOF_THICK, SIDE_TITLES, applyRoofPreset, canHaveLinkedRoof, setLinkedRoofEnabled, baseEdge, overhangLabel, patchRoof, rectsOutline,
   mergeTouchingRoofs, roofBaseRects, roofFromRooms, roofOverRoom, roofSnapLines, roofStats, roomsBaseRects, sideAxis, snapOverhang,
 } from '../core/roofs.js';
 import { massBox } from '../core/masses.js';
@@ -22,13 +22,14 @@ import { state } from './state.js';
 import { mutate } from './store.js';
 import { renderProps } from './props.js';
 import { cancelTool, selectObject, setTool } from './tools.js';
-import { is3dOpen } from './view3d.js';
-import { isRoofPlan, openRoofPlanView, roofById, roofs, selectedRoof } from './plan-roofs.js';
+import { is3dOpen, set3dRoofVisibility } from './view3d.js';
+import { bindEnvelopeSettings, linkedRoofSettingsHtml } from './envelope-settings.js';
+import { isRoofPlan, openRoofPlanView, roomRoofCoverage, roofById, roofs, selectedRoof, visibleRoofById } from './plan-roofs.js';
 
-export const ROOF_DRAW_HINT = 'Крыша: протяните прямоугольник, кликните по помещению подложки — форма по нему (дальше без связи), клик мимо помещений или Alt+клик — контур по точкам · Shift — без привязки · Esc — выйти';
-const HINT_3D = 'Крыша: клик по помещению — крыша по его форме · Shift+клик — добавить форму помещения к выбранной крыше · клик по крыше — выбрать · Esc — выйти';
+export const ROOF_DRAW_HINT = 'Ручная крыша: протяните прямоугольник, кликните по помещению подложки — форма по нему (дальше без связи), клик мимо помещений или Alt+клик — контур по точкам · Shift — без привязки · Esc — выйти';
+const HINT_3D = 'Ручная крыша: клик по помещению — крыша по его форме · Shift+клик — добавить форму помещения к выбранной крыше · клик по крыше — выбрать · Esc — выйти';
 
-export { roofById, roofs, selectedRoof };
+export { roofById, roofs, selectedRoof, visibleRoofById };
 export const isRoofTool = () => state.tool?.kind === 'roof';
 
 export const setRoofs = (list) => {
@@ -78,6 +79,7 @@ export function addRoof(roof) {
     setRoofs([...roofs(), roof]);
     out = mergeRoofInPlace(roof.id)?.roof || roof;
   });
+  if (is3dOpen()) set3dRoofVisibility(true);
   selectObject({ type: 'roof', id: out.id });
   return out;
 }
@@ -97,11 +99,15 @@ export function mergeRoofNow(id) {
 }
 
 export function deleteRoof(id) {
-  const r = roofById(id);
-  if (!r) return;
-  mutate(() => setRoofs(roofs().filter((x) => x.id !== id)));
+  const roof = visibleRoofById(id);
+  if (!roof) return;
+  const removed = mutate(() => {
+    if (roof.roofSource === 'linked') setLinkedRoofEnabled(state.project, roof.levelId, roof.roomIds, false);
+    else setRoofs(roofs().filter((r) => r.id !== id));
+  });
+  if (!removed) return;
   if (state.selection?.type === 'roof' && state.selection.id === id) selectObject(null);
-  toast(`«${r.name}» удалена · Ctrl+Z — вернуть`);
+  toast(`«${roof.name}» удалена · Ctrl+Z — вернуть`);
 }
 
 // Клик по помещению (инструмент в 3D, «Свойства» помещения): помещение под
@@ -132,19 +138,40 @@ export function roofClickRoom(levelId, roomId, { add = false } = {}) {
   return roof;
 }
 
-// «Накрыть крышей» для выбранного помещения активного этажа → «План крыши».
+function linkedRoomMode(room) {
+  return canHaveLinkedRoof(room) && state.project?.envelope?.roofMode !== 'manual';
+}
+
+function focusRoof(roof) {
+  if (!roof) return null;
+  if (!is3dOpen()) showRoofPlan(roof.id);
+  else {
+    set3dRoofVisibility(true);
+    selectObject({ type: 'roof', id: roof.id });
+  }
+  return roof;
+}
+
 export function coverSelectedRoom() {
   const sel = state.selection;
   if (sel?.type !== 'room') return null;
-  const roof = roofClickRoom(state.project.activeLevel, sel.id);
-  if (roof && !is3dOpen()) showRoofPlan(roof.id);
-  return roof;
+  const room = state.project.rooms.find((r) => r.id === sel.id);
+  if (!room) return null;
+  const levelId = state.project.activeLevel;
+  const linkedMode = linkedRoomMode(room);
+  if (linkedMode && room.linkedRoof === false) {
+    if (!mutate(() => setLinkedRoofEnabled(state.project, levelId, [room.id], true))) return null;
+  }
+  const { linked, manual } = roomRoofCoverage(room);
+  if (linked || manual) return focusRoof(linked || manual);
+  if (linkedMode || room.parentId) { toast('Крыша появится там, где помещение открыто сверху'); return null; }
+  return focusRoof(roofClickRoom(levelId, sel.id));
 }
 
 // Открыть «План крыши» и выбрать крышу (id) — если есть.
 export function showRoofPlan(id = null) {
   openRoofPlanView();
-  if (id && roofById(id)) selectObject({ type: 'roof', id });
+  if (id && visibleRoofById(id)) selectObject({ type: 'roof', id });
   renderProps();
 }
 
@@ -213,7 +240,26 @@ const numField = (id, label, value, { step = 50, min = 0, max = '' } = {}) => `
   <label class="prop-field"><span>${label}</span>
     <input id="${id}" type="number" step="${step}" min="${min}" ${max !== '' ? `max="${max}"` : ''} inputmode="numeric" value="${Math.round(value)}"></label>`;
 
+function renderLinkedRoofProps(panel, roof) {
+  const level = state.project.levels.find((l) => l.id === roof.levelId);
+  const roomNames = level.rooms.filter((r) => roof.roomIds.includes(r.id)).map((r) => r.name);
+  const label = roomNames.length === 1 ? escapeHtml(roomNames[0]) : `Помещений под крышей · ${roomNames.length}`;
+  panel.innerHTML = `<h2>Связанная крыша</h2>
+    <p class="subtitle">${escapeHtml(level.name)} · ${label}</p>
+    <div class="prop-block" id="roofProps">
+      <div class="prop-row"><span>Площадь в плане</span><strong>${(roof.planArea / 1e6).toFixed(1)} м²</strong></div>
+      <p class="hint">Контур повторяет помещения. Там, где надстроен этаж, нижняя крыша обрезается.</p>
+      ${is3dOpen() ? '<button type="button" id="roofHideLayer">Скрыть крыши в 3D</button>' : ''}
+      <button type="button" id="roofDelete" class="danger">Удалить крышу</button>
+    </div>
+    <div class="prop-block"><h3>Для всех связанных крыш</h3>${linkedRoofSettingsHtml(state.project)}</div>`;
+  bindEnvelopeSettings(panel, state.project);
+  panel.querySelector('#roofHideLayer')?.addEventListener('click', () => set3dRoofVisibility(false));
+  panel.querySelector('#roofDelete').addEventListener('click', () => deleteRoof(roof.id));
+}
+
 export function renderRoofProps(panel, roof) {
+  if (roof.roofSource === 'linked') { renderLinkedRoofProps(panel, roof); return; }
   const st = roofStats(state.project, roof);
   const level = (state.project.levels || []).find((l) => l.id === roof.levelId);
   const levels = sortedLevels(state.project);
@@ -312,13 +358,33 @@ export function renderRoofProps(panel, roof) {
 // Блок «Крыша» в «Свойствах» помещения: крыша над ним (по геометрии) —
 // выбрать на «Плане крыши», иначе — новая крыша по форме помещения.
 export function roomRoofHtml(room) {
-  const own = roofOverRoom(state.project, state.project.activeLevel, room);
-  return `<div class="prop-actions"><button type="button" id="roomRoofBtn" data-room="${room.id}">${own ? `Крыша: «${escapeHtml(own.name)}» — выбрать` : 'Накрыть крышей'}</button></div>`;
+  const { linked, manual } = roomRoofCoverage(room);
+  if (room.parentId) {
+    return linked || manual ? '<div class="prop-actions"><button type="button" id="roomRoofBtn">Выбрать крышу над помещением</button></div>' : '';
+  }
+  if (!linkedRoomMode(room)) {
+    const title = manual ? `Выбрать «${escapeHtml(manual.name)}»` : 'Накрыть крышей';
+    return `<div class="prop-actions"><button type="button" id="roomRoofBtn">${title}</button></div>`;
+  }
+  const disabled = room.linkedRoof === false;
+  const label = disabled ? 'Восстановить связанную крышу' : linked ? 'Выбрать связанную крышу'
+    : manual ? `Выбрать «${escapeHtml(manual.name)}»` : '';
+  return `<div class="prop-block"><h3>Крыша помещения</h3>
+    ${label ? `<button type="button" id="roomRoofBtn">${label}</button>` : '<p class="hint">Помещение накрыто верхним этажом.</p>'}
+    ${!disabled ? `<button type="button" id="roomRoofRemove">${linked ? 'Убрать над этим помещением' : 'Отключить автокрышу комнаты'}</button>` : ''}
+    ${linked || disabled || !manual ? `<details><summary>Ручной контур</summary><button type="button" id="roomManualRoof">${manual ? 'Выбрать ручную крышу' : 'Создать крышу по форме комнаты'}</button></details>` : ''}
+  </div>`;
 }
 
 export function bindRoomRoof(panel) {
-  panel.querySelector('#roomRoofBtn')?.addEventListener('click', (e) => {
-    const roof = roofClickRoom(state.project.activeLevel, e.currentTarget.dataset.room);
-    if (roof && !is3dOpen()) showRoofPlan(roof.id);
+  panel.querySelector('#roomRoofBtn')?.addEventListener('click', coverSelectedRoom);
+  panel.querySelector('#roomRoofRemove')?.addEventListener('click', () => {
+    const id = state.selection?.id;
+    if (state.selection?.type === 'room') mutate(() => setLinkedRoofEnabled(state.project, state.project.activeLevel, [id], false));
+  });
+  panel.querySelector('#roomManualRoof')?.addEventListener('click', () => {
+    if (state.selection?.type !== 'room') return;
+    const room = state.project.rooms.find((r) => r.id === state.selection.id);
+    if (room) focusRoof(roomRoofCoverage(room).manual || roofClickRoom(state.project.activeLevel, room.id));
   });
 }

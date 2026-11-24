@@ -6,7 +6,7 @@
 import { toWorld } from './building.js';
 import {
   createLandscapeObject, distanceToPolygon, isPathShape, landscapeDef, lineLayout, objectColors, objectOutline,
-  objectPath, pathBoards, pointAlong, polygonArea, polylineLength, seededRandom, steppingSlabs,
+  ELEV_LIMIT, MAX_STAIR_RISE, PLATFORM_KINDS, applyStairsDrop, objectPath, pathBoards, platformTop, pointAlong, polygonArea, polylineLength, seededRandom, steppingSlabs, toWorld as landscapeWorld,
 } from './landscape.js';
 import { groundLevel, levelProject } from './model.js';
 import { buildingFootprint } from './site-check.js';
@@ -17,6 +17,85 @@ import { pointInPolygon, segmentsIntersect } from './zamer/geometry.js';
 export const PLANT_KINDS = ['tree-pine', 'tree-spruce', 'tree-birch', 'tree-oak', 'tree-fruit', 'tree-thuja', 'tree-bonsai', 'shrub-box', 'shrub-flower', 'shrub-juniper', 'grass-clump', 'boulder'];
 
 const closedPath = (path) => [...path, path[0]];
+
+// Snap the upper landing of an outdoor stair to the chosen side of a platform.
+// Both elevations are site-datum levels. +Y in the stair's axes points downhill.
+export function stairsAtPlatformEdge(platform, point, { lower = 0, ground = 0, id } = {}) {
+  if (!PLATFORM_KINDS.has(platform?.kind)) return null;
+  const upper = platformTop(platform, ground);
+  if (!(upper > lower && upper - lower <= MAX_STAIR_RISE)) return null;
+  const outline = objectOutline(platform);
+  let signedArea = 0;
+  let best = null;
+  for (let i = 0; i < outline.length; i += 1) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    signedArea += a.x * b.y - b.x * a.y;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) continue;
+    const ux = dx / len;
+    const uy = dy / len;
+    const pos = Math.max(0, Math.min(len, (point.x - a.x) * ux + (point.y - a.y) * uy));
+    const dist = Math.hypot(point.x - a.x - pos * ux, point.y - a.y - pos * uy);
+    if (!best || dist < best.dist) best = { a, len, ux, uy, pos, dist };
+  }
+  if (!best || !signedArea) return null;
+  const { a, ux, uy, len, pos } = best;
+  const curved = platform.smooth || platform.kind === 'pad-round';
+  if (!curved && len < 500) return null;
+  const width = curved ? Math.min(1800, platform.w / 2) : Math.min(1800, len);
+  const offset = curved ? pos : Math.max(width / 2, Math.min(len - width / 2, pos));
+  const nx = Math.sign(signedArea) * uy;
+  const ny = -Math.sign(signedArea) * ux;
+  const stair = createLandscapeObject('stairs-out', 0, 0, {
+    id, elev: lower, elevTo: upper, w: width,
+    rotation: Math.atan2(-nx, ny) * 180 / Math.PI,
+    variant: platform.variant === 'concrete' ? 'concrete' : 'stone',
+  });
+  stair.x = Math.round(a.x + ux * offset + nx * stair.h / 2);
+  stair.y = Math.round(a.y + uy * offset + ny * stair.h / 2);
+  return stair;
+}
+
+// Recognise the actual landing shared by an outdoor flight and a platform. This
+// also works for saved projects that contain no explicit attachment identifier.
+export function platformLevelEdit(objects, platform, ground = 0) {
+  if (!PLATFORM_KINDS.has(platform?.kind) || platform.kind === 'sunken-lounge') return null;
+  const level = Math.round(platformTop(platform, ground));
+  const outline = objectOutline(platform);
+  const stairs = objects.filter((stair) => {
+    if (stair.kind !== 'stairs-out' || !Number.isFinite(stair.elev) || Math.abs(stair.elevTo - level) > 1 || !Number.isFinite(stair.elevTo)) return false;
+    // Probe either side of the upper landing. A neighbouring flight whose
+    // upper edge stops short or faces into the deck remains independent.
+    const inside = landscapeWorld(stair, 0, -stair.h / 2 - 2);
+    const outside = landscapeWorld(stair, 0, -stair.h / 2 + 2);
+    return pointInPolygon(inside, outline) && !pointInPolygon(outside, outline);
+  });
+  const locked = platform.locked || stairs.some((stair) => stair.locked);
+  return {
+    platform, level, stairs,
+    min: locked ? level : Math.max(-ELEV_LIMIT, ...stairs.map((stair) => stair.elev + 1)),
+    max: locked ? level : Math.min(ELEV_LIMIT, ...stairs.map((stair) => stair.elev + MAX_STAIR_RISE)),
+  };
+}
+
+// Changing the number of treads changes the footprint downhill. Keep the
+// upper landing exactly at the platform edge through round trips and undo.
+export function setPlatformLevel(edit, level) {
+  if (!edit || !Number.isInteger(level) || level < edit.min || level > edit.max) return false;
+  edit.platform.elev = level;
+  for (const stair of edit.stairs) {
+    const landing = landscapeWorld(stair, 0, -stair.h / 2);
+    stair.elevTo = level;
+    applyStairsDrop(stair);
+    const moved = landscapeWorld(stair, 0, -stair.h / 2);
+    stair.x = Math.round(stair.x + landing.x - moved.x);
+    stair.y = Math.round(stair.y + landing.y - moved.y);
+  }
+  return true;
+}
 
 // ------------------------------------------------------------ Посадить вдоль
 

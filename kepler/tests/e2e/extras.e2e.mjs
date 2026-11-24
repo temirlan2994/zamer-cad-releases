@@ -8,9 +8,10 @@ describe('шаблоны и удобства', () => {
   before(async () => { app = await startApp({ issueGroups: 'all' }); });
   after(async () => { await app?.close(); });
 
-  it('стартовое меню: три шаблона; двухэтажный открывается с этажами', async () => {
+  it('стартовое меню: четыре шаблона; двухэтажный открывается с этажами', async () => {
     const titles = await app.page.$$eval('#startTemplates [data-template] b', (ns) => ns.map((n) => n.textContent));
-    assert.equal(titles.length, 3);
+    assert.equal(titles.length, 4);
+    assert.ok(titles.includes('Вилла у воды'));
     await app.page.click('#startTemplates [data-template="two-storey"]');
     await app.page.waitForSelector('#startScreen', { state: 'hidden' });
     const s = await app.page.evaluate(() => {
@@ -67,6 +68,24 @@ describe('шаблоны и удобства', () => {
   });
 
   it('без ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('карточка виллы открывает редактируемый дом в перспективе со стороны пруда', async () => {
+    const { page } = app;
+    if (await page.isHidden('#startScreen')) await page.click('#menuBtn');
+    await page.click('#startTemplates [data-template="garden-villa"]');
+    await page.waitForSelector('#view3d', { state: 'visible' });
+    const model = await page.evaluate(() => {
+      const { state, debug3d } = window.__kepler;
+      const { faces, cam } = debug3d();
+      return { name: state.project.name, floors: state.project.levels.length, faces, cam };
+    });
+    assert.equal(model.name, 'Вилла у воды');
+    assert.equal(model.floors, 2);
+    assert.ok(model.faces > 50);
+    assert.equal(model.cam.projection, 'perspective');
+    assert.ok(Math.abs(model.cam.pitch) < 0.2, 'взгляд с уровня пешехода');
     assert.deepEqual(app.errors, []);
   });
 });

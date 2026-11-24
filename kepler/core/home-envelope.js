@@ -6,6 +6,7 @@
 // за конструктивный, теплотехнический или нормативный вывод.
 
 import { buildElevation } from './elevation.js';
+import { linkedRoofRegions } from './linked-roof-regions.js';
 import { isOpenRoom, isShaft } from './catalog.js';
 import { levelProject, sortedLevels } from './model.js';
 import { buildingFootprintM2 } from './rooms.js';
@@ -112,9 +113,8 @@ function indicators(project, levels) {
 
 function roofRecords(project, hasBuilding, unknowns, conflicts, facts) {
   const envelope = envelopeOf(project);
-  const autoLinked = hasBuilding && envelope.roofMode === 'linked';
   const autoType = envelope.roof.type;
-  const records = roofsOf(project).map((roof, index) => {
+  const manual = roofsOf(project).map((roof, index) => {
     const level = roofLevel(project, roof);
     const outlineValid = validOutline(array(roof?.outline));
     const stats = safeCall(() => (level && outlineValid ? roofStats(project, roof) : null), null);
@@ -148,7 +148,21 @@ function roofRecords(project, hasBuilding, unknowns, conflicts, facts) {
       drainMarker: roof?.drain === true,
     };
   });
-  const valid = records.filter((record) => record.status === 'explicit');
+  const regions = hasBuilding ? linkedRoofRegions(project) : [];
+  const linked = regions.map((roof) => ({
+    id: roof.id,
+    levelId: roof.levelId,
+    levelName: roofLevel(project, roof)?.name || roof.levelId,
+    name: roof.name,
+    status: 'linked',
+    roofType: roof.roofType,
+    pitchDeg: roof.pitchDeg,
+    areaM2: rounded(roof.planArea / 1e6),
+    z0Mm: roof.z,
+    thicknessMm: roof.thickness,
+  }));
+  const autoLinked = linked.length > 0;
+  const valid = manual.filter((record) => record.status === 'explicit');
   if (valid.length) {
     facts.push(entry(
       'roof:explicit', 'roof', 'Явные крыши',
@@ -157,9 +171,9 @@ function roofRecords(project, hasBuilding, unknowns, conflicts, facts) {
     if (autoLinked) {
       facts.push(entry(
         'roof:coverage-linked', 'roof', 'Контур кровли связан с этажами',
-        'Не закрытые ручными крышами части автоматически перекрываются по фактическому верхнему контуру этажей.',
+        'Связанные крыши занимают свободные участки рядом с ручными крышами.',
       ));
-    } else {
+    } else if (envelope.roofMode === 'manual') {
       unknowns.push(entry(
         'roof:coverage', 'roof', 'Полнота кровли не проверена',
         'Автоматическая оболочка выключена; проверьте, что ручные крыши закрывают весь дом.',
@@ -172,7 +186,7 @@ function roofRecords(project, hasBuilding, unknowns, conflicts, facts) {
     ));
   }
   return {
-    status: records.some((record) => record.status === 'invalid') ? 'conflict'
+    status: manual.some((record) => record.status === 'invalid') ? 'conflict'
       : valid.length ? 'explicit' : (autoLinked ? 'linked' : 'unspecified'),
     autoLinked,
     autoThicknessMm: envelope.roofThickness,
@@ -182,18 +196,18 @@ function roofRecords(project, hasBuilding, unknowns, conflicts, facts) {
     autoOverhangMm: envelope.roof.overhang,
     autoDrainage: envelope.roof.drainage,
     explicitCount: valid.length,
-    invalidCount: records.length - valid.length,
-    totalAreaM2: rounded(valid.reduce((sum, roof) => sum + (roof.areaM2 || 0), 0)),
-    renderingFallback: autoLinked ? 'linked-flat-roof-for-uncovered-parts' : 'none',
-    records,
+    linkedCount: linked.length,
+    invalidCount: manual.length - valid.length,
+    totalAreaM2: rounded([...valid, ...linked].reduce((sum, roof) => sum + roof.areaM2, 0)),
+    renderingFallback: autoLinked ? 'linked-roof-for-uncovered-parts' : 'none',
+    records: [...manual, ...linked],
   };
 }
 
-function facadeRecords(project, hasBuilding, explicitRoofCount, conflicts, facts, { inspectGeometry = true } = {}) {
-  const linked = envelopeOf(project).roofMode === 'linked';
-  const representation = explicitRoofCount
-    ? (linked ? 'explicit-plus-linked-automatic' : 'explicit')
-    : (linked ? 'linked-automatic' : 'unspecified');
+function facadeRecords(project, hasBuilding, roofs, conflicts, facts, { inspectGeometry = true } = {}) {
+  const representation = roofs.explicitCount
+    ? (roofs.autoLinked ? 'explicit-plus-linked-automatic' : 'explicit')
+    : (roofs.autoLinked ? 'linked-automatic' : 'unspecified');
   if (!inspectGeometry) {
     return {
       status: hasBuilding ? 'registered' : 'unknown',
@@ -519,12 +533,12 @@ export function analyzeHomeEnvelope(project = {}, options = {}) {
   if (hasBuilding && roofs.status === 'unspecified') {
     unknowns.push(entry(
       'roof:unspecified', 'roof', 'Форма кровли не задана',
-      'Автоматическая оболочка выключена, а ручная крыша ещё не создана.',
+      'В модели нет кровли. Проверьте настройки проекта и связь крыши с помещением.',
     ));
   }
   const inspectViewGeometry = options.inspectViewGeometry !== false;
   const facades = levels.length
-    ? facadeRecords(project, hasBuilding, roofs.explicitCount, conflicts, facts, { inspectGeometry: inspectViewGeometry })
+    ? facadeRecords(project, hasBuilding, roofs, conflicts, facts, { inspectGeometry: inspectViewGeometry })
     : { status: 'unknown', availableCount: 0, records: [] };
   const sections = levels.length
     ? sectionRecords(project, unknowns, conflicts, facts, { inspectGeometry: inspectViewGeometry })
@@ -556,6 +570,7 @@ export function analyzeHomeEnvelope(project = {}, options = {}) {
       occupiedLevelCount: levelData.filter((level) => level.occupied).length,
       roomCount: levelData.reduce((sum, level) => sum + level.roomCount, 0),
       explicitRoofCount: roofs.explicitCount,
+      linkedRoofCount: roofs.linkedCount,
       availableFacadeCount: facades.availableCount,
       availableSectionCount: sections.availableCount,
       stairCount: vertical.stairs.length,

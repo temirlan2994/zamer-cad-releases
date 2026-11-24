@@ -8,10 +8,11 @@
 // приглушённые краски + тонкая чёрная графика; «Чертёж» — монохром для
 // печати. Кроны и тени — спрайты в кеше (drawImage), текстуры — узоры.
 
+import { LOUNGE_COLORS, loungeParts } from '../core/landscape-lounge.js';
 import {
   LS_COLORS, SHAPE_RANK, curbLines, insetPolygon, isPathShape, isRoundObject, landscapeDef, planterWall, stairsInfo, objectAreaM2, objectColors,
   lineLayout, objectCorners, objectLengthM, objectOutline, objectPath, pathBoards, pointAlong, polylineLength,
-  seededRandom, steppingSlabs, variantOf, fmtElev, retainingEdges, retainingInfo,
+  seededRandom, steppingSlabs, variantOf, waterCurtainParts, fmtElev, retainingEdges, retainingInfo,
 } from '../core/landscape.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import { frameCorners, frameEdges, frameRotators } from '../core/landscape-handles.js';
@@ -1052,6 +1053,17 @@ const LOOKS = {
     circle(ctx, 0, 0, tr, rc.P.wood[0]);
     ctx.restore();
   },
+  'sunken-lounge'(ctx, o, a, b, C, rc) {
+    circle(ctx, 0, 0, a, rc.mono ? rc.pal.paper : C[0]);
+    for (const part of loungeParts({ ...o, x: 0, y: 0, rotation: 0 }, Math.max(0, (o.elevTo ?? 0) - (o.elev ?? -600)))) {
+      ctx.beginPath();
+      part.poly.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+      ctx.fillStyle = rc.mono ? rc.pal.paper : part.material === 'wall' ? C[1] : LOUNGE_COLORS[part.material];
+      ctx.fill();
+      ink(ctx, rc, 0.45, 0.7);
+    }
+  },
   firepit(ctx, o, a, b, C, rc) {
     // Круг гравия, мощёная площадка с радиальными швами, тёмная сердцевина.
     const r = Math.min(a, b);
@@ -1265,6 +1277,19 @@ const LOOKS = {
       const t = rc.rand() * TAU; const d = 0.25 + rc.rand() * 0.45;
       return { x: Math.cos(t) * a * d, y: Math.sin(t) * b * d };
     }));
+  },
+  'water-curtain'(ctx, o, a, b, C, rc) {
+    const { rim, lipDepth, streamWidth } = waterCurtainParts(o);
+    ctx.fillStyle = C[0];
+    ctx.fillRect(-a, -b, a * 2, b * 2);
+    ctx.beginPath(); ctx.rect(-a + rim, -b + rim, a * 2 - 2 * rim, b * 2 - 2 * rim);
+    waterFill(ctx, rc, rc.P.water[1]);
+    ctx.fillStyle = C[1];
+    ctx.fillRect(-a, -b, a * 2, lipDepth);
+    ctx.beginPath(); ctx.rect(-a, -b, 2 * a, 2 * b); ink(ctx, rc, 0.8, 0.9);
+    ctx.beginPath();
+    ctx.rect(-streamWidth / 2, -b + lipDepth, streamWidth, Math.min(100, o.h * 0.08));
+    ctx.fillStyle = rc.P.water[2]; ctx.fill(); ink(ctx, rc, 0.55, 0.65);
   },
   fountain(ctx, o, a, b, C, rc) {
     circle(ctx, 0, 0, a, rc.P.stone[1]);

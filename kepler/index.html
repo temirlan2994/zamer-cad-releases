@@ -32,7 +32,7 @@
     <div class="app" inert>
       <!-- Файлы и общие действия проекта. -->
       <header class="topbar">
-        <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.8">v0.4.8</span></div>
+        <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.9">v0.4.9</span></div>
         <button type="button" id="menuBtn" class="project-home" title="Открыть список проектов"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5h7l2 2h8v12H3z"/><path d="M3 10h17"/></svg><span>Проекты</span></button>
         <span class="project-divider" aria-hidden="true">/</span>
         <input id="projectName" class="project-name" value="Новый дом" maxlength="200" aria-label="Название проекта" />
@@ -155,7 +155,7 @@
                 <button type="button" class="tb-btn" id="massVoidToolBtn" aria-label="Полая масса" aria-describedby="tbTip-mass-void"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" stroke-dasharray="4 2"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9" opacity=".55"/><path d="M8 12h8" stroke-width="2.4"/></svg><span class="tb-tip" role="tooltip" id="tbTip-mass-void"><b>Полая масса</b> · строится как обычная масса, но вычитает пересечённые стены, полы, перекрытия и массы · <kbd>Shift+M</kbd></span></button>
               </div>
             </div>
-            <button type="button" class="tb-btn" id="roofToolBtn" aria-label="Крыша" aria-describedby="tbTip-roof"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9h20"/><path d="M3.5 9v2.2h17V9"/><path d="M6 11.2V20h12v-8.8"/><path d="M10 20v-4.5h4V20"/></svg><span class="tb-tip" role="tooltip" id="tbTip-roof"><b>Крыша</b> · «План крыши»: протяните прямоугольник или кликните по помещению — форма по нему; тяните крышу, вершины и рёбра · <kbd>K</kbd></span></button>
+            <button type="button" class="tb-btn" id="roofToolBtn" aria-label="Крыша" aria-describedby="tbTip-roof"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9h20"/><path d="M3.5 9v2.2h17V9"/><path d="M6 11.2V20h12v-8.8"/><path d="M10 20v-4.5h4V20"/></svg><span class="tb-tip" role="tooltip" id="tbTip-roof"><b>Крыша</b> · Помещения накрываются автоматически. Здесь можно выбрать связанную крышу или начертить свой контур · <kbd>K</kbd></span></button>
             <div class="tb-family" data-tool-family="docs">
               <button type="button" class="tb-btn tb-family-trigger" id="docsGroupBtn" aria-label="Документация" aria-describedby="tbTip-docs" aria-expanded="false" aria-controls="docsToolFlyout"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h4M8 12h8M8 16h8"/></svg><span class="tb-tip" role="tooltip" id="tbTip-docs"><b>Документация</b> · оси, разрезы и размеры</span></button>
               <div class="tb-family-flyout" id="docsToolFlyout" role="toolbar" aria-label="Инструменты документации">
@@ -184,6 +184,7 @@
 
         <!-- Библиотека — выезжает рядом с колонкой, только когда нужна: «Помещение» — типы комнат, «Мебель» — каталог, «Ландшафт» — каталог участка. -->
         <aside class="library" aria-label="Библиотека объектов">
+          <button id="modelAddRoom" class="secondary" type="button" hidden>Добавить комнату на плане</button>
           <div class="library-tabs" id="libraryTabs">
             <button id="libTabRooms" class="lib-tab active" type="button">Помещения</button>
             <button id="libTabFurniture" class="lib-tab" type="button">Мебель</button>
@@ -278,6 +279,19 @@
           <!-- Телефон: инструмент включён, а ряда с «Готово» нет (например, «Дверь» из карточки) — выйти (ui/mobile.js). -->
           <button class="draft-done tool-done" id="toolDone" type="button" hidden>✓ Готово</button>
           <div class="selection-toolbar" id="selectionToolbar" role="toolbar" aria-label="Действия с выбранным объектом" hidden></div>
+          <section class="atrium-panel" id="atriumPanel" tabindex="-1" aria-labelledby="atriumTitle" aria-describedby="atriumStatus" hidden>
+            <header><strong id="atriumTitle">Второй свет</strong><button type="button" id="atriumClose" aria-label="Отменить второй свет">×</button></header>
+            <div class="atrium-area" role="group" aria-label="Площадь проёма">
+              <button type="button" data-atrium-area="room">Вся комната</button>
+              <button type="button" data-atrium-area="rect">Часть комнаты</button>
+            </div>
+            <p id="atriumStatus" role="status"></p>
+            <div class="atrium-options">
+              <label id="atriumRailRow"><input type="checkbox" id="atriumRails" /> Ограждение по краю галереи</label>
+              <label id="atriumWindowRow"><span>Окно на два этажа</span><select id="atriumWindow"></select></label>
+            </div>
+            <footer><button type="button" id="atriumRedraw" hidden>Указать заново</button><button type="button" id="atriumApply" class="primary">Создать проём</button></footer>
+          </section>
           <div class="sofa-menu" id="sofaMenu" role="menu" aria-label="Добавить модуль дивана" hidden></div>
           <div class="cal-overlay" id="dimInput" hidden>
             <input id="dimInputField" type="number" step="50" min="0" inputmode="decimal" />
@@ -304,22 +318,31 @@
                 <button type="button" data-v3-projection="perspective" aria-pressed="false">Перспектива</button>
                 <button type="button" data-v3-projection="orthographic" aria-pressed="true">Параллельно</button>
               </div>
+              <button id="v3Atrium" type="button" title="Выбрать область второго света на плане">Второй свет</button>
+              <button id="v3ExitFacade" type="button" hidden title="Вернуться к прежнему ракурсу">← В 3D</button>
+              <details class="v3-facade"><summary>Фасад</summary><div class="v3-facade-panel" aria-label="Элементы фасада"></div></details>
               <details class="v3-views"><summary>Ракурс</summary><div class="v3-views-panel">
+                <button type="button" id="v3EnterInterior">Интерьер этажа</button>
+                <button type="button" data-v3-preset="eye">С уровня глаз</button>
                 <button type="button" data-v3-preset="iso">Изометрия</button>
                 <button type="button" data-v3-preset="top">Сверху</button>
                 <button type="button" data-v3-preset="front">Спереди</button>
                 <button type="button" data-v3-preset="right">Справа</button>
               </div></details>
               <details class="v3-layers"><summary>Слои</summary><div class="v3-layers-panel">
-              <label class="check-row"><input type="checkbox" id="v3Roof" checked><span>Крыша</span></label>
+              <label class="check-row" title="Скройте крыши, чтобы работать с интерьером"><input type="checkbox" id="v3Roof" checked><span>Крыша</span></label>
               <label class="check-row"><input type="checkbox" id="v3Site" checked><span>Участок</span></label>
               <label class="check-row"><input type="checkbox" id="v3Landscape" checked><span>Ландшафт</span></label>
               <label class="check-row"><input type="checkbox" id="v3Furniture" checked><span>Мебель</span></label>
-              <label class="check-row" id="v3MassesWrap" title="Массы — концептуальные боксы формы дома (инструмент «Масса», M)" hidden><input type="checkbox" id="v3Masses" checked><span>Массы</span></label>
+              <label class="check-row" id="v3MassesWrap" title="Массы — концептуальные боксы формы дома (инструмент «Масса», M)" hidden><input type="checkbox" id="v3Masses" checked><span>Массы и отделка фасада</span></label>
               <label class="check-row" id="v3MassSnapWrap" title="Магнит масс: блоки липнут к граням соседних масс, отметкам этажей и земле · Alt или Shift при перетаскивании — без магнита" hidden><input type="checkbox" id="v3MassSnap" checked><span>Магнит масс</span></label>
               <label class="check-row v3-levels"><span>Этажи модели</span><select id="v3Levels" aria-label="Этажи в 3D"><option value="all">Все этажи</option><option value="upto">До текущего плана</option><option value="only">Текущий план</option></select></label>
               <label class="check-row" id="v3ReliefWrap" title="Вертикальный масштаб рельефа" hidden><span>Рельеф ×<b id="v3ReliefVal">1</b></span><input type="range" id="v3Relief" min="1" max="5" step="1" value="1"></label>
               </div></details>
+              <div id="v3InteriorControls" class="v3-interior-controls" hidden>
+                <label>Интерьер <select id="v3InteriorLevel" aria-label="Этаж интерьера"></select></label>
+                <button type="button" id="v3ExitInterior" title="Вернуться к прежнему 3D-виду">Вернуть вид</button>
+              </div>
               <button id="v3Fit" type="button" title="Вписать модель" aria-label="Вписать модель"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 8V3h5m4 0h5v5m0 4v5h-5m-4 0H3v-5"/><rect x="7" y="7" width="6" height="6" rx="1"/></svg><span>Вписать</span></button>
               <button id="v3Close" aria-label="Закрыть 3D-вид" title="Закрыть 3D-вид" type="button">×</button>
             </div>
@@ -364,9 +387,10 @@
           </div>
           <!-- Телефон: листы и дерево видов для работы с ними (ui/mobile.js). -->
           <div class="mobile-sheet-head" id="mobileSheetHead" hidden>
-            <div class="msh-tabs" role="tablist" aria-label="Виды и листы">
+            <div class="msh-tabs" role="tablist" aria-label="Виды, листы и площади">
               <button type="button" role="tab" data-tab="views">Виды</button>
               <button type="button" role="tab" data-tab="sheets">Листы</button>
+              <button type="button" role="tab" data-tab="tep">Площади</button>
             </div>
           </div>
           <div class="props-body" id="propsBody"></div>
@@ -414,7 +438,7 @@
     <div class="start-screen" id="startScreen" hidden>
       <div class="start-card startup-card" role="dialog" aria-modal="true" aria-labelledby="startupTitle">
         <section class="startup-view startup-auth" id="startAuthView" hidden>
-          <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.8">v0.4.8</span></div>
+          <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.9">v0.4.9</span></div>
           <div class="startup-auth-copy">
             <div>
               <h1 id="startupTitle">Ваши проекты</h1>
@@ -435,7 +459,7 @@
         <section class="startup-view startup-projects" id="startProjectsView" hidden>
           <div class="start-head startup-projects-head">
             <div>
-              <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.8">v0.4.8</span></div>
+              <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.9">v0.4.9</span></div>
               <h1 id="startupProjectsTitle">Ваши проекты</h1>
             </div>
             <div class="startup-head-actions">
@@ -463,10 +487,15 @@
 
           <section class="startup-section" id="startRecentSection" hidden>
             <div class="startup-section-head">
-              <h2>Последние проекты</h2>
+              <h2>Сохранённые проекты</h2>
               <span id="startRecentStatus" role="status" aria-live="polite"></span>
             </div>
+            <div class="project-search" id="startProjectFilter" hidden>
+              <input id="startProjectSearch" type="search" placeholder="Найти по названию" aria-label="Найти сохранённый проект" aria-controls="startRecentProjects" />
+              <button id="startProjectClear" type="button" aria-label="Очистить поиск проектов" hidden>Сбросить</button>
+            </div>
             <div class="startup-project-grid" id="startRecentProjects"></div>
+            <button class="project-more" id="startProjectMore" type="button" aria-controls="startRecentProjects" hidden>Показать ещё</button>
           </section>
 
           <section class="startup-section" id="startExamplesSection">
@@ -486,10 +515,10 @@
     </div>
 
     <div class="start-screen" id="projectsScreen" hidden>
-      <div class="start-card projects-card">
+      <div class="start-card projects-card" role="dialog" aria-modal="true" aria-labelledby="projectsTitle">
         <div class="start-head">
-          <b class="help-title">Проекты</b>
-          <button class="icon-btn" id="projectsClose" title="Закрыть (Esc)">✕</button>
+          <b class="help-title" id="projectsTitle">Проекты</b>
+          <button class="icon-btn" id="projectsClose" aria-label="Закрыть проекты" title="Закрыть (Esc)">✕</button>
         </div>
         <div class="projects-account" id="projectsAccount">
           <div class="projects-account-profile">
@@ -519,6 +548,11 @@
           <input id="prjNote" type="text" maxlength="80" placeholder="Подпись версии (необязательно)" aria-label="Подпись версии" />
           <button id="prjSave" class="primary" type="button">Сохранить версию</button>
         </div>
+        <div class="project-search" id="projectFilter" hidden>
+          <input id="projectSearch" type="search" placeholder="Найти проект по названию" aria-label="Найти проект в списке" aria-controls="projectsList" />
+          <button id="projectClear" type="button" aria-label="Очистить поиск проектов" hidden>Сбросить</button>
+        </div>
+        <p class="hint" id="projectSearchStatus" role="status"></p>
         <div class="projects-list" id="projectsList"></div>
       </div>
     </div>

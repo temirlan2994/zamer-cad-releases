@@ -14,13 +14,22 @@
 //   mat, color, label?, at? }. cut — объект в сечении, depth — расстояние от
 // плоскости разреза, мм (дальние рисуются бледнее).
 
-import { rectCornersWorld } from './building.js';
+import { LOUNGE_COLORS, loungeParts } from './landscape-lounge.js';
+import { rectCornersWorld, toLocal as buildingLocal, toWorld as buildingWorld } from './building.js';
+import { facadeParts } from './facade.js';
+import { floorSlabFaces, linkedRoofFaces, roofFaces } from './mesh3d.js';
+import { faceLineSegments } from './section.js';
+import { clipFace } from './geom/clip.js';
+import { wallZRange } from './wall-z-range.js';
+import { massBox } from './masses.js';
 import {
-  LS_COLORS, curbLines, elevOf, fmtElev, insetPolygon, landscapeDef, lineLayout, objectColors, objectOutline,
+  LS_COLORS, PLATFORM_KINDS, curbLines, elevOf, fmtElev, insetPolygon, landscapeDef, lineLayout, loungeEntranceLevel, objectColors, objectOutline, platformTop,
   objectPath, planterInner, retainingEdges, retainingInfo, ribbonOutline, seededRandom, stairsInfo, steppingSlabs, toWorld,
   variantOf, SECTION_DEPTH,
 } from './landscape.js';
 import { levelProject, sortedLevels } from './model.js';
+import { levelWindowOpenings } from './spanning-windows.js';
+import { openingHeight, openingSill } from './opening-preset.js';
 import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
 import { deriveWalls, openingRect } from './walls.js';
 import { buildDxf } from './zamer/dxf.js';
@@ -28,7 +37,6 @@ import { pointInPolygon } from './zamer/geometry.js';
 import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
 
 export const SECTION_DXF_LAYER = { key: 'lsSection', name: 'LANDSCAPE_SECTION', color: 1 };
-const SLAB = 220; // перекрытие, мм
 
 // Порядок рисования при равной глубине: засыпки → вода → покрытия → конструкции → дом → прочее → растения.
 const CAT_ORDER = { fill: 0, water: 1, cover: 2, built: 3, house: 4, object: 5, plant: 6 };
@@ -139,6 +147,7 @@ export function groundFn(project) {
   if (!model?.tris?.length) {
     const zero = resolvedZeroAboveGround(project);
     const fn = () => (zero == null ? 0 : -zero);
+    fn.siteDatum = fn();
     fn.flat = true;
     return fn;
   }
@@ -152,6 +161,7 @@ export function groundFn(project) {
     const z = interpolateZ(model, x, y, { clamp: true });
     return relativeDatum ? (z ?? reference) - reference - zero : (z ?? floorZ) - floorZ;
   };
+  fn.siteDatum = relativeDatum ? -zero : reference - floorZ;
   fn.flat = false;
   return fn;
 }
@@ -204,7 +214,7 @@ export function sectionProfile(project, line, side, opts = {}) {
   const L = frame.length;
   const flip = sideId === 'right'; // смотрим вправо — правая рука наблюдателя против хода линии
   const X = (s) => (flip ? L - s : s);
-  const zg = groundFn(project);
+  const zg = opts.ground ?? groundFn(project);
   const groundAtS = (s) => { const p = pointAtStation(frame, s); return zg(p.x, p.y); };
   const steps = (a, b) => (zg.flat ? 1 : Math.max(1, Math.ceil((b - a) / 300)));
 
@@ -239,6 +249,8 @@ export function sectionProfile(project, line, side, opts = {}) {
 
   const prims = [];
   const marks = [];
+  const excavations = [];
+  const platforms = [];
   const add = (p) => { prims.push(p); return p; };
   // На ровном участке «±0.00» у земли не ставим — только у пола дома.
   const mark = (s, z, text, kind = 'elev') => { if (zg.flat && Math.round(z) === 0 && kind !== 'floor') return; if (s >= -1 && s <= L + 1) marks.push({ x: X(Math.max(0, Math.min(L, s))), z, text, kind }); };
@@ -281,10 +293,30 @@ export function sectionProfile(project, line, side, opts = {}) {
     const look = def.look;
     // Основание: земля по линии (в сечении) или под центром объекта (в проекции).
     const center = { x: o.x, y: o.y };
-    const base = (s, proj) => (proj ? zg(center.x, center.y) : groundAtS(s)) + elev + lift;
-    const baseCut = (s) => groundAtS(s) + elev + lift;
-    const baseProj = () => zg(center.x, center.y) + elev + lift;
+    const deck = DECK_KINDS.has(o.kind);
+    const fixed = ((PLATFORM_KINDS.has(o.kind) || o.kind === 'stairs-out') && Number.isFinite(o.elev)) || (PLATFORM_KINDS.has(o.kind) && o.height > 0) || o.kind === 'sunken-lounge';
+    const siteDatum = zg.siteDatum ?? 0;
+    const top = fixed ? siteDatum + platformTop(o, zg(center.x, center.y) - siteDatum) : 0;
+    const baseCut = (s) => fixed ? top : groundAtS(s) + elev + lift;
+    const baseProj = () => fixed ? top : zg(center.x, center.y) + elev + lift;
+    const base = (s, proj) => proj ? baseProj() : baseCut(s);
     const info = { id: o.id, kind: o.kind, title: titleOf(o, def), color: C[0], color2: C[1] || C[0], look };
+    if (fixed && (Number.isFinite(o.elev) || o.kind === 'sunken-lounge')) {
+      for (const [a, b] of cutIntervals(frame, objectOutline(o, 16))) {
+        if (top < Math.max(groundAtS(a), groundAtS(b), groundAtS((a + b) / 2))) excavations.push({ a, b, top });
+      }
+    }
+
+    if (o.kind === 'sunken-lounge') {
+      const upper = loungeEntranceLevel(o, objects, (p) => zg(p.x, p.y) - siteDatum);
+      const drop = Math.max(0, upper + siteDatum - top);
+      body(o, objectOutline(o, 48), -100, 0, base, { ...info, cat: 'cover', mat: 'stone' });
+      for (const part of loungeParts(o, drop)) {
+        body(o, part.poly, part.bottom, part.top, base, { ...info, title: '', cat: 'built',
+          mat: part.material === 'base' ? 'wood' : 'stone', color: LOUNGE_COLORS[part.material] }, { projectedToo: false });
+      }
+      continue;
+    }
 
     // --- Растения: силуэты.
     if (isPlantDef(def)) {
@@ -365,7 +397,7 @@ export function sectionProfile(project, line, side, opts = {}) {
       let any = false;
       for (let i = 0; i < n; i += 1) {
         const ly = o.h / 2 - (i + 0.5) * t;
-        const zTop = Math.max(20, (i + 1) * st.riser);
+        const zTop = (i + 1) * st.riser;
         const poly = [toWorld(o, -fw / 2, ly - t / 2), toWorld(o, fw / 2, ly - t / 2), toWorld(o, fw / 2, ly + t / 2), toWorld(o, -fw / 2, ly + t / 2)];
         const iv = body(o, poly, 0, zTop, base, { ...info, cat: 'built', mat, title: i === n - 1 ? info.title : '' });
         if (iv.length) any = true;
@@ -418,7 +450,9 @@ export function sectionProfile(project, line, side, opts = {}) {
     // --- Вода: чаша ниже земли.
     if (WATER[o.kind] != null) {
       const outline = objectOutline(o, 32);
-      const iv = cutIntervals(frame, outline);
+      const full = cutIntervals(frame, outline);
+      const dry = objects.filter((item) => item.kind === 'sunken-lounge').flatMap((item) => cutIntervals(frame, objectOutline(item, 48)));
+      const iv = subtractIntervals(full, dry);
       const depthW = WATER[o.kind];
       const pond = o.kind.startsWith('pond');
       for (const seg of iv) {
@@ -441,7 +475,16 @@ export function sectionProfile(project, line, side, opts = {}) {
       const iv = cutIntervals(frame, outline);
       // Настил на лагах: верх — над основанием на высоту настила.
       // С отметкой elev — это верх покрытия (как подпись на плане).
-      const deckH = DECK_KINDS.has(o.kind) && !Number.isFinite(o.elev) ? spec.t : 0;
+      if (PLATFORM_KINDS.has(o.kind) && !o.locked && iv.length) {
+        const spans = iv.map(clipS).filter(([a, b]) => b - a >= 1);
+        const widest = spans.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
+        if (widest) {
+          const mid = (widest[0] + widest[1]) / 2;
+          const ground = zg(center.x, center.y) - siteDatum;
+          platforms.push({ id: o.id, title: info.title, x: X(mid), z: baseCut(mid), ground, level: Math.round(platformTop(o, ground)) });
+        }
+      }
+      const deckH = deck ? Math.max(0, baseProj() - zg(center.x, center.y)) : 0;
       if (o.kind === 'path' && o.variant === 'stepping') {
         for (const sl of steppingSlabs(o)) {
           const c = Math.cos(sl.angle); const sn = Math.sin(sl.angle);
@@ -453,8 +496,8 @@ export function sectionProfile(project, line, side, opts = {}) {
         for (const seg of iv) {
           const [a, b] = clipS(seg);
           if (b - a < 1) continue;
-          const top = (s) => baseCut(s) + deckH;
-          if (spec.mat === 'wood' && deckH + elev > 60) {
+          const top = baseCut;
+          if (spec.mat === 'wood' && deckH > 60) {
             // Настил: доски сверху, под ними — лаги/опоры (пусто).
             add({ ...info, id: `${o.id}:under`, title: '', cat: 'fill', cut: true, depth: 0, shape: 'poly', mat: 'void', pts: band(a, b, (s) => groundAtS(s) + lift, (s) => top(s) - DECK_BOARDS), s0: a, s1: b });
             add({ ...info, cat: 'cover', cut: true, depth: 0, shape: 'poly', mat: 'wood', pts: band(a, b, (s) => top(s) - DECK_BOARDS, top), s0: a, s1: b });
@@ -466,11 +509,11 @@ export function sectionProfile(project, line, side, opts = {}) {
         if (elev !== 0 || deckH >= 200) {
           const [a0, a1] = clipS([iv[0][0], iv[iv.length - 1][1]]);
           const s = (a0 + a1) / 2;
-          mark(s, baseCut(s) + deckH, fmtElev(baseCut(s) + deckH));
+          mark(s, baseCut(s), fmtElev(baseCut(s)));
         }
       } else if (elev > 0 || deckH > 150) {
         // В проекции видна только приподнятая площадка: от земли до верха.
-        body(o, outline, -elev, deckH, base, { ...info, cat: 'cover', mat: spec.mat }, { cuts: [] });
+        body(o, outline, -Math.max(deckH, elev), 0, base, { ...info, cat: 'cover', mat: spec.mat }, { cuts: [] });
       }
       if (o.curb) addCurb(o, base);
       continue;
@@ -512,16 +555,30 @@ export function sectionProfile(project, line, side, opts = {}) {
     }
   }
 
-  houseSection(project, { frame, X, L, maxDepth, sign, add, mark, rect, projected, clipS });
+  // A landscape drag keeps its cut line and house fixed between pointer events.
+  if (opts.house) {
+    prims.push(...opts.house.prims);
+    marks.push(...opts.house.marks);
+  } else {
+    houseSection(project, { frame, X, L, maxDepth, sign, add, mark, rect, projected, clipS });
+  }
 
   // Земля по линии.
   const ground = [];
   const n = zg.flat ? 1 : Math.min(800, Math.max(2, Math.ceil(L / 250)));
-  for (let i = 0; i <= n; i += 1) {
-    const s = (L * i) / n;
-    ground.push({ x: X(s), z: groundAtS(s) });
+  const stations = new Set(Array.from({ length: n + 1 }, (_, i) => L * i / n));
+  for (const { a, b } of excavations) { stations.add(a); stations.add(b); }
+  const cutGround = (s, interiors) => Math.min(groundAtS(s), ...interiors.map((cut) => cut.top));
+  const sorted = [...stations].sort((a, b) => a - b);
+  for (let i = 1; i < sorted.length; i += 1) {
+    const a = sorted[i - 1]; const b = sorted[i];
+    const mid = (a + b) / 2;
+    const active = excavations.filter((cut) => cut.a <= mid && mid <= cut.b);
+    const left = { x: X(a), z: cutGround(a, active) };
+    if (!ground.length || ground[ground.length - 1].z !== left.z) ground.push(left);
+    ground.push({ x: X(b), z: cutGround(b, active) });
   }
-  ground.sort((a, b) => a.x - b.x);
+  if (X(0) > X(L)) ground.reverse();
   // Отметки земли на концах (только с рельефом — на ровном участке ±0.00 везде).
   if (!zg.flat) {
     mark(0, groundAtS(0), fmtElev(groundAtS(0)), 'ground');
@@ -546,7 +603,7 @@ export function sectionProfile(project, line, side, opts = {}) {
   }
   return {
     name: (Array.isArray(line) ? '' : line?.name) || opts.name || 'А',
-    length: L, side: sideId, flip, depth: maxDepth, ground, prims,
+    length: L, side: sideId, flip, depth: maxDepth, ground, prims, platforms: platforms.sort((a, b) => a.x - b.x),
     marks: dedupeMarks(marks), box: { x0: Math.max(-L * 0.3, bx0), x1: Math.min(L * 1.3, bx1), z0: z0 - 600, z1: z1 + 700 },
   };
 }
@@ -560,13 +617,104 @@ function dedupeMarks(marks) {
   return out;
 }
 
+// Keep the material around a rectangular mass cutter. Cutting each dimension
+// off the remaining core produces at most six disjoint boxes.
+function outsideCutter(box, cut) {
+  const axes = ['x', 'y', 'z'];
+  if (axes.some((axis) => box[axis + '1'] <= cut[axis + '0'] || box[axis + '0'] >= cut[axis + '1'])) return [box];
+  const rest = { ...box };
+  const pieces = [];
+  for (const axis of axes) {
+    const lo = axis + '0'; const hi = axis + '1';
+    if (rest[lo] < cut[lo]) { pieces.push({ ...rest, [hi]: cut[lo] }); rest[lo] = cut[lo]; }
+    if (rest[hi] > cut[hi]) { pieces.push({ ...rest, [lo]: cut[hi] }); rest[hi] = cut[hi]; }
+  }
+  return pieces;
+}
+
+// Плиты и крыши берутся из модели здания. Каждое звено ломаного разреза
+// пересекает скаты в локальных осях дома, с точными Z на обоих концах.
+function houseCovers(project, { frame, X, add, maxDepth, sign }) {
+  const b = project.building;
+  const solids = new Map();
+  const faces = [...floorSlabFaces(project), ...linkedRoofFaces(project), ...roofFaces(project)];
+  for (const face of faces) {
+    if (face.kind === 'roof-drain') continue;
+    const id = face.roofId || face.autoRoofId || ('slab:' + face.level);
+    if (!solids.has(id)) solids.set(id, []);
+    solids.get(id).push(face);
+  }
+  const segments = frame.segs.map((seg) => {
+    const a = buildingLocal(b, seg.a);
+    const end = buildingLocal(b, { x: seg.a.x + seg.u.x * seg.len, y: seg.a.y + seg.u.y * seg.len });
+    return { a, dir: { x: (end.x - a.x) / seg.len, y: (end.y - a.y) / seg.len }, len: seg.len, s0: seg.s0 };
+  });
+  for (const [id, solid] of solids) {
+    const slab = solid[0].kind === 'slab';
+    const info = { id: 'house:' + id, kind: slab ? 'house-slab' : 'house-roof', title: '', cat: 'house',
+      shape: 'poly', mat: slab ? 'concrete' : 'metal', look: slab ? 'slab' : 'roof' };
+    let cut = false;
+    for (const face of solid) {
+      if (face.normal.z <= 0 || (face.alpha != null && face.alpha < 1)) continue;
+      const thick = face.roofThickness ?? (face.pts[0].z - face.cutZ0);
+      if (!(thick > 0)) continue;
+      for (const seg of segments) {
+        for (const [from, to] of faceLineSegments(seg, face)) {
+          const s0 = seg.s0 + from.t; const s1 = seg.s0 + to.t;
+          const x0 = X(s0); const x1 = X(s1);
+          add({ ...info, cut: true, depth: 0, color: face.color, s0, s1, pts: [
+            { x: x0, z: from.z - thick }, { x: x1, z: to.z - thick }, { x: x1, z: to.z }, { x: x0, z: from.z },
+          ] });
+          cut = true;
+        }
+      }
+    }
+    if (slab || cut) continue;
+    for (const face of solid) {
+      // Координаты проекции: x — станция, y — глубина в направлении взгляда.
+      let pts = face.pts.map((p) => {
+        const st = stationOf(frame, buildingWorld(b, p));
+        return { x: st.s, y: st.d * sign, z: p.z };
+      });
+      for (const plane of [(p) => p.x, (p) => frame.length - p.x, (p) => p.y, (p) => maxDepth - p.y]) pts = clipFace(pts, plane);
+      if (pts.length < 3) continue;
+      const area = pts.reduce((sum, p, i) => {
+        const q = pts[(i + 1) % pts.length];
+        return sum + p.x * q.z - q.x * p.z;
+      }, 0);
+      if (Math.abs(area) < 1) continue;
+      add({ ...info, cut: false, depth: Math.min(...pts.map((p) => p.y)), color: face.color,
+        pts: pts.map((p) => ({ x: X(p.x), z: p.z })) });
+    }
+  }
+}
+
 // Дом: стены по этажам (сечение с проёмами), перекрытия, плита; дом за
 // линией — силуэт.
 function houseSection(project, ctx) {
   const { frame, maxDepth, add, mark, rect, projected, clipS, X } = ctx;
   if (!project.building) return;
+  if (project.levels?.length) houseCovers(project, ctx);
   const levels = project.levels?.length ? sortedLevels(project) : [{ id: null, elevation: 0, height: 3000 }];
   const b = project.building;
+  const cutters = (project.massVoids || []).map(massBox);
+  for (const mass of project.masses || []) {
+    if (!['decking', 'post', 'canopy'].includes(mass.facadeKind)) continue;
+    const pieces = cutters.reduce((parts, cut) => parts.flatMap((part) => outsideCutter(part, cut)), facadeParts(mass));
+    for (const piece of pieces) {
+      const outline = rectCornersWorld(b, { x: piece.x0, y: piece.y0, w: piece.x1 - piece.x0, h: piece.y1 - piece.y0 });
+      const iv = cutIntervals(frame, outline);
+      const projection = iv.length ? null : projected(outline);
+      const spans = projection ? [[projection.s0, projection.s1]] : iv;
+      for (const span of spans) {
+        const [a, c] = clipS(span);
+        if (c - a < 1) continue;
+        add({ id: `facade:${mass.id}`, kind: mass.facadeKind, title: mass.name, cat: 'house', cut: !projection,
+          depth: projection?.depth ?? 0, shape: 'poly', mat: mass.facadeKind === 'decking' ? 'wood' : 'metal',
+          color: piece.color, look: mass.facadeKind, pts: rect(X(a), X(c), piece.z0, piece.z1), s0: a, s1: c });
+      }
+    }
+  }
   const envelope = envelopeOf(project);
   const terrainHouse = project.site?.terrain?.points?.length >= 3 ? houseTerrain(project) : null;
   const zero = resolvedZeroAboveGround(project, terrainHouse);
@@ -584,14 +732,14 @@ function houseSection(project, ctx) {
     const walls = deriveWalls(lp).filter((w) => !w.hidden && w.band);
     const span = [];
     const holesByWall = new Map();
-    for (const op of lp.openings || []) {
+    for (const op of levelWindowOpenings(lp, walls)) {
       const placed = openingRect(lp, op, walls);
       if (!placed) continue;
       const poly = rectCornersWorld(b, placed.rect);
       const iv = cutIntervals(frame, poly);
       if (!iv.length) continue;
-      const bottom = op.kind === 'door' ? 0 : Math.max(0, op.sill ?? 900);
-      const top = Math.min(H - SLAB - 50, bottom + (op.height ?? (op.kind === 'door' ? 2100 : 1500)));
+      const bottom = openingSill(op, lv);
+      const top = bottom + openingHeight(op, lv);
       if (!holesByWall.has(placed.wall)) holesByWall.set(placed.wall, []);
       holesByWall.get(placed.wall).push(...iv.map((v) => ({ iv: v, bottom, top, kind: op.kind })));
     }
@@ -602,31 +750,32 @@ function houseSection(project, ctx) {
       if (!iv.length) continue;
       anyCut = true;
       span.push(...iv);
-      const holes = holesByWall.get(w) || [];
+      const range = wallZRange(lp, w, H);
+      const holes = (holesByWall.get(w) || []).map((h) => ({ ...h, bottom: Math.max(h.bottom, range.z0),
+        top: Math.min(h.top, range.z1) })).filter((h) => h.top > h.bottom);
       const info = { id: `house:${lv.id || 0}:${w.key || ''}`, kind: 'house-wall', title: '', cat: 'house', cut: true, depth: 0, shape: 'poly', mat: 'brick', color: '#d9cfc2', look: 'wall' };
       const solid = subtractIntervals(iv, holes.map((h) => h.iv));
       for (const seg of solid) {
         const [a, c] = clipS(seg);
-        if (c - a >= 1) add({ ...info, pts: rect(X(a), X(c), z0, z0 + H - SLAB), s0: a, s1: c });
+        if (c - a >= 1) add({ ...info, pts: rect(X(a), X(c), z0 + range.z0, z0 + range.z1), s0: a, s1: c });
       }
       for (const h of holes) {
         for (const seg of iv) {
           const a = Math.max(seg[0], h.iv[0]); const c = Math.min(seg[1], h.iv[1]);
           if (c - a < 1) continue;
           const [ca, cc] = clipS([a, c]);
-          if (h.bottom > 0) add({ ...info, pts: rect(X(ca), X(cc), z0, z0 + h.bottom), s0: ca, s1: cc });
-          add({ ...info, pts: rect(X(ca), X(cc), z0 + h.top, z0 + H - SLAB), s0: ca, s1: cc });
+          if (h.bottom > range.z0) add({ ...info, pts: rect(X(ca), X(cc), z0 + range.z0, z0 + h.bottom), s0: ca, s1: cc });
+          if (h.top < range.z1) add({ ...info, pts: rect(X(ca), X(cc), z0 + h.top, z0 + range.z1), s0: ca, s1: cc });
           add({ ...info, kind: 'house-opening', mat: h.kind === 'window' ? 'glass' : 'void', color: '#dfe9ea', pts: rect(X(ca), X(cc), z0 + h.bottom, z0 + h.top), s0: ca, s1: cc });
         }
       }
     }
-    // Перекрытие над этажом и плита под нижним — по комнатам и стенам.
+    // Опора нижнего этажа и отметки полов — по комнатам и стенам.
     for (const r of rooms) span.push(...cutIntervals(frame, rectCornersWorld(b, r)));
     const merged = mergeIntervals(span, 50);
     for (const seg of merged) {
       const [a, c] = clipS(seg);
       if (c - a < 1) continue;
-      add({ id: `house:${lv.id || 0}:slab`, kind: 'house-slab', title: li === levels.length - 1 ? 'Дом' : '', cat: 'house', cut: true, depth: 0, shape: 'poly', mat: 'concrete', color: '#cfcac2', look: 'slab', pts: rect(X(a), X(c), z0 + H - SLAB, z0 + H), s0: a, s1: c });
       if (li === 0 && envelope.foundation.enabled && zero != null) {
         const minGround = footprintPolys.length
           ? Math.min(...footprintPolys.flatMap((poly) => poly.map((point) => groundAt(point.x, point.y))))

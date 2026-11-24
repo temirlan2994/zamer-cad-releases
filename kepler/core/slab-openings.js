@@ -339,9 +339,30 @@ function removeStored(level, id) {
 // этаж: никуда»). → true, если удалён.
 export function removeSlabOpening(project, levelId, id) {
   const level = (project.levels || []).find((l) => l.id === levelId);
-  if (!level?.slabOpenings?.some((s) => s.id === id)) return false;
+  const rec = level?.slabOpenings?.find((s) => s.id === id);
+  if (!rec) return false;
+  if (rec.atrium?.windowId) {
+    const lower = project.levels.find((l) => l.id === rec.fromLevelId);
+    const window = lower?.openings.find((o) => o.id === rec.atrium.windowId);
+    if (window?.span?.levelId === levelId && window.span.topGap === 0) delete window.span;
+  }
   removeStored(level, id);
   return true;
+}
+
+// При удалении комнаты (или всего этажа) связанный второй свет уходит
+// вместе с ней, в том числе если сам проём хранится этажом выше.
+export function removeOwnedAtriums(project, levelId, roomIds = null) {
+  for (const level of project.levels || []) {
+    for (const opening of level.slabOpenings || []) {
+      if (!opening.atrium) continue;
+      const { roomId, upperRoomId } = opening.atrium;
+      if ((opening.fromLevelId === levelId && (!roomIds || roomIds.has(roomId))) ||
+          (level.id === levelId && (!roomIds || roomIds.has(upperRoomId)))) {
+        removeSlabOpening(project, level.id, opening.id);
+      }
+    }
+  }
 }
 
 // Ручка проёма: сторона ('n','e','s','w') или угол ('nw','ne','se','sw') —

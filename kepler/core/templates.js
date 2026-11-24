@@ -3,10 +3,10 @@
 // Комнаты стоят рядами и стыкуются с зазором в толщину перегородки — так
 // рождаются общие стены. Двери ставятся посередине общей стены двух
 // комнат (door), наружные двери и окна — на наружные стороны (opening).
-// Мебели нет (кроме лестничного марша) — её добавляют «+» по желанию.
 
 import { DEFAULT_PARTITION } from './catalog.js';
 import { createItem, createLevel, createOpening, createProject, createRoom } from './model.js';
+import { buildGardenVilla } from './villa-template.js';
 
 const GAP = DEFAULT_PARTITION;
 
@@ -49,7 +49,9 @@ export function door(level, a, b, width = 800, at = 0.5) {
 // Наружная дверь или окно на стороне комнаты; at — доля длины стороны.
 function opening(level, kind, room, side, at = 0.5, width = kind === 'door' ? 900 : 1500) {
   const len = side === 0 || side === 2 ? room.w : room.h;
-  level.openings.push(createOpening(kind, room.id, side, Math.round(len * at), width));
+  const result = createOpening(kind, room.id, side, Math.round(len * at), width);
+  level.openings.push(result);
+  return result;
 }
 
 function stairsFlight(level, stairs) {
@@ -130,6 +132,11 @@ function twoStorey() {
 }
 
 export const TEMPLATES = [
+  {
+    id: 'garden-villa', title: 'Вилла у воды', note: 'Два этажа, второй свет, терраса и пруд',
+    preview: new URL('../assets/garden-villa.png', import.meta.url).href,
+    build: () => buildGardenVilla(door, opening),
+  },
   { id: 'compact', title: 'Компактный · 2 спальни', note: '≈ 8,5 × 9,4 м, один этаж', build: compact },
   { id: 'one-storey', title: 'Одноэтажный · 3 спальни', note: '≈ 13,6 × 9,7 м, мастер-спальня', build: oneStorey },
   { id: 'two-storey', title: 'Двухэтажный · 4 спальни', note: '≈ 9,4 × 7,8 м, лестница, кабинет', build: twoStorey },

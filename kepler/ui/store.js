@@ -1,5 +1,6 @@
 // Изменения проекта: транзакции с историей, отмена/повтор, автосохранение.
 
+import { syncFacadeHosts } from '../core/facade.js';
 import { normsReport } from '../core/norms.js';
 import { itemsInRoom } from '../core/furnish.js';
 import {
@@ -82,11 +83,16 @@ function dispatchAnalyticsReady() {
 // завершённой правки, а сетки сравниваем только когда цели реально менялись.
 function pruneVoidsAfterTargetChange() {
   const project = state.project;
+  if (!project?.massVoids?.length) {
+    lastVoidTargetProject = null;
+    lastVoidTargetKey = '';
+    return [];
+  }
   const key = massVoidTargetGeometryKey(project);
   const changed = project !== lastVoidTargetProject || key !== lastVoidTargetKey;
   lastVoidTargetProject = project;
   lastVoidTargetKey = key;
-  if (!changed || !project?.massVoids?.length) return [];
+  if (!changed) return [];
   const removed = pruneOrphanMassVoids(project);
   if (state.selection?.type === 'mass' && removed.includes(state.selection.id)) state.selection = null;
   return removed;
@@ -413,6 +419,8 @@ export function scheduleAnalytics({ delay = 180 } = {}) {
 }
 
 export function afterChange() {
+  const removedFacades = syncFacadeHosts(state.project, state.walls);
+  if (state.selection?.type === 'mass' && removedFacades.includes(state.selection.id)) state.selection = null;
   const removedVoids = pruneVoidsAfterTargetChange();
   // Привязки стен к осям (core/grid-pins.js): грань ушла с оси — привязка снята.
   if (state.project && syncGridPins(state.project).dropped) toast('Стена отвязана от оси');
@@ -452,7 +460,7 @@ function scheduleAutosave() {
   autosaveTimer = setTimeout(flushAutosave, 500);
 }
 
-function trySet(text) {
+function trySet(text, capturedAt) {
   try {
     setScopedItem(AUTOSAVE_KEY, text);
   } catch {
@@ -461,7 +469,7 @@ function trySet(text) {
   try {
     setScopedItem(PID_KEY, state.pid || '');
     setScopedItem(OWNER_KEY, TAB_ID);
-    setScopedItem(AUTOSAVE_AT_KEY, new Date().toISOString());
+    setScopedItem(AUTOSAVE_AT_KEY, capturedAt);
   } catch { /* главное записано */ }
   return true;
 }
@@ -488,12 +496,13 @@ export function flushAutosave({ cloudImmediate = false } = {}) {
   // Облачный слой слушает уже готовый полный JSON и сохраняет отдельный
   // draft с более длинным debounce. Событие не меняет локальную надёжность:
   // при отсутствии аккаунта или сети редактор продолжает работать как раньше.
+  const capturedAt = new Date().toISOString();
   if (globalThis.document && typeof globalThis.CustomEvent === 'function') {
     document.dispatchEvent(new CustomEvent(AUTOSAVE_EVENT, {
-      detail: { text, immediate: cloudImmediate },
+      detail: { text, capturedAt, immediate: cloudImmediate },
     }));
   }
-  if (trySet(text)) return true;
+  if (trySet(text, capturedAt)) return true;
   const blobs = {};
   const lite = JSON.stringify(state.project, (_k, v) => {
     if (!isHeavy(v)) return v;
@@ -502,7 +511,7 @@ export function flushAutosave({ cloudImmediate = false } = {}) {
     blobs[storageId] = v;
     return IDB_REF + storageId;
   });
-  if (lite.length < text.length && trySet(lite)) {
+  if (lite.length < text.length && trySet(lite, capturedAt)) {
     for (const [h, s] of Object.entries(blobs)) {
       if (storedBlobs.has(h)) continue;
       storedBlobs.add(h);

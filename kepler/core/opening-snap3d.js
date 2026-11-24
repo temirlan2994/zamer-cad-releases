@@ -4,14 +4,51 @@
 // одноразовая привязка при создании.
 
 import { levelProject } from './model.js';
-import { openingHeight } from './opening-preset.js';
-import { deriveWalls, openingRect } from './walls.js';
+import { cornerWindowProjections } from './corner-windows.js';
+import { openingHeight, openingSill } from './opening-preset.js';
+import { windowSpanTop } from './spanning-windows.js';
+import { deriveWalls, hostOpeningRoom, openingRect } from './walls.js';
 
 const wallAcross = (wall) => (wall.orient === 'h'
   ? wall.band.y + wall.band.h / 2
   : wall.band.x + wall.band.w / 2);
 
 const intervalsOverlap = (a0, a1, b0, b1, eps = 1) => Math.min(a1, b1) >= Math.max(a0, b0) - eps;
+
+function exteriorPlane(project, opening, wall, walls) {
+  if (wall.hidden || !['h', 'v'].includes(wall.orient)) return null;
+  const outward = opening.host ? hostOpeningRoom(project, opening, walls)?.outward
+    : wall.kind === 'own' && wall.wallType === 'exterior' && project.rooms.some((r) => r.id === opening.roomId && !r.parentId) ? wall.outward : 0;
+  if (!outward) return null;
+  const across = wall.orient === 'h' ? wall.band.y : wall.band.x;
+  const thickness = wall.orient === 'h' ? wall.band.h : wall.band.w;
+  return { orient: wall.orient, outward, across: across + (outward > 0 ? thickness : 0) };
+}
+
+// Собирается один раз в начале перетаскивания. На одной фасадной плоскости
+// могут быть разные комнаты и этажные отметки. Верха сравниваются в мировых Z.
+export function facadeWindowHeads(project, source, sourceWall, sourceWalls, minZ, maxZ) {
+  if (source.kind !== 'window') return [];
+  const plane = exteriorPlane(project, source, sourceWall, sourceWalls);
+  if (!plane) return [];
+  const heads = [];
+  for (const level of project.levels) {
+    if (level.elevation >= maxZ || !level.openings.length) continue;
+    const lp = levelProject(project, level.id);
+    const walls = level.id === project.activeLevel ? sourceWalls : deriveWalls(lp);
+    for (const opening of cornerWindowProjections(lp, level.openings, walls)) {
+      if (opening.kind !== 'window' || opening.id === source.id || opening.orphan) continue;
+      const z = level.elevation + (windowSpanTop(lp, level.id, opening) ?? openingSill(opening, level) + openingHeight(opening, level));
+      if (z < minZ || z > maxZ) continue;
+      const p = openingRect(lp, opening, walls);
+      const other = p && exteriorPlane(lp, opening, p.wall, walls);
+      if (!other || other.orient !== plane.orient || other.outward !== plane.outward || Math.abs(other.across - plane.across) > 1) continue;
+      heads.push({ id: opening.id, levelName: level.name, z, from: p.absCenter - opening.width / 2,
+        to: p.absCenter + opening.width / 2, orient: plane.orient, across: plane.across });
+    }
+  }
+  return heads;
+}
 
 function samePhysicalWall(active, lower) {
   if (!active || !lower || active.orient !== lower.orient) return false;
@@ -32,12 +69,11 @@ export function lowerOpeningTargets(project, activeLevelId, activeWall) {
   for (const level of lower) {
     const lp = levelProject(project, level.id);
     const walls = deriveWalls(lp);
-    for (const opening of lp.openings || []) {
+    for (const opening of cornerWindowProjections(lp, lp.openings || [], walls)) {
       const placed = openingRect(lp, opening, walls);
       if (!placed || !samePhysicalWall(activeWall, placed.wall)) continue;
       const half = opening.width / 2;
-      const rawSill = Number(opening.sill);
-      const sill = opening.kind === 'door' ? 0 : Number.isFinite(rawSill) ? rawSill : 900;
+      const sill = openingSill(opening, level);
       const height = openingHeight(opening, level);
       out.push({
         id: opening.id, kind: opening.kind, center: placed.absCenter,

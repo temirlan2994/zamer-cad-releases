@@ -3,7 +3,7 @@
 // истории, Ctrl+Z возвращает. Оба движка стен: v2 (по умолчанию) и v1.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample } from './helpers.mjs';
+import { with3dLayers, startApp, openSample, settleView } from './helpers.mjs';
 
 const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
 
@@ -34,6 +34,7 @@ for (const engine of ['v2', 'v1']) {
       app = await startApp({ query: `walls=${engine}` });
       await openSample(app.page);
       await app.page.click('#view3dBtn');
+      await with3dLayers(app.page, () => app.page.uncheck('#v3Roof'));
       wall = await visibleWallTop(app.page);
     });
     after(async () => { await app?.close(); });
@@ -84,8 +85,11 @@ for (const engine of ['v2', 'v1']) {
     it('3D после отмены: вращение работает, клик в пустоту снимает выбор', async () => {
       const { page } = app;
       await page.click('#view3dBtn');
-      // Отмена снимает выбор (как на плане) — выбираем снова.
-      await page.mouse.click(wall.x, wall.y);
+      // История заменила проект, при повторном открытии 3D он вписан заново.
+      await settleView(page);
+      const reopenedWall = await visibleWallTop(page);
+      assert.ok(reopenedWall);
+      await page.mouse.click(reopenedWall.x, reopenedWall.y);
       const box = await (await page.$('#canvas3d')).boundingBox();
       const before0 = await d3(page);
       await page.mouse.move(box.x + 30, box.y + box.height - 140);
@@ -94,7 +98,7 @@ for (const engine of ['v2', 'v1']) {
       await page.mouse.up();
       const after0 = await d3(page);
       assert.ok(Math.abs(after0.cam.yaw - before0.cam.yaw) > 0.5, 'вращение');
-      assert.equal(after0.selectedKey, wall.key, 'вращение не меняет выбор');
+      assert.equal(after0.selectedKey, reopenedWall.key, 'вращение не меняет выбор');
       // Пустота: левый верхний угол неба.
       const empty = await page.evaluate(([x, y]) => window.__kepler.pick3d(x, y), [box.x + 8, box.y + 70]);
       assert.equal(empty, null);

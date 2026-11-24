@@ -15,11 +15,13 @@
 import { buildElevation } from '../core/elevation.js';
 import { sectionProfile } from '../core/landscape-section.js';
 import { buildHouseMesh } from '../core/mesh3d.js';
+import { cameraBasis } from '../core/pick3d.js';
 import { groundLevel, levelProject } from '../core/model.js';
 import { buildSection } from '../core/section.js';
 import {
   VIEWPORT_TITLE_H, camKey, cropPaperRect, sheetFrame, sheetSize, viewById, viewportNumbers, viewportScales, viewportTitle,
 } from '../core/views.js';
+import { createSceneGL, drawSceneGL, EDGE_KINDS, sceneBuffers } from './scene-gl.js';
 import { sheetLandscapeStyle } from './landscape-style.js';
 import { sectionSvg, sectionSvgSize } from './landscape-section-svg.js';
 import { drawElevation, elevationColors } from './render-elevation.js';
@@ -114,8 +116,14 @@ function buildGeometry(project, desc, cam = null) {
     return { desc, kind: 'lsection', prof, model: { w: s100.width * 100, h: s100.height * 100 } };
   }
   if (desc.kind === '3d') {
-    const faces = buildHouseMesh(project, { roof: cam?.roof !== false, site: false });
+    const lp = cam?.levelId && project.levels.some((level) => level.id === cam.levelId) ? levelProject(project, cam.levelId) : project;
+    const layers = cam?.projection ? { ...cam, facades: cam.masses } : { roof: cam?.roof !== false, site: false };
+    const faces = buildHouseMesh(lp, { ...layers, roofs: layers.roof !== false });
     if (!faces.length) return null;
+    if (cam?.projection) {
+      const box = axoProjection(cam).frame;
+      return { desc, kind: '3d', cam, faces, box, model: { w: box.x1 - box.x0, h: box.y1 - box.y0 } };
+    }
     const proj = axoFaces(faces, cam);
     if (!proj.list.length) return null;
     return { desc, kind: '3d', ...proj, model: { w: proj.box.x1 - proj.box.x0, h: proj.box.y1 - proj.box.y0 } };
@@ -153,8 +161,8 @@ export function viewportFrame(project, vp) {
 
 // Центр вида так, чтобы вид с подписью не выходил за рамку листа (если
 // помещается), мм.
-export function fitInFrame(project, sheet, viewId, d, x, y) {
-  const s = paperSize(viewGeometry(project, viewId), d);
+export function fitInFrame(project, sheet, viewId, d, x, y, cam = null) {
+  const s = paperSize(viewGeometry(project, viewId, cam), d);
   const { frame } = sheetFrame(sheetSize(sheet));
   const fit = (v, lo, hi, len) => (len > hi - lo ? (lo + hi) / 2 : Math.min(hi - len / 2, Math.max(lo + len / 2, v)));
   return {
@@ -165,8 +173,8 @@ export function fitInFrame(project, sheet, viewId, d, x, y) {
 
 // Свободное место для нового вида (кнопка «На лист…»): первое по строкам
 // поля чертежа, где вид с подписью не перекрывает другие; нет — центр.
-export function freeSpot(project, sheet, viewId, d) {
-  const s = paperSize(viewGeometry(project, viewId), d);
+export function freeSpot(project, sheet, viewId, d, cam = null) {
+  const s = paperSize(viewGeometry(project, viewId, cam), d);
   const { area } = sheetFrame(sheetSize(sheet));
   const busy = sheet.viewports.map((vp) => {
     const b = viewportBox(project, vp);
@@ -184,10 +192,10 @@ export function freeSpot(project, sheet, viewId, d) {
 
 // Масштаб по умолчанию: самый крупный из масштабов вида, при котором вид с
 // подписью помещается в поле чертежа листа.
-export function defaultViewportScale(project, viewId, sheet) {
+export function defaultViewportScale(project, viewId, sheet, cam = null) {
   const desc = viewById(project, viewId);
   const scales = viewportScales(desc?.kind);
-  const geo = viewGeometry(project, viewId);
+  const geo = viewGeometry(project, viewId, cam);
   const { area } = sheetFrame(sheetSize(sheet));
   const aw = area.x1 - area.x0;
   const ah = area.y1 - area.y0 - VIEWPORT_TITLE_H;
@@ -225,6 +233,28 @@ export function axoProjection(cam = null) {
       facing: (n) => (-n.x * s + n.y * c) * ce + n.z * se,
     };
   }
+  if (cam.projection && cam.aspect && cam.target) {
+    const c = cameraBasis(cam, cam.aspect, 1);
+    const distance = c.perspective ? cam.eyeDist : cam.dist;
+    const w = cam.aspect * distance / c.focal, h = distance / c.focal;
+    const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+    const coords = (p) => {
+      const d = { x: p.x - c.eye.x, y: -p.y - c.eye.y, z: p.z - c.eye.z };
+      return { u: dot(d, c.r), v: -dot(d, c.u), depth: -dot(d, c.f) };
+    };
+    const project = ({ u, v, depth }) => {
+      const k = c.perspective ? distance / -depth : 1;
+      return { u: u * k, v: v * k, depth };
+    };
+    return {
+      P: (p) => project(coords(p)),
+      polygon: (points) => clipNear(points.map(coords), c.perspective ? 50 : 10).map(project),
+      frame: { x0: -w / 2, y0: -h / 2, x1: w / 2, y1: h / 2 },
+      facing: (n, p) => c.perspective && p
+        ? n.x * (c.eye.x - p.x) + n.y * (-c.eye.y - p.y) + n.z * (c.eye.z - p.z)
+        : -n.x * c.f.x + n.y * c.f.y - n.z * c.f.z,
+    };
+  }
   const cp = Math.cos(cam.pitch);
   const eye = { x: cp * Math.cos(cam.yaw), y: cp * Math.sin(cam.yaw), z: Math.sin(cam.pitch) }; // к глазу
   const rl = Math.hypot(eye.y, eye.x) || 1;
@@ -241,18 +271,37 @@ export function axoProjection(cam = null) {
   };
 }
 
+// Многоугольник может пересекать плоскость глаза (особенно земля у камеры).
+// Обрезаем его до перспективного деления, как при экранном рендеринге.
+function clipNear(points, near) {
+  const out = [];
+  let prev = points.at(-1);
+  for (const p of points) {
+    if ((p.depth <= -near) !== (prev.depth <= -near)) {
+      const t = (-near - prev.depth) / (p.depth - prev.depth);
+      out.push({ u: prev.u + t * (p.u - prev.u), v: prev.v + t * (p.v - prev.v), depth: -near });
+    }
+    if (p.depth <= -near) out.push(p);
+    prev = p;
+  }
+  return out;
+}
+
 // Грани → многоугольники аксонометрии (мм модели, y вниз), по глубине.
 function axoFaces(faces, cam = null) {
   const light = { x: -0.35, y: 0.55, z: 0.75 };
   const ll = Math.hypot(light.x, light.y, light.z);
-  const { P, facing } = axoProjection(cam);
+  const { P, polygon, frame, facing } = axoProjection(cam);
   const list = [];
   const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
   for (const f of faces) {
-    if (!f.pts?.length || f.kind === 'ground' || f.kind === 'boundary') continue;
+    if (!f.pts?.length || (!frame && (f.kind === 'ground' || f.kind === 'boundary'))) continue;
     const n = f.normal || { x: 0, y: 0, z: 1 };
-    if (facing(n) <= 0 && !f.twoSided) continue;
-    const q = f.pts.map(P);
+    if (facing(n, f.pts[0]) <= 0 && !f.twoSided) continue;
+    const q = polygon ? polygon(f.pts) : f.pts.map(P);
+    if (q.length < 3) continue;
+    if (frame && (q.every((p) => p.u < frame.x0) || q.every((p) => p.u > frame.x1) ||
+        q.every((p) => p.v < frame.y0) || q.every((p) => p.v > frame.y1))) continue;
     for (const p of q) {
       box.x0 = Math.min(box.x0, p.u); box.x1 = Math.max(box.x1, p.u);
       box.y0 = Math.min(box.y0, p.v); box.y1 = Math.max(box.y1, p.v);
@@ -261,12 +310,12 @@ function axoFaces(faces, cam = null) {
     const k = 0.62 + 0.38 * lam;
     const [r, g, b] = hexRgb(f.color);
     list.push({
-      pts: q, depth: q.reduce((a, p) => a + p.depth, 0) / q.length, edges: !f.noEdges && f.kind !== 'glass',
+      pts: q, ground: f.kind === 'ground', depth: q.reduce((a, p) => a + p.depth, 0) / q.length, edges: !f.noEdges && (frame ? EDGE_KINDS.has(f.kind) : f.kind !== 'glass'),
       fill: `rgba(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)},${f.alpha ?? 1})`,
     });
   }
-  list.sort((a, b) => a.depth - b.depth);
-  return { list, box };
+  list.sort((a, b) => Number(b.ground) - Number(a.ground) || a.depth - b.depth);
+  return { list, box: frame || box };
 }
 
 // ------------------------------------------------------------ растр вида
@@ -285,6 +334,32 @@ function makeCanvas(wMm, hMm, f = 1) {
   canvas.width = Math.max(1, Math.round(wMm * ppm));
   canvas.height = Math.max(1, Math.round(hMm * ppm));
   return { canvas, ppm };
+}
+
+// Один холст WebGL для всех масштабов и листов. Результат сразу переносится
+// в 2D-растр листа. Видеобуферы модели освобождаются после каждого кадра.
+let printGL;
+
+function drawCameraFrame(ctx, geo, width, height, pad) {
+  if (printGL === undefined) printGL = createSceneGL(document.createElement('canvas'));
+  if (!printGL || printGL.gl.isContextLost()) return false;
+  const gl = printGL.gl;
+  const limit = Math.min(4096, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+  const factor = Math.min(1, limit / width, limit / height);
+  gl.canvas.width = Math.max(1, Math.round(width * factor));
+  gl.canvas.height = Math.max(1, Math.round(height * factor));
+  try {
+    printGL.buffers = sceneBuffers(gl, geo.faces.filter((face) => face.kind !== 'massUnder' && face.kind !== 'massLine'));
+    drawSceneGL(printGL, geo.cam, width, height);
+    if (gl.isContextLost()) return false;
+    ctx.drawImage(gl.canvas, pad, pad, width, height);
+    return true;
+  } finally {
+    for (const b of Object.values(printGL.buffers || {})) gl.deleteBuffer(b.buf);
+    printGL.buffers = null;
+    gl.canvas.width = 1;
+    gl.canvas.height = 1;
+  }
 }
 
 function rasterize(project, geo, d, f = 1) {
@@ -313,12 +388,20 @@ function rasterize(project, geo, d, f = 1) {
   if (geo.kind === '3d') {
     const { canvas, ppm } = makeCanvas(size.w, size.h, f);
     const ctx = canvas.getContext('2d');
+    const pad = 2 * ppm;
+    if (geo.cam && drawCameraFrame(ctx, geo, Math.max(1, canvas.width - 2 * pad), Math.max(1, canvas.height - 2 * pad), pad)) {
+      return { canvas, ...size };
+    }
+    const list = geo.list || axoFaces(geo.faces, geo.cam).list;
     const m = ppm / d; // px на мм модели
     ctx.setTransform(m, 0, 0, m, (2 - geo.box.x0 / d) * ppm, (2 - geo.box.y0 / d) * ppm);
+    ctx.beginPath();
+    ctx.rect(geo.box.x0, geo.box.y0, geo.box.x1 - geo.box.x0, geo.box.y1 - geo.box.y0);
+    ctx.clip();
     ctx.lineJoin = 'round';
     ctx.lineWidth = (0.12 * d); // 0,12 мм на бумаге
     ctx.strokeStyle = 'rgba(30,36,44,0.75)';
-    for (const f of geo.list) {
+    for (const f of list) {
       ctx.beginPath();
       f.pts.forEach((p, i) => (i ? ctx.lineTo(p.u, p.v) : ctx.moveTo(p.u, p.v)));
       ctx.closePath();
@@ -446,7 +529,7 @@ function caption(ctx, project, vp, box, no, sheetNo) {
   ctx.fillText(title, x, y);
   const tw = ctx.measureText(title).width;
   ctx.font = `400 2.6px ${FONT}`;
-  const scaleText = `М 1:${vp.scale}`;
+  const scaleText = vp.cam?.projection === 'perspective' ? 'Перспектива' : `М 1:${vp.scale}`;
   ctx.fillText(scaleText, x + tw + 3, y + 0.2);
   const sw = ctx.measureText(scaleText).width;
   ctx.beginPath(); ctx.moveTo(cx + R, cy + 1.1); ctx.lineTo(x + tw + 3 + sw, cy + 1.1); ctx.stroke();
@@ -489,8 +572,8 @@ export function drawViewports(ctx, project, sheet, { editor = false, f = 1 } = {
 
 // Масштабы в штампе: «Масштаб 1:100» или «Масштабы 1:100, 1:200».
 export function sheetScaleText(sheet) {
-  const dens = [...new Set(sheet.viewports.map((vp) => vp.scale))].sort((a, b) => a - b);
-  if (!dens.length) return 'Масштаб —';
+  const dens = [...new Set(sheet.viewports.filter((vp) => vp.cam?.projection !== 'perspective').map((vp) => vp.scale))].sort((a, b) => a - b);
+  if (!dens.length) return sheet.viewports.length ? 'Перспектива' : 'Масштаб —';
   return `${dens.length > 1 ? 'Масштабы' : 'Масштаб'} ${dens.map((d) => `1:${d}`).join(', ')}`;
 }
 
@@ -510,7 +593,7 @@ export function renderUserSheet(project, sheet, sheetCount) {
     drawViewports(ctx, project, sheet);
     drawSheetDecor(ctx, project, sheet, sheetCount);
   }, sheetSize(sheet));
-  const dens = [...new Set(sheet.viewports.map((vp) => vp.scale))];
+  const dens = [...new Set(sheet.viewports.filter((vp) => vp.cam?.projection !== 'perspective').map((vp) => vp.scale))];
   out.denominator = dens.length ? dens.join(', 1:') : null;
   return out;
 }

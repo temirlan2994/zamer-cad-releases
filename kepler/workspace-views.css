@@ -98,14 +98,23 @@
 .v3-projection { display: flex; padding: 2px; border-radius: 9px; background: var(--surface-2); }
 .view3d-bar .v3-projection button { height: 28px; padding: 0 9px; border: 0; background: transparent; color: var(--muted); }
 .view3d-bar .v3-projection button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgba(24, 32, 43, 0.16); }
-.v3-layers, .v3-views { position: relative; }
-.v3-layers summary, .v3-views summary { display: flex; align-items: center; gap: 6px; min-height: 30px; cursor: pointer; padding: 0 7px; border-radius: 7px; font-weight: 600; }
-.v3-layers summary::after, .v3-views summary::after { content: '⌄'; color: var(--muted); }
-.v3-layers summary:hover, .v3-layers[open] summary, .v3-views summary:hover, .v3-views[open] summary { background: var(--surface-2); }
-.v3-layers-panel, .v3-views-panel {
+.v3-layers, .v3-views, .v3-facade { position: relative; }
+.v3-layers summary, .v3-views summary, .v3-facade summary { display: flex; align-items: center; gap: 6px; min-height: 30px; cursor: pointer; padding: 0 7px; border-radius: 7px; font-weight: 600; }
+.v3-facade summary::after, .v3-layers summary::after, .v3-views summary::after { content: '⌄'; color: var(--muted); }
+.v3-facade summary:hover, .v3-facade[open] summary, .v3-facade.placing summary, .v3-layers summary:hover, .v3-layers[open] summary, .v3-views summary:hover, .v3-views[open] summary { background: var(--surface-2); }
+.v3-layers-panel, .v3-views-panel, .v3-facade-panel {
   position: absolute; z-index: 1; top: calc(100% + 10px); left: 50%; transform: translateX(-50%);
   display: grid; min-width: 205px; max-height: 52vh; overflow-y: auto; gap: 4px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 9px 12px;
+}
+.v3-interior-controls, .v3-interior-controls label { display: flex; align-items: center; gap: 6px; }
+.v3-interior-controls label { font-weight: 600; }
+.v3-interior-controls select { width: auto; max-width: 10em; padding: 0 5px; height: 32px; }
+.view3d.editing-interior .view3d-bar > :is(.v3-projection, .v3-facade, .v3-views, .v3-layers) { display: none; }
+.view3d-bar #v3EnterInterior { grid-column: 1 / -1; }
+@media (max-width: 640px) {
+  .view3d-bar :is(#v3EnterInterior, #v3ExitInterior, #v3InteriorLevel) { min-height: 42px; }
+  .v3-interior-controls select { max-width: 24vw; }
 }
 .v3-views-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 220px; }
 .view3d-bar .v3-views-panel button { height: 36px; border-radius: 8px; }
@@ -117,13 +126,16 @@ body.v3-open .level-dock { display: none; }
   #workspaceViews { padding: 2px 6px; gap: 4px; }
   .wv-tabs button, .wv-catalog { min-height: 40px; padding: 0 8px; }
   .wv-tabs button { gap: 4px; }
-  body.v3-open .view3d-bar { top: 8px; left: 6px; right: 6px; gap: 6px; flex-wrap: wrap; }
-  .view3d-bar .v3-projection button, .v3-layers summary, .v3-views summary { min-height: 40px; }
+  body.v3-open .view3d-bar { top: calc(var(--card-h, 0px) + 8px); left: 6px; right: 6px; gap: 6px; flex-wrap: wrap; }
+  .view3d-bar .v3-projection button, .v3-layers summary, .v3-views summary, .v3-facade summary { min-height: 40px; }
   body.v3-open .view3d-bar :is(#v3Fit, #v3Close) { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; }
   #v3Fit svg { display: block; }
   #v3Fit span { display: none; }
   .v3-layers-panel { left: auto; right: -50px; transform: none; }
-  .v3-views-panel { left: 0; transform: none; }
+  .view3d-bar .v3-views { position: static; }
+  .view3d-bar .v3-views-panel { left: 50%; transform: translateX(-50%); }
+  .v3-views-panel .v3-projection { grid-column: 1 / -1; }
+  .v3-views-panel .v3-projection button { flex: 1; }
 }
 @media (max-width: 400px) {
   .view3d-bar .v3-projection button { padding-inline: 8px; font-size: 11.5px; }
@@ -134,3 +146,26 @@ body[data-tool-context="drawing"] :is(#toolOptions, #levelDock, #fitFab, .librar
 body[data-tool-context="model"] :is(.zoom-controls, .statusbar, #mobileSnapRow) { display: none; }
 body[data-tool-context="drawing"] .workspace { --tools-w: 0px; --opts-h: 0px; }
 body[data-tool-context="drawing"] .ls-section { left: 0; }
+
+.v3-facade-panel { padding: 6px; gap: 2px; min-width: 208px; }
+.editing-facade :is(.v3-projection, .v3-views, [data-facade-front]) { display: none !important; }
+.view3d-bar #v3ExitFacade { white-space: nowrap; }
+.view3d-bar [data-facade-front] { font-weight: 650; }
+.view3d-bar .v3-facade-panel button { display: flex; width: 100%; justify-content: flex-start; align-items: center; gap: 9px; height: 36px; padding: 0 9px; background: transparent; border: 0; text-align: left; }
+.view3d-bar .v3-facade-panel button:hover, .view3d-bar .v3-facade-panel button:focus-visible { background: var(--surface-2); }
+.v3-facade-panel .swatch { display: block; flex: 0 0 21px; height: 17px; border-radius: 3px; background: var(--finish); border: 1px solid var(--border); }
+.v3-facade-panel [data-facade-kind="slats"] .swatch { background: repeating-linear-gradient(90deg, var(--finish) 0 3px, #554337 3px 4px); }
+.v3-facade-panel [data-facade-kind="stone"] .swatch { background: repeating-linear-gradient(0deg, var(--finish) 0 6px, #7a776d 6px 7px); }
+.v3-facade-panel [data-facade-kind="canopy"] .swatch { height: 9px; border-bottom: 3px solid #8c694e; }
+.v3-facade-panel [data-facade-kind="band"] .swatch { height: 7px; }
+.v3-facade-panel [data-facade-kind="light"] .swatch { height: 4px; }
+@media (max-width: 640px) {
+  .view3d-bar .v3-facade { position: static; }
+  .view3d-bar .v3-facade-panel { left: 50%; max-width: calc(100% - 12px); top: calc(100% + 4px); }
+  .view3d-bar .v3-facade-panel button { height: 42px; }
+}
+
+.v3-facade-group { border-top: 1px solid var(--border); margin-top: 4px; padding: 7px 9px 2px; font-size: 12px; color: var(--muted); }
+.v3-facade-panel { max-height: min(60dvh, 490px); overflow-y: auto; }
+.v3-composition-fit { display: block; pointer-events: auto; margin: 5px auto 0; padding: 6px 12px; min-height: 34px; white-space: nowrap; }
+body.v3-open:has(.v3-facade.placing) #toolDone { display: none; }

@@ -71,6 +71,7 @@ test('сборка кладёт страницу, стили, модули и м
       assert.ok(readFileSync(join(out, PAGE), 'utf8').includes(style[0]));
     }
     assert.ok(files.includes('workers/layout-worker.js'));
+    assert.ok(files.includes('assets/garden-villa.png'));
     for (const module of ['geometry.js', 'blocks.js', 'dxf-writer.js']) {
       const rel = `core/zamer/${module}`;
       assert.ok(files.includes(rel), rel);
