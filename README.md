@@ -9,6 +9,8 @@ The `main` branch contains both applications:
   `kepler/`. Run `node kepler/scripts/build-pages.mjs` from the repository root
   to stage the standalone site in `dist/kepler-pages/`.
 - `shared/cad/` contains code used by both apps. Build and test both when it changes.
+- `site/` contains the Zamer CAD download and pricing page (static, published on
+  Netlify). See [site/README.md](site/README.md).
   Each application packages the modules needed to run offline.
 
 Kepler publishes to GitHub Pages from `main`. Zamer APKs continue to be published

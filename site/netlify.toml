@@ -1,0 +1,5 @@
+# Сайт Zamer CAD. В Netlify укажите Base directory = site.
+# Сборки нет: публикуются статические файлы из public/.
+[build]
+  publish = "public"
+  command = ""

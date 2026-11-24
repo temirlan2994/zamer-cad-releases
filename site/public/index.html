@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Zamer CAD — замер без бумаги, чертёж сразу в телефоне</title>
+  <meta name="description" content="Для архитекторов, дизайнеров и мебельщиков: чертите замер прямо на объекте — линии, размеры, площади. PDF клиенту, DWG проектировщику. Android, 14 дней бесплатно.">
+  <meta name="theme-color" content="#f4f7fb">
+  <meta name="color-scheme" content="light">
+  <link rel="canonical" href="https://zamer-cad.netlify.app/">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Zamer CAD">
+  <meta property="og:locale" content="ru_RU">
+  <meta property="og:url" content="https://zamer-cad.netlify.app/">
+  <meta property="og:title" content="Zamer CAD — замер без бумаги и перерисовки">
+  <meta property="og:description" content="Линии, размеры и площади прямо на объекте. PDF клиенту, DWG проектировщику. 14 дней бесплатно.">
+  <meta property="og:image" content="https://zamer-cad.netlify.app/img/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="img/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="img/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap">
+  <link rel="preload" as="image" href="img/screen-plan.webp" fetchpriority="high">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Zamer CAD",
+    "operatingSystem": "Android 10+",
+    "applicationCategory": "DesignApplication",
+    "description": "Замер и чертёж помещений на телефоне: линии, размеры, площади, экспорт PDF, DWG и DXF, Leica DISTO по Bluetooth.",
+    "url": "https://zamer-cad.netlify.app/",
+    "downloadUrl": "https://zamer-cad.netlify.app/download",
+    "image": "https://zamer-cad.netlify.app/img/og.png",
+    "offers": [
+      { "@type": "Offer", "name": "Pro — месяц", "price": "7", "priceCurrency": "USD" },
+      { "@type": "Offer", "name": "Pro — год", "price": "59", "priceCurrency": "USD" }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <svg class="sprite" width="0" height="0" aria-hidden="true">
+    <symbol id="logo" viewBox="0 0 64 64">
+      <clipPath id="logo-clip"><rect width="64" height="64" rx="15"/></clipPath>
+      <g clip-path="url(#logo-clip)">
+        <rect width="64" height="64" fill="#1f75ff"/>
+        <path d="M10.75 0v64M21.5 0v64M32.25 0v64M43 0v64M53.75 0v64M0 10.75h64M0 21.5h64M0 32.25h64M0 43h64M0 53.75h64" stroke="#5a9dfb" stroke-width="1"/>
+      </g>
+      <path fill="#fff" d="M19.25 17.25H24V42h21.5v4.75H19.25z"/>
+      <path fill="#fff" d="M24 24.6h3.3v1.5H24zM24 32h3.3v1.5H24zM26 38.7h1.5V42H26zM32.2 38.7h1.5V42h-1.5zM39 38.7h1.5V42H39z"/>
+    </symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5 9.5 17 19 7.5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+    <symbol id="i-pdf" viewBox="0 0 24 24"><path d="M6.5 3h7.5l4.5 4.5V21h-12z"/><path d="M14 3v4.5h4.5M9.5 12.5h5M9.5 16.5h3.5"/></symbol>
+    <symbol id="i-laser" viewBox="0 0 24 24"><rect x="2.5" y="6.5" width="9" height="13" rx="2"/><path d="M5.5 10h3M5.5 13.5h3"/><path d="M11.5 9.5h6" stroke-dasharray="1.6 2.2"/><circle cx="20.5" cy="9.5" r="1.6"/></symbol>
+    <symbol id="i-cad" viewBox="0 0 24 24"><path d="M12 2.5v6M12 15.5v6M2.5 12h6M15.5 12h6"/><rect x="8.5" y="8.5" width="7" height="7"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><rect x="4.5" y="4" width="15" height="17" rx="2"/><path d="M9 4V2.8h6V4M8 10h8M8 14h8M8 18h5"/></symbol>
+    <symbol id="i-offline" viewBox="0 0 24 24"><path d="M7.5 18.5h9a4 4 0 0 0 .7-7.94A6 6 0 0 0 6 10.2a4.25 4.25 0 0 0 1.5 8.3z"/><path d="M3.5 3.5l17 17"/></symbol>
+    <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 6.5h6l2 2h10V19H3z"/><path d="M12 11v5.5m-2.5-2.5 2.5 2.5 2.5-2.5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.6c0 4.6-3.2 7.9-7.5 9.4-4.3-1.5-7.5-4.8-7.5-9.4V6z"/><path d="m8.6 12 2.4 2.4 4.4-4.6"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2"/><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/></symbol>
+    <symbol id="i-android" viewBox="0 0 24 24"><path d="M5.5 10.5a6.5 6.5 0 0 1 13 0V17a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 17z"/><path d="M5.5 11.5h13M8 4l1.3 2.2M16 4l-1.3 2.2"/><circle cx="9.5" cy="8.7" r=".6" fill="currentColor"/><circle cx="14.5" cy="8.7" r=".6" fill="currentColor"/></symbol>
+  </svg>
+
+  <a class="skip" href="#main">Перейти к содержанию</a>
+
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="#top" aria-label="Zamer CAD — на главную">
+        <svg class="brand-mark" aria-hidden="true"><use href="#logo"/></svg>
+        <span>Zamer CAD</span>
+      </a>
+      <nav class="nav" aria-label="Разделы">
+        <a href="#how">Как работает</a>
+        <a href="#features">Возможности</a>
+        <a href="#pricing">Цены</a>
+        <a href="#faq">Вопросы</a>
+      </nav>
+      <a class="btn btn-primary btn-sm" href="https://github.com/temirlan2994/zamer-cad-releases/releases/download/v0.1.95/Zamer-CAD-0.1.95-release.apk" data-download data-apk-href>
+        <svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Скачать
+      </a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="dot" aria-hidden="true"></span>Для архитекторов, дизайнеров и мебельщиков</p>
+          <h1>Замер без бумаги и&nbsp;перерисовки</h1>
+          <p class="lead">Zamer CAD — чертёж замера прямо в&nbsp;телефоне. Линии, размеры и&nbsp;площади&nbsp;— на&nbsp;объекте, а&nbsp;PDF&nbsp;клиенту и&nbsp;DWG&nbsp;проектировщику&nbsp;— ещё до&nbsp;вашего отъезда.</p>
+          <div class="cta-row" id="hero-cta">
+            <a class="btn btn-primary btn-lg" href="https://github.com/temirlan2994/zamer-cad-releases/releases/download/v0.1.95/Zamer-CAD-0.1.95-release.apk" data-download data-apk-href>
+              <svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Скачать бесплатно
+            </a>
+            <a class="btn btn-ghost btn-lg" href="#pricing">Цены</a>
+          </div>
+          <p class="apk-meta"><svg class="ic" aria-hidden="true"><use href="#i-android"/></svg><span>APK · Android 10+ · v<span data-apk-version>0.1.95</span> · <span data-apk-size>6&nbsp;МБ</span></span></p>
+          <ul class="trust">
+            <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>14 дней — все функции бесплатно</li>
+            <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Без регистрации и&nbsp;карты</li>
+            <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Работает без интернета</li>
+          </ul>
+        </div>
+
+        <div class="hero-visual" aria-label="Экран Zamer CAD с обмерным планом квартиры и готовый PDF-лист">
+          <img class="sheet" src="img/pdf-sheet.webp" width="1000" height="1414" alt="PDF-лист A4 из Zamer CAD: план квартиры с размерами и площадями комнат" decoding="async">
+          <div class="device">
+            <img src="img/screen-plan.webp" width="720" height="1558" alt="Обмерный план квартиры в Zamer CAD: контуры комнат линиями, проёмы, двери и размерные цепочки" fetchpriority="high">
+          </div>
+          <div class="chip chip-area" aria-hidden="true">
+            <span class="chip-label">Площадь</span>
+            <strong>28,21&nbsp;м²</strong>
+            <span class="chip-sub">Гостиная-кухня</span>
+          </div>
+          <div class="chip chip-laser" aria-hidden="true">
+            <span class="laser-dot"></span>
+            <span class="chip-label">Leica DISTO</span>
+            <strong><span data-count="4800">4&nbsp;800</span>&nbsp;мм</strong>
+          </div>
+          <div class="chip chip-files" aria-hidden="true">
+            <svg class="ic" aria-hidden="true"><use href="#i-pdf"/></svg>
+            <span><strong>PDF · DWG · DXF</strong><span class="chip-sub">готово к отправке</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="wrap audience">
+        <p>Для всех, кто ходит на&nbsp;замер:</p>
+        <ul>
+          <li>Архитекторы</li>
+          <li>Дизайнеры интерьера</li>
+          <li>Мебельщики</li>
+          <li>Замерщики</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section" id="why" aria-labelledby="why-title">
+      <div class="wrap">
+        <p class="kicker">01 · Было — стало</p>
+        <h2 id="why-title">Хватит перерисовывать замеры по&nbsp;вечерам</h2>
+        <div class="ba reveal">
+          <div class="ba-head" aria-hidden="true"><span>Было</span><span></span><span>С Zamer CAD</span></div>
+          <ul>
+            <li>
+              <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Эскиз на&nbsp;бумаге, рулетка и&nbsp;сотня фото «на&nbsp;всякий случай»</span></span>
+              <svg class="ic ba-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
+              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>Один чертёж в&nbsp;телефоне — с&nbsp;размерами, фото и&nbsp;заметками</span></span>
+            </li>
+            <li>
+              <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Вечер за&nbsp;перерисовкой эскиза в&nbsp;AutoCAD</span></span>
+              <svg class="ic ba-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
+              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>Чертёж готов до&nbsp;выхода с&nbsp;объекта</span></span>
+            </li>
+            <li>
+              <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Ошибки при переписывании цифр</span></span>
+              <svg class="ic ba-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
+              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>Дальномер сам вписывает размер в&nbsp;чертёж</span></span>
+            </li>
+            <li>
+              <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Повторный выезд за&nbsp;забытым размером</span></span>
+              <svg class="ic ba-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
+              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>Ведомость по&nbsp;каждой нише, проёму и&nbsp;розетке</span></span>
+            </li>
+            <li>
+              <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Клиент ждёт чертёж до&nbsp;завтра</span></span>
+              <svg class="ic ba-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
+              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>PDF клиенту в&nbsp;мессенджер — сразу после замера</span></span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt" id="how" aria-labelledby="how-title">
+      <div class="wrap">
+        <p class="kicker">02 · Как это работает</p>
+        <h2 id="how-title">Три шага от&nbsp;замера до&nbsp;PDF</h2>
+        <ol class="steps">
+          <li class="step reveal">
+            <div class="device device-sm">
+              <img src="img/screen-plan.webp" width="720" height="1558" alt="Контуры комнат, начерченные линиями в Zamer CAD, с размерными цепочками" loading="lazy" decoding="async">
+            </div>
+            <span class="step-num" aria-hidden="true">1</span>
+            <h3>Начертите план</h3>
+            <p>Линиями по&nbsp;точкам или прямо с&nbsp;дальномера. Привязки и&nbsp;углы&nbsp;— как в&nbsp;AutoCAD.</p>
+          </li>
+          <li class="step reveal">
+            <div class="device device-sm">
+              <img src="img/screen-areas.webp" width="720" height="1558" alt="Площади комнат на плане: гостиная-кухня 28,21 м², спальня 16,15 м², прихожая 6,38 м², санузел 4,97 м²" loading="lazy" decoding="async">
+            </div>
+            <span class="step-num" aria-hidden="true">2</span>
+            <h3>Площади — сами</h3>
+            <p>Размеры и&nbsp;м² каждой комнаты сразу на&nbsp;плане. Без калькулятора.</p>
+          </li>
+          <li class="step reveal">
+            <div class="device device-sm">
+              <img src="img/screen-export.webp" width="720" height="1558" alt="Экспорт в Zamer CAD: PDF, ZAMER, DXF, DWG, Revit DXF и комплект ZIP" loading="lazy" decoding="async">
+            </div>
+            <span class="step-num" aria-hidden="true">3</span>
+            <h3>Отправьте файлы</h3>
+            <p>PDF&nbsp;— клиенту, DWG и&nbsp;DXF&nbsp;— проектировщику. В&nbsp;одно касание.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <p class="kicker">03 · Возможности</p>
+        <h2 id="features-title">Всё для замера — в&nbsp;одном приложении</h2>
+        <div class="bento">
+          <article class="card card-pdf reveal">
+            <div class="card-text">
+              <svg class="ic ic-lg" aria-hidden="true"><use href="#i-pdf"/></svg>
+              <h3>PDF, который не&nbsp;стыдно отправить клиенту</h3>
+              <p>Лист A4 в&nbsp;масштабе от&nbsp;1:20 до&nbsp;1:200 с&nbsp;размерами, площадями, ведомостью замеров и&nbsp;фото.</p>
+              <ul class="tags"><li>PDF</li><li>DWG 2018+</li><li>DXF</li><li>Revit DXF</li><li>ZIP</li></ul>
+            </div>
+            <figure class="card-figure">
+              <img src="img/pdf-sheet.webp" width="1000" height="1414" alt="Готовый PDF-лист из Zamer CAD: обмерный план квартиры с размерами и площадями" loading="lazy" decoding="async">
+            </figure>
+          </article>
+          <article class="card card-laser reveal">
+            <svg class="ic ic-lg" aria-hidden="true"><use href="#i-laser"/></svg>
+            <h3>Leica DISTO по&nbsp;Bluetooth</h3>
+            <p>Нажали кнопку на&nbsp;дальномере&nbsp;— размер уже в&nbsp;чертеже. Ни&nbsp;одной переписанной цифры.</p>
+          </article>
+          <article class="card reveal">
+            <svg class="ic ic-lg" aria-hidden="true"><use href="#i-cad"/></svg>
+            <h3>Чертёж как в&nbsp;AutoCAD</h3>
+            <p>11 привязок, полярное отслеживание, обрезка, удлинение, зеркало, массив и&nbsp;слои.</p>
+          </article>
+          <article class="card reveal">
+            <svg class="ic ic-lg" aria-hidden="true"><use href="#i-list"/></svg>
+            <h3>Ведомость замеров с&nbsp;фото</h3>
+            <p>Проёмы, ниши, розетки, трубы и&nbsp;отметки высот. Готовые шаблоны для мебельщика и&nbsp;архитектора.</p>
+          </article>
+          <article class="card reveal">
+            <svg class="ic ic-lg" aria-hidden="true"><use href="#i-offline"/></svg>
+            <h3>Работает без интернета</h3>
+            <p>Подвал, новостройка без связи&nbsp;— неважно. Чертежи хранятся у&nbsp;вас на&nbsp;телефоне.</p>
+          </article>
+          <article class="card reveal">
+            <svg class="ic ic-lg" aria-hidden="true"><use href="#i-open"/></svg>
+            <h3>Открывает DWG и&nbsp;DXF</h3>
+            <p>Прислали план от&nbsp;застройщика? Откройте его и&nbsp;допишите замеры поверх.</p>
+          </article>
+          <article class="card card-wide reveal">
+            <svg class="ic ic-lg" aria-hidden="true"><use href="#i-shield"/></svg>
+            <div>
+              <h3>Ничего не&nbsp;потеряется</h3>
+              <p>История версий проекта, корзина и&nbsp;резервная копия&nbsp;.zamer. Обновления приходят прямо в&nbsp;приложение.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt" id="pricing" aria-labelledby="pricing-title">
+      <div class="wrap">
+        <p class="kicker">04 · Цены</p>
+        <h2 id="pricing-title">Повторный выезд стоит дороже месяца подписки</h2>
+        <p class="section-lead">Начните бесплатно. Платите, когда Zamer CAD уже экономит вам время.</p>
+
+        <div class="trial reveal">
+          <div class="trial-copy">
+            <strong>14 дней бесплатно</strong>
+            <span>Все функции Pro. Без карты и&nbsp;регистрации.</span>
+          </div>
+          <a class="btn btn-dark" href="https://github.com/temirlan2994/zamer-cad-releases/releases/download/v0.1.95/Zamer-CAD-0.1.95-release.apk" data-download data-apk-href>
+            <svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Скачать бесплатно
+          </a>
+        </div>
+
+        <div class="plans">
+          <article class="plan reveal">
+            <h3>Pro · Месяц</h3>
+            <p class="price"><span class="amount">$7</span><span class="per">в&nbsp;месяц</span></p>
+            <p class="plan-note">Для разовых проектов и&nbsp;сезонной работы.</p>
+            <a class="btn btn-ghost btn-block" href="#pricing" data-checkout="month">Купить на&nbsp;месяц</a>
+          </article>
+          <article class="plan plan-best reveal">
+            <span class="badge">Выгоднее на&nbsp;30%</span>
+            <h3>Pro · Год</h3>
+            <p class="price"><span class="amount">$59</span><span class="per">в&nbsp;год</span></p>
+            <p class="plan-note">≈&nbsp;$4,92 в&nbsp;месяц — экономия $25.</p>
+            <a class="btn btn-primary btn-block" href="#pricing" data-checkout="year">Купить на&nbsp;год</a>
+          </article>
+        </div>
+
+        <ul class="included reveal" aria-label="Что входит в Pro">
+          <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Безлимитные проекты</li>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Экспорт PDF, DWG, DXF, Revit&nbsp;DXF</li>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Leica DISTO по&nbsp;Bluetooth</li>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Ведомость замеров с&nbsp;фото</li>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Все обновления</li>
+        </ul>
+        <p class="fineprint">Цены в&nbsp;долларах США. Оплата банковской картой.</p>
+      </div>
+    </section>
+
+    <section class="section" id="faq" aria-labelledby="faq-title">
+      <div class="wrap faq-grid">
+        <div>
+          <p class="kicker">05 · Вопросы</p>
+          <h2 id="faq-title">Коротко о&nbsp;главном</h2>
+        </div>
+        <div class="faq">
+          <details>
+            <summary>Как установить APK?</summary>
+            <p>Нажмите «Скачать» и&nbsp;откройте файл из&nbsp;уведомления или папки «Загрузки». Если Android спросит&nbsp;— разрешите установку из&nbsp;этого источника и&nbsp;нажмите «Установить». Меньше минуты.</p>
+          </details>
+          <details>
+            <summary>Это безопасно?</summary>
+            <p>Приложение подписано ключом разработчика. Обновления приходят только из&nbsp;официального источника и&nbsp;проверяются по&nbsp;контрольной сумме SHA-256 перед установкой.</p>
+          </details>
+          <details>
+            <summary>Что будет через 14 дней?</summary>
+            <p>Оформите Pro&nbsp;— $7 в&nbsp;месяц или $59 в&nbsp;год. Ваши чертежи в&nbsp;любом случае остаются на&nbsp;вашем телефоне.</p>
+          </details>
+          <details>
+            <summary>Подойдёт ли мой телефон?</summary>
+            <p>Нужен Android 10 или новее. Приложение весит около 6&nbsp;МБ.</p>
+          </details>
+          <details>
+            <summary>Какие дальномеры поддерживаются?</summary>
+            <p>Leica DISTO D2 и&nbsp;совместимые модели DISTO с&nbsp;Bluetooth. Без дальномера тоже удобно&nbsp;— размеры вводятся с&nbsp;клавиатуры.</p>
+          </details>
+          <details>
+            <summary>Нужен ли интернет?</summary>
+            <p>Нет. Чертите и&nbsp;экспортируйте офлайн. Интернет нужен только для обновлений.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="final" id="final-cta" aria-labelledby="final-title">
+      <div class="wrap final-grid">
+        <div class="final-copy">
+          <h2 id="final-title">Следующий замер — уже в&nbsp;телефоне</h2>
+          <p>Скачайте Zamer CAD и&nbsp;проверьте на&nbsp;ближайшем объекте. 14 дней&nbsp;— бесплатно.</p>
+          <a class="btn btn-primary btn-lg" href="https://github.com/temirlan2994/zamer-cad-releases/releases/download/v0.1.95/Zamer-CAD-0.1.95-release.apk" data-download data-apk-href>
+            <svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Скачать бесплатно
+          </a>
+          <p class="apk-meta apk-meta-dark"><svg class="ic" aria-hidden="true"><use href="#i-android"/></svg><span>APK · Android 10+ · v<span data-apk-version>0.1.95</span> · <span data-apk-size>6&nbsp;МБ</span></span></p>
+        </div>
+        <div class="qr-card">
+          <img src="img/qr-download.svg" width="180" height="180" alt="QR-код для скачивания Zamer CAD на телефон" loading="lazy">
+          <p><strong>Наведите камеру телефона</strong><span>и скачайте сразу на Android</span></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <a class="brand" href="#top">
+        <svg class="brand-mark" aria-hidden="true"><use href="#logo"/></svg>
+        <span>Zamer CAD</span>
+      </a>
+      <nav class="footer-links" aria-label="Ссылки">
+        <a href="#pricing">Цены</a>
+        <a href="#faq">Вопросы</a>
+        <a href="https://github.com/temirlan2994/zamer-cad-releases/releases" rel="noopener">Все версии APK</a>
+      </nav>
+      <p class="copy">© 2026 Zamer CAD</p>
+    </div>
+  </footer>
+
+  <div class="dock" id="dock" aria-hidden="true">
+    <a class="btn btn-primary btn-block" href="https://github.com/temirlan2994/zamer-cad-releases/releases/download/v0.1.95/Zamer-CAD-0.1.95-release.apk" data-download data-apk-href tabindex="-1">
+      <svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Скачать бесплатно · 14 дней
+    </a>
+  </div>
+
+  <dialog class="modal" id="modal-install" aria-labelledby="install-title">
+    <form method="dialog" class="modal-close-form"><button class="modal-x" aria-label="Закрыть"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button></form>
+    <h2 id="install-title">Скачивание началось</h2>
+    <ol class="install-steps">
+      <li><span>Откройте файл <b>Zamer-CAD</b> из&nbsp;уведомления или папки «Загрузки».</span></li>
+      <li><span>Если Android спросит&nbsp;— разрешите <b>«Установку из&nbsp;этого источника»</b>.</span></li>
+      <li><span>Нажмите <b>«Установить»</b>, затем <b>«Открыть»</b>.</span></li>
+    </ol>
+    <p class="modal-note">Дальше обновления придут прямо в&nbsp;приложение.</p>
+    <form method="dialog"><button class="btn btn-primary btn-block">Понятно</button></form>
+    <p class="modal-alt">Не&nbsp;началось? <a href="https://github.com/temirlan2994/zamer-cad-releases/releases/download/v0.1.95/Zamer-CAD-0.1.95-release.apk" data-apk-href>Скачать ещё раз</a></p>
+  </dialog>
+
+  <dialog class="modal" id="modal-desktop" aria-labelledby="desktop-title">
+    <form method="dialog" class="modal-close-form"><button class="modal-x" aria-label="Закрыть"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button></form>
+    <h2 id="desktop-title">Установите на&nbsp;телефон</h2>
+    <p>Zamer CAD работает на&nbsp;Android 10 и&nbsp;новее. Наведите камеру телефона на&nbsp;код&nbsp;— скачивание начнётся сразу.</p>
+    <img class="modal-qr" src="img/qr-download.svg" width="200" height="200" alt="QR-код для скачивания Zamer CAD на телефон">
+    <div class="share-link">
+      <code>zamer-cad.netlify.app/download</code>
+      <button class="btn btn-ghost btn-sm" type="button" data-copy="https://zamer-cad.netlify.app/download"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Копировать</span></button>
+    </div>
+    <p class="modal-alt"><a href="https://github.com/temirlan2994/zamer-cad-releases/releases/download/v0.1.95/Zamer-CAD-0.1.95-release.apk" data-apk-href>Скачать APK на&nbsp;этот компьютер</a></p>
+  </dialog>
+
+  <dialog class="modal" id="modal-ios" aria-labelledby="ios-title">
+    <form method="dialog" class="modal-close-form"><button class="modal-x" aria-label="Закрыть"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button></form>
+    <h2 id="ios-title">Zamer CAD — для Android</h2>
+    <p>Приложение работает на&nbsp;телефонах с&nbsp;Android 10 и&nbsp;новее. Отправьте ссылку на&nbsp;Android-телефон&nbsp;— скачивание начнётся сразу.</p>
+    <div class="share-link">
+      <code>zamer-cad.netlify.app/download</code>
+      <button class="btn btn-ghost btn-sm" type="button" data-copy="https://zamer-cad.netlify.app/download"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Копировать</span></button>
+    </div>
+  </dialog>
+
+  <dialog class="modal" id="modal-soon" aria-labelledby="soon-title">
+    <form method="dialog" class="modal-close-form"><button class="modal-x" aria-label="Закрыть"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button></form>
+    <h2 id="soon-title">Оплата картой — совсем скоро</h2>
+    <p>Мы подключаем онлайн-оплату. А&nbsp;пока все функции Pro доступны бесплатно 14 дней&nbsp;— начните прямо сейчас.</p>
+    <a class="btn btn-primary btn-block" href="https://github.com/temirlan2994/zamer-cad-releases/releases/download/v0.1.95/Zamer-CAD-0.1.95-release.apk" data-download data-apk-href>
+      <svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Скачать бесплатно
+    </a>
+  </dialog>
+</body>
+</html>
