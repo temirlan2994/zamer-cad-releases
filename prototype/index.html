@@ -373,6 +373,7 @@
           <p id="circleTangentError" role="status" hidden></p>
         </section>
         <div class="save-indicator" id="saveIndicator" role="status" aria-atomic="true" data-state="idle">Сохранение...</div>
+        <div class="spen-indicator" id="spenIndicator" role="status" hidden><span aria-hidden="true">✎</span> S Pen</div>
         <div class="draft-metric-labels metric-fields" id="draftMetricLabels" role="group" aria-label="Размеры на чертеже" hidden>
           <div class="draft-metric-pair">
             <div class="metric-field" id="draftLengthEditor" hidden>
@@ -549,6 +550,29 @@
               <span><strong>Масштаб двойным тапом</strong><small>Вниз — увеличить, вверх — уменьшить · центр экрана сохраняется</small></span>
               <input class="layer-switch" id="projectTapZoom" type="checkbox" checked />
             </label>
+            <fieldset class="spen-settings-group">
+              <legend>Samsung S Pen</legend>
+              <label class="project-gesture-setting" for="projectSpenEnabled">
+                <span><strong>Автоматический режим S Pen</strong><small>Включается после извлечения или первого наведения пера</small></span>
+                <input class="layer-switch" id="projectSpenEnabled" type="checkbox" checked />
+              </label>
+              <label class="project-gesture-setting" for="projectSpenHover">
+                <span><strong>Курсор при наведении</strong><small>Крестик, построение и привязки следуют за кончиком пера</small></span>
+                <input class="layer-switch" id="projectSpenHover" type="checkbox" checked />
+              </label>
+              <label class="project-gesture-setting" for="projectSpenButton">
+                <span><strong>Боковая кнопка</strong><small>Нажатие — Esc / Выбор, удержание с касанием — перемещение чертежа</small></span>
+                <input class="layer-switch" id="projectSpenButton" type="checkbox" checked />
+              </label>
+              <label class="project-gesture-setting" for="projectSpenPalm">
+                <span><strong>Защита от ладони</strong><small>Игнорировать случайное касание холста пальцем рядом с пером</small></span>
+                <input class="layer-switch" id="projectSpenPalm" type="checkbox" checked />
+              </label>
+              <label class="project-gesture-setting" for="projectSpenCompact">
+                <span><strong>Компактный интерфейс</strong><small>Освободить больше места для чертежа, пока S Pen активен</small></span>
+                <input class="layer-switch" id="projectSpenCompact" type="checkbox" checked />
+              </label>
+            </fieldset>
             <div class="survey-field annotation-scale-setting">
               <span>Масштаб</span>
               <input id="annotationScaleSelect" type="hidden" value="1" />
