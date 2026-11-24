@@ -273,6 +273,53 @@ describe('маршрут проекта на телефоне', () => {
 
   after(async () => { await app?.close(); });
 
+  it('нижняя иконка программы повторяет предупреждение «На плане» и зеленеет после исправления', async () => {
+    const { page } = app;
+    const icon = '#projectRouteSteps [data-route-view="program"]';
+    const plan = '#projectRouteHover [data-route-hover-mission="plan"]';
+    await page.evaluate(async () => {
+      const { createOpening, createRoom } = await import('./core/model.js');
+      const { HOME_PROGRAM_OPTION_KEYS, ensureLayoutBrief } = await import('./core/layout-brief.js');
+      const { mutate } = await import('./ui/store.js');
+      mutate(() => {
+        const project = window.__kepler.state.project;
+        const rooms = ['entrance', 'kitchen-living', 'bedroom']
+          .map((type, i) => createRoom(type, i * 3100, 0, 3000, 3000));
+        project.rooms = rooms;
+        project.openings = [
+          createOpening('door', rooms[0].id, 3, 1500, 1000),
+          ...rooms.slice(0, -1).map((room) => createOpening('door', room.id, 1, 1500, 900)),
+        ];
+        ensureLayoutBrief(project).homeProgram = {
+          confirmed: true, socialMode: 'combined', bedroomCount: 1, bathroomCount: 1,
+          bedrooms: [{ id: 'bedroom-1', kind: 'adult', ensuite: false, wardrobe: false }],
+          options: Object.fromEntries(HOME_PROGRAM_OPTION_KEYS.map((key) => [key, false])),
+        };
+      });
+    });
+    await page.tap(icon);
+    await page.waitForSelector(`${plan}[data-status="attention"]`);
+    assert.equal(await page.locator(`${icon} .route-status`).textContent(), '!');
+    assert.equal(await page.locator('#projectRouteHover [data-status="checked"]').count(), 4);
+    assert.ok(await page.isHidden('#projectRoutePanel'));
+
+    await page.evaluate(async () => {
+      const { createOpening, createRoom } = await import('./core/model.js');
+      const { mutate } = await import('./ui/store.js');
+      mutate(() => {
+        const project = window.__kepler.state.project;
+        const bedroom = project.rooms.at(-1);
+        project.rooms.push(createRoom('bathroom', 9300, 0, 3000, 3000));
+        project.openings.push(createOpening('door', bedroom.id, 1, 1500, 900));
+      });
+    });
+    await page.waitForSelector(`${plan}[data-status="checked"]`);
+    assert.equal(await page.locator(`${icon} .route-status`).textContent(), '✓');
+    assert.equal(await page.locator('#projectRouteHover [data-status="checked"]').count(), 5);
+    assert.ok(await page.isHidden('#projectRoutePanel'));
+    await page.tap(icon);
+  });
+
   it('инженерные пункты и нижний значок обновляются после правки без открытия окна', async () => {
     const { page } = app;
     const engineer = '#projectRouteSteps [data-route-view="engineering"]';

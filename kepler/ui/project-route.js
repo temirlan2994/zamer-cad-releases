@@ -27,7 +27,7 @@ import {
   handleHomeClimateClick, handleHomeClimateInput, homeClimateHtml,
 } from './home-climate.js';
 import {
-  handleHomeReviewClick, homeReviewHtml, homeReviewReport, normalizedHomeReviewStatus,
+  handleHomeReviewClick, homeReviewHtml, homeReviewReport,
 } from './home-review.js';
 import { handleHomeEnvelopeClick, homeEnvelopeHtml } from './home-envelope.js';
 import { handleHomeDeliverablesClick, homeDeliverablesHtml } from './home-deliverables.js';
@@ -52,7 +52,6 @@ import {
 import { activateSiteTool } from './toolstrip.js';
 import { cancelTool } from './tools.js';
 import { requestDraw, scaleLabel } from './view.js';
-import { deriveEnvelopeStatus } from '../core/envelope-status.js';
 import { analyzeWorkflowStatus, workflowStageStatus } from '../core/workflow-status.js';
 
 const STAGES = Object.freeze([
@@ -971,7 +970,7 @@ function aggregateStatus(tasks) {
 
 function routeModel() {
   const project = state.project;
-  if (!project) return { stages: [], route: null, passport: null };
+  if (!project) return { stages: [], passport: null };
   const site = project.site || {};
   const route = safeCall(() => sitePlanningRoute(project), null);
   // sitePlanningRoute уже возвращает тот же паспорт. Повторный тяжёлый
@@ -1003,7 +1002,7 @@ function routeModel() {
       status: aggregateStatus(tasks),
     };
   });
-  return { stages, route, passport };
+  return { stages, passport };
 }
 
 function statusLabel(status) { return STATUS_LABEL[status] || STATUS_LABEL.unknown; }
@@ -1077,9 +1076,9 @@ function routeHoverRows(viewId) {
     })));
   }
   if (viewId === 'envelope') {
-    const status = workflowBadges?.missions.envelope || deriveEnvelopeStatus(state.project);
+    const status = workflowBadges?.missions.envelope;
     const labels = { datum: '±0.000', foundation: 'Основание', roof: 'Крыша', drainage: 'Водоотвод', entrance: 'Вход' };
-    return Object.entries(labels).map(([id, label]) => ({ id: `envelope-${id}`, label, status: status[id] || 'unknown' }));
+    return Object.entries(labels).map(([id, label]) => ({ id: `envelope-${id}`, label, status: status?.[id] || 'pending' }));
   }
   const statuses = workflowMissionStatuses(viewId);
   return asArray(HOME_VIEW_ITEMS[viewId]).map((item, index) => {
@@ -1499,9 +1498,10 @@ function workflowMissionStatuses(view) {
 
 function homeWorkflowRows() {
   return HOME_NAV_DEFS.map((view) => {
-    const status = view.id === 'site' ? normalizedHomeReviewStatus(normalizeStatus(latestModel?.route?.status))
-      : workflowStageStatus(workflowBadges?.stages[view.id], workflowMissionStatuses(view.id));
-    return { ...view, status };
+    const statuses = routeHoverRows(view.id).map(({ status }) => (
+      view.id === 'site' ? MISSION_ROUTE_STATUS[statusMark(status)] : status
+    ));
+    return { ...view, status: workflowStageStatus(statuses) };
   });
 }
 

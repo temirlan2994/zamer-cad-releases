@@ -84,12 +84,11 @@ function reviewMissions(review) {
   };
 }
 
-export function workflowStageStatus(status, missions = {}) {
-  const values = Object.values(missions);
-  if (status === 'blocked' || values.includes('blocked')) return 'blocked';
-  if (status === 'attention' || values.includes('attention')) return 'attention';
-  if (status === 'checked' || (values.length && values.every((value) => value === 'checked'))) return 'checked';
-  return status || (values.length ? 'unknown' : 'pending');
+export function workflowStageStatus(statuses) {
+  if (statuses.includes('blocked')) return 'blocked';
+  if (statuses.includes('attention')) return 'attention';
+  if (!statuses.length || statuses.includes('pending')) return 'pending';
+  return statuses.every((status) => status === 'checked') ? 'checked' : 'unknown';
 }
 
 // Возвращаем только статусы. Тяжёлые сетки и подробный отчёт остаются внутри
@@ -102,10 +101,7 @@ export function analyzeWorkflowStatus(project, options = {}) {
   const circulation = analyzeHomeCirculation(project, { flows, profileWidthMm: options.profileWidthMm });
   const deliverables = analyzeHomeDeliverables(project);
   const review = analyzeHomeReview(project, { program, flows, engineering, climate, circulation, deliverables });
-  const stages = Object.fromEntries(review.stages.map(({ id, status }) => [id, status]));
-  stages.review = review.status;
   return {
-    stages,
     missions: {
       program: programMissions(project, program),
       flows: flowsMissionStatuses(flows),
