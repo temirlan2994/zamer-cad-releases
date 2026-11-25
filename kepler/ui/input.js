@@ -1,5 +1,5 @@
 import { cornerWindowHandles } from '../core/corner-windows.js';
-import { glazedOpeningMinWidth, isGlazedAssembly } from '../core/glazed-openings.js';
+import { glazedOpeningMinWidth, isGlazedAssembly, resizeGlazedOpening } from '../core/glazed-openings.js';
 import { atriumClick, atriumHover } from './atrium-ui.js';
 // Ввод мышью на канвасе: выбор, перетаскивания, рамка, колесо, drag-and-drop.
 
@@ -1727,10 +1727,11 @@ export function bindCanvasInput() {
       let width = Math.abs(fixed - movingEdge);
       width = Math.max(glazedOpeningMinWidth(opening), Math.round(width / 50) * 50);
       const center = drag.end === 'start' ? fixed - width / 2 : fixed + width / 2;
-      const probe = { ...opening, width };
+      const resized = isGlazedAssembly(opening) ? resizeGlazedOpening(opening, { width }) : { width };
+      const probe = { ...opening, ...resized };
       const clamped = fitOpeningOffset(state.project, probe, state.walls, (center - base) * frame.dir);
       if (clamped !== null) {
-        opening.width = width;
+        Object.assign(opening, resized);
         setOpeningPos(opening, clamped);
       }
       requestDraw();

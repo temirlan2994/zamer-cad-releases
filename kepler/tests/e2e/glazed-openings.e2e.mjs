@@ -94,11 +94,12 @@ describe('окна с дверью из каталога', () => {
     await page.check('#openWindowLeft');
     await page.fill('#openWindowSill', '1100'); await page.press('#openWindowSill', 'Tab');
     const current = await data(page);
-    assert.equal(current.stored[0].width, 2200);
+    assert.equal(current.stored[0].width, 2100);
     assert.equal(current.parts[0].width, 800);
-    assert.equal(current.parts[0].offset, 3700);
+    assert.equal(current.parts[0].offset, 3650);
     assert.equal(current.parts[1].sill, 1100);
-    assert.equal(current.parts[1].height, 1200);
+    assert.equal(current.parts[1].height, 1400);
+    assert.equal(current.parts[0].height, 2300);
     if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/balcony-block.png` });
     await page.click('[data-selection-action="flip-swing"]');
     assert.equal((await data(page)).stored[0].swingIn, !current.stored[0].swingIn);
@@ -156,6 +157,78 @@ describe('окна с дверью из каталога', () => {
     await page.uncheck('#openWindowRight');
     await page.keyboard.press('Control+z');
     assert.equal((await data(page)).parts.length, 3);
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('изменение размеров окон и общей ширины сохраняет заданные размеры двери', async () => {
+    const { page } = app;
+    await place(page, 'balcony-sliding-3000', async () => {
+      await page.fill('#presetW', '3400'); await page.press('#presetW', 'Tab');
+      await page.fill('#presetWindowHeightRight', '1000'); await page.press('#presetWindowHeightRight', 'Tab');
+    });
+    let current = await data(page);
+    assert.deepEqual(current.parts.map((p) => [p.width, p.height]), [[1800, 2300], [1500, 1000]]);
+    const at = await client(page, 4000, -125);
+    await page.mouse.click(at.x, at.y);
+    await page.waitForSelector('#openWindowHeightRight');
+    await page.fill('#openWindowWidthRight', '900'); await page.press('#openWindowWidthRight', 'Tab');
+    await page.fill('#openWindowHeightRight', '1800'); await page.press('#openWindowHeightRight', 'Tab');
+    current = await data(page);
+    assert.deepEqual(current.parts.map((p) => [p.width, p.height]), [[1800, 2300], [900, 1800]]);
+    assert.equal(await page.inputValue('#openDoorHeight'), '2300');
+    assert.equal(await page.isDisabled('#openH'), true, 'общая высота вычисляется по частям');
+    await page.fill('#openW', '3200'); await page.press('#openW', 'Tab');
+    current = await data(page);
+    assert.deepEqual(current.parts.map((p) => [p.width, p.height]), [[1800, 2300], [1300, 1800]]);
+    await page.keyboard.press('Control+z');
+    current = await data(page);
+    assert.deepEqual(current.parts.map((p) => [p.width, p.height]), [[1800, 2300], [900, 1800]]);
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('боковая и верхняя ручки в 3D растягивают остекление, сохраняя дверь', async () => {
+    const { page } = app;
+    await place(page, 'balcony-sliding-3000');
+    await page.evaluate(async () => {
+      const { selectObject } = await import('./ui/tools.js');
+      selectObject({ type: 'opening', id: window.__kepler.state.project.openings[0].id });
+    });
+    await page.click('#view3dBtn');
+    const canvas = await page.locator('#canvas3d').boundingBox();
+    const yaw = await page.evaluate(() => window.__kepler.debug3d().cam.yaw);
+    const dx = ((yaw - Math.PI / 2 + 2 * Math.PI) % (2 * Math.PI)) / .008;
+    await page.mouse.move(canvas.x + 50, canvas.y + 110); await page.mouse.down();
+    await page.mouse.move(canvas.x + 50 + dx, canvas.y + 110, { steps: 10 }); await page.mouse.up();
+    const points = async (part) => page.evaluate(async (part) => {
+      const { openingRect } = await import('./core/walls.js');
+      const { state } = window.__kepler;
+      const opening = state.project.openings[0];
+      const placed = openingRect(state.project, opening, state.walls);
+      const y = placed.wall.band.y + placed.wall.band.h / 2;
+      const x = placed.absCenter + (part === 'to' ? opening.width / 2 : 0);
+      const z = part === 'to' ? opening.height / 2 : opening.height;
+      return {
+        from: window.__kepler.screen3d({ x, y, z }),
+        to: window.__kepler.screen3d({ x: x + (part === 'to' ? 500 : 0), y, z: z + (part === 'top' ? 400 : 0) }),
+      };
+    }, part);
+    for (const part of ['to', 'top']) {
+      const p = await points(part);
+      const handle = await page.evaluate(async (p) => {
+        const { openingHandleAt } = await import('./ui/opening3d.js');
+        return openingHandleAt({ clientX: p.x, clientY: p.y, pointerType: 'mouse' })?.id;
+      }, p.from);
+      assert.equal(handle, part);
+      await page.keyboard.down('Shift');
+      await page.mouse.move(p.from.x, p.from.y); await page.mouse.down();
+      await page.mouse.move(p.to.x, p.to.y, { steps: 6 }); await page.mouse.up();
+      await page.keyboard.up('Shift');
+      const current = await data(page);
+      assert.deepEqual([current.parts[0].width, current.parts[0].height], [1800, 2300]);
+      assert.ok(current.parts[1][part === 'to' ? 'width' : 'height'] > (part === 'to' ? 1300 : 1600));
+    }
+    await page.keyboard.press('Control+z');
+    assert.equal((await data(page)).parts[0].height, 2300);
     assert.deepEqual(app.errors, []);
   });
 });

@@ -9,6 +9,7 @@ import { clearWindowSpan, levelWindowOpenings, nextWindowSpan, setWindowSpan, wi
 import { fitOpeningOffset, resizeCornerWing } from '../core/opening-spacing.js';
 import { facadeWindowHeads, lowerOpeningTargets, snapOpeningToLower } from '../core/opening-snap3d.js';
 import { openingHeight, openingSill } from '../core/opening-preset.js';
+import { glazedAssemblySpec, glazedOpeningMinWidth, isGlazedAssembly, resizeGlazedOpening } from '../core/glazed-openings.js';
 import { deriveWalls, openingPos, openingPosAt, openingRect, setOpeningPos } from '../core/walls.js';
 import { toast } from './dom.js';
 import { computeOpeningParams, openingSnapOpts } from './plan-actions.js';
@@ -137,7 +138,7 @@ function selectedInfo() {
   if (state.selection?.type !== 'opening') return null;
   const opening = state.project.openings.find((o) => o.id === state.selection.id);
   if (!opening) return null;
-  const geometry = [opening.width, openingPos(opening), opening.sill, opening.height, opening.heightMode, opening.span?.levelId, opening.span?.topGap, opening.corner?.end, opening.corner?.joint, opening.corner?.returnWidth].join('/');
+  const geometry = [opening.width, openingPos(opening), opening.sill, opening.height, opening.heightMode, opening.span?.levelId, opening.span?.topGap, opening.corner?.end, opening.corner?.joint, opening.corner?.returnWidth, JSON.stringify(opening.assembly)].join('/');
   if (selectedCache?.opening === opening && selectedCache.walls === state.walls && selectedCache.geometry === geometry) return selectedCache.info;
   const placed = openingRect(state.project, opening, state.walls);
   const level = state.project.levels.find((l) => l.id === state.project.activeLevel);
@@ -166,10 +167,10 @@ function selectedInfo() {
       wallRange.z1 = Math.min(range.z1, wallRange.z1);
     }
   }
-  if (opening.kind === 'window') handles.push({ id: 'bottom', point: point(along, z0) });
+  if (opening.kind === 'window' && !isGlazedAssembly(opening)) handles.push({ id: 'bottom', point: point(along, z0) });
   const targets = guidesFor(level.id, wall)
     .filter((t) => t.kind === opening.kind);
-  const span = nextWindowSpan(state.project, level.id, opening);
+  const span = !isGlazedAssembly(opening) && nextWindowSpan(state.project, level.id, opening);
   const info = { opening, placed, wall, level, handles, targets, z0, z1, wallBottom: wallRange.z0, wallTop: wallRange.z1, span };
   selectedCache = { opening, walls: state.walls, geometry, info };
   return info;
@@ -341,9 +342,10 @@ export function moveOpeningResize(event) {
       resize.guideId = snapped.target.id;
       label = `${lineTitle[snapped.key]} ${noun} · ${snapped.target.levelName}`;
     }
-    const width = Math.max(300, Math.abs(fixed - moving));
+    const width = Math.max(glazedOpeningMinWidth(opening), Math.abs(fixed - moving));
     const center = resize.part === 'from' ? fixed - width / 2 : fixed + width / 2;
-    opening.width = Math.round(width);
+    if (isGlazedAssembly(opening)) Object.assign(opening, resizeGlazedOpening(opening, { width: Math.round(width) }));
+    else opening.width = Math.round(width);
     const pos = openingPosAt(state.project, opening, state.walls, center);
     const fitted = pos === null ? null : fitOpeningOffset(state.project, opening, state.walls, pos, { others: levelWindowOpenings(state.project, state.walls) });
     if (fitted === null) { restoreOpeningStart(); env.redraw?.(true); return true; }
@@ -355,7 +357,9 @@ export function moveOpeningResize(event) {
       return true;
     }
   } else if (resize.part === 'top') {
-    const minimum = Math.max(resize.sill, resize.wallBottom) + 300;
+    const assembly = glazedAssemblySpec(opening);
+    const minimum = Math.max(Math.max(resize.sill, resize.wallBottom) + 300,
+      assembly && (assembly.leftWindow || assembly.rightWindow) ? Math.max(assembly.doorHeight, assembly.windowSill + 300) : 0);
     const maximum = resize.span?.maxTop ?? resize.wallTop;
     let top = dragElevation(event, minimum, maximum);
     const vertical = targets.map((t) => ({ ...t, top: t.sill + t.height }));
@@ -373,7 +377,9 @@ export function moveOpeningResize(event) {
       label ||= state.project.levels.find((l) => l.id === resize.span.targetLevelId)?.name || '';
     } else {
       clearWindowSpan(opening);
-      opening.height = Math.round(Math.min(top, resize.wallTop) - resize.sill);
+      const height = Math.round(Math.min(top, resize.wallTop) - resize.sill);
+      if (assembly) Object.assign(opening, resizeGlazedOpening(opening, { height }));
+      else opening.height = height;
       if (opening.kind === 'window') {
         opening.sill = resize.sill;
         opening.heightMode = 'custom';

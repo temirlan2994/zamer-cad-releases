@@ -43,12 +43,77 @@ export function glazedAssemblySpec(opening) {
   const leftWidth = leftWindow ? rightWindow
     ? Math.max(300, Math.min(available - 300, available * leftWeight / (leftWeight + rightWeight))) : available : 0;
   const rightWidth = rightWindow ? available - leftWidth : 0;
+  const windowSill = balcony ? Math.max(0, Number.isFinite(Number(assembly.windowSill)) ? Number(assembly.windowSill) : 900) : 0;
+  const doorHeight = Math.max(300, Number(assembly.doorHeight) || height);
+  const leftHeight = Math.max(300, Number(assembly.leftHeight) || height - windowSill);
+  const rightHeight = Math.max(300, Number(assembly.rightHeight) || height - windowSill);
   return {
-    width, height, balcony, gap, doorWidth, leftWindow, rightWindow, leftWidth, rightWidth,
+    width, height, balcony, gap, doorWidth, doorHeight, leftWindow, rightWindow, leftWidth, rightWidth, leftHeight, rightHeight,
     doorType: sliding ? 'sliding' : double ? 'double' : 'single',
     doorSide: leftWindow && !rightWindow ? 'end' : 'start',
-    windowSill: balcony ? Math.min(height - 300, Math.max(0, Number.isFinite(Number(opening.assembly?.windowSill)) ? Number(opening.assembly.windowSill) : 900)) : 0,
+    windowSill,
   };
+}
+
+function assemblyConfig(opening, spec) {
+  return { ...opening.assembly, doorWidth: spec.doorWidth, doorHeight: spec.doorHeight,
+    leftWindow: spec.leftWindow, rightWindow: spec.rightWindow,
+    leftWidth: spec.leftWidth || Number(opening.assembly?.leftWidth) || spec.rightWidth || Number(opening.assembly?.rightWidth) || 600,
+    rightWidth: spec.rightWidth || Number(opening.assembly?.rightWidth) || spec.leftWidth || Number(opening.assembly?.leftWidth) || 600,
+    leftHeight: spec.leftHeight, rightHeight: spec.rightHeight, windowSill: spec.windowSill,
+  };
+}
+
+function assemblyUpdate(assembly, spec) {
+  const gap = spec.balcony ? 100 : 0;
+  return {
+    width: assembly.doorWidth + (assembly.leftWindow ? assembly.leftWidth + gap : 0)
+      + (assembly.rightWindow ? assembly.rightWidth + gap : 0),
+    height: Math.max(assembly.doorHeight, assembly.leftWindow ? assembly.windowSill + assembly.leftHeight : 0,
+      assembly.rightWindow ? assembly.windowSill + assembly.rightHeight : 0),
+    sill: 0, heightMode: 'custom', assembly,
+  };
+}
+
+// Размеры каждой части независимы. Общий габарит следует за их суммой.
+export function setGlazedPartSize(opening, part, dimension, value) {
+  const spec = glazedAssemblySpec(opening);
+  const number = Number(value);
+  if (!spec || !Number.isFinite(number)) return null;
+  const assembly = assemblyConfig(opening, spec);
+  if (part === 'windows' && dimension === 'sill') assembly.windowSill = Math.max(0, number);
+  else if (['door', 'left', 'right'].includes(part) && ['width', 'height'].includes(dimension)) {
+    assembly[`${part}${dimension[0].toUpperCase()}${dimension.slice(1)}`] = Math.max(300, number);
+  } else return null;
+  return assemblyUpdate(assembly, spec);
+}
+
+// Рамка всего блока растягивает окна. Размеры двери фиксируются до расчёта,
+// в том числе у старых блоков без явно сохранённого doorWidth/doorHeight.
+export function resizeGlazedOpening(opening, size) {
+  const spec = glazedAssemblySpec(opening);
+  if (!spec) return null;
+  const assembly = assemblyConfig(opening, spec);
+  const count = Number(spec.leftWindow) + Number(spec.rightWindow);
+  if (Number.isFinite(Number(size.width))) {
+    const width = Math.max(glazedOpeningMinWidth(opening), Number(size.width));
+    if (!count) assembly.doorWidth = width;
+    else {
+      const free = width - spec.doorWidth - count * spec.gap;
+      assembly.leftWidth = spec.leftWindow ? spec.rightWindow
+        ? Math.max(300, Math.min(free - 300, free * spec.leftWidth / (spec.leftWidth + spec.rightWidth))) : free : assembly.leftWidth;
+      if (spec.rightWindow) assembly.rightWidth = free - (spec.leftWindow ? assembly.leftWidth : 0);
+    }
+  }
+  if (Number.isFinite(Number(size.height))) {
+    const height = Math.max(300, Number(size.height));
+    if (!count) assembly.doorHeight = height;
+    else {
+      if (spec.leftWindow) assembly.leftHeight = Math.max(300, height - spec.windowSill);
+      if (spec.rightWindow) assembly.rightHeight = Math.max(300, height - spec.windowSill);
+    }
+  }
+  return assemblyUpdate(assembly, spec);
 }
 
 // Включение секции меняет общий размер блока, сохраняя дверь и второе окно.
@@ -56,36 +121,29 @@ export function glazedAssemblySpec(opening) {
 export function setGlazedWindow(opening, side, enabled, requestedWidth = null) {
   const spec = glazedAssemblySpec(opening);
   if (!spec || !['left', 'right'].includes(side)) return null;
-  const assembly = { ...opening.assembly, doorWidth: spec.doorWidth,
-    leftWindow: spec.leftWindow, rightWindow: spec.rightWindow,
-    leftWidth: spec.leftWidth || Number(opening.assembly?.leftWidth) || spec.rightWidth || Number(opening.assembly?.rightWidth) || 600,
-    rightWidth: spec.rightWidth || Number(opening.assembly?.rightWidth) || spec.leftWidth || Number(opening.assembly?.leftWidth) || 600,
-  };
+  const assembly = assemblyConfig(opening, spec);
   assembly[`${side}Window`] = Boolean(enabled);
   if (requestedWidth != null && Number.isFinite(Number(requestedWidth))) assembly[`${side}Width`] = Math.max(300, Number(requestedWidth));
-  const gap = spec.balcony ? 100 : 0;
-  const width = spec.doorWidth + (assembly.leftWindow ? assembly.leftWidth + gap : 0)
-    + (assembly.rightWindow ? assembly.rightWidth + gap : 0);
-  return { width, assembly };
+  return assemblyUpdate(assembly, spec);
 }
 
 export function glazedOpeningParts(opening) {
   const spec = glazedAssemblySpec(opening);
   if (!spec) return [opening];
-  const { width, height, doorWidth, gap, leftWidth, rightWidth, windowSill } = spec;
-  const part = (assemblyPart, kind, type, w, center, sill) => {
+  const { width, doorWidth, doorHeight, gap, leftWidth, rightWidth, leftHeight, rightHeight, windowSill } = spec;
+  const part = (assemblyPart, kind, type, w, h, center, sill) => {
     const out = { ...opening, assemblyType: opening.type, assemblyPart, kind, type,
-      width: w, height: height - sill, sill, heightMode: 'custom', glazed: true };
+      width: w, height: h, sill, heightMode: 'custom', glazed: true };
     delete out.span;
     if (opening.host) out.host = { ...opening.host, t: opening.host.t + center };
     else out.offset = opening.offset + center;
     return out;
   };
   const doorCenter = -width / 2 + leftWidth + (leftWidth ? gap : 0) + doorWidth / 2;
-  const door = part('door', 'door', spec.doorType, doorWidth, doorCenter, 0);
+  const door = part('door', 'door', spec.doorType, doorWidth, doorHeight, doorCenter, 0);
   const windows = [];
-  if (leftWidth) windows.push(part('window-left', 'window', 'fixed', leftWidth, (leftWidth - width) / 2, windowSill));
-  if (rightWidth) windows.push(part('window-right', 'window', 'fixed', rightWidth, (width - rightWidth) / 2, windowSill));
+  if (leftWidth) windows.push(part('window-left', 'window', 'fixed', leftWidth, leftHeight, (leftWidth - width) / 2, windowSill));
+  if (rightWidth) windows.push(part('window-right', 'window', 'fixed', rightWidth, rightHeight, (width - rightWidth) / 2, windowSill));
   return [door, ...windows];
 }
 

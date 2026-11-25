@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, createRoom, createOpening, serializeProject, deserializeProject } from '../core/model.js';
-import { glazedOpeningParts, glazedAssemblySpec, setGlazedWindow } from '../core/glazed-openings.js';
+import { glazedOpeningParts, glazedAssemblySpec, resizeGlazedOpening, setGlazedPartSize, setGlazedWindow } from '../core/glazed-openings.js';
 import { applyOpeningPreset } from '../core/opening-preset.js';
 import { OPENING_PRESETS, presetToOpening } from '../core/opening-catalog.js';
 import { deriveWalls, doorLeaves, doorLink } from '../core/walls.js';
@@ -143,4 +143,39 @@ test('двусторонний блок сохраняет обе секции �
   assert.equal(guids.length, 6); assert.equal(new Set(guids).size, 6);
   const exported = buildStructuredExport(restored).levels[0].openings;
   assert.equal(new Set(exported.map((o) => o.id)).size, 3);
+});
+
+test('ширина и высота окна не меняют дверь или соседнее окно, в том числе при несовпадающем верхе', () => {
+  const { p, opening } = fixture('balcony-sliding', 3000);
+  Object.assign(opening, setGlazedWindow(opening, 'left', true, 600));
+  const doorBefore = glazedOpeningParts(opening)[0];
+  const leftBefore = glazedOpeningParts(opening)[1];
+  Object.assign(opening, setGlazedPartSize(opening, 'right', 'width', 1000));
+  Object.assign(opening, setGlazedPartSize(opening, 'right', 'height', 1800));
+  let [door, left, right] = glazedOpeningParts(opening);
+  assert.deepEqual([door.width, door.height], [doorBefore.width, doorBefore.height]);
+  assert.deepEqual([left.width, left.height], [leftBefore.width, leftBefore.height]);
+  assert.deepEqual([right.width, right.height, right.sill], [1000, 1800, 900]);
+  assert.equal(opening.height, 2700);
+  Object.assign(opening, setGlazedPartSize(opening, 'windows', 'sill', 1100));
+  [door, , right] = glazedOpeningParts(opening);
+  assert.equal(door.height, 2300);
+  assert.equal(right.height, 1800);
+  assert.equal(opening.height, 2900);
+  const glass = buildHouseMesh(p, { site: false, roof: false }).filter((f) => f.kind === 'glass' && f.openingId === opening.id);
+  assert.deepEqual(glass.map((f) => Math.max(...f.pts.map((p) => p.z))).sort((a, b) => a - b), [2300, 2500, 2900]);
+  const restored = deserializeProject(serializeProject(p));
+  assert.deepEqual(glazedOpeningParts(restored.openings[0]).map((p) => [p.width, p.height]), [[1800, 2300], [600, 1400], [1000, 1800]]);
+});
+
+test('общая рамка старого блока с неявной шириной двери меняет только окна', () => {
+  const { opening } = fixture('balcony-sliding', 3000);
+  assert.deepEqual(opening.assembly, {});
+  Object.assign(opening, resizeGlazedOpening(opening, { width: 3500, height: 2600 }));
+  let parts = glazedOpeningParts(opening);
+  assert.deepEqual(parts.map((p) => [p.width, p.height]), [[1800, 2300], [1600, 1700]]);
+  Object.assign(opening, resizeGlazedOpening(opening, { width: 2400, height: 1900 }));
+  parts = glazedOpeningParts(opening);
+  assert.deepEqual(parts.map((p) => [p.width, p.height]), [[1800, 2300], [500, 1000]]);
+  assert.equal(opening.height, 2300, 'дверь определяет габарит, если окно ниже неё');
 });

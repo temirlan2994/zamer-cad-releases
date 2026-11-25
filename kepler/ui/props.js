@@ -25,7 +25,7 @@ import { roomShapeArea } from '../core/room-shape.js';
 import { canAttachRoom, planAdjacentRoom } from '../core/adjacent-room.js';
 import { clearWindowSpan, levelWindowOpenings, nextWindowSpan, setWindowSpan, windowSpanTop } from '../core/spanning-windows.js';
 import { CORNER_PRESET, cornerWindowGeometry } from '../core/corner-windows.js';
-import { glazedOpeningMinWidth, isGlazedAssembly } from '../core/glazed-openings.js';
+import { glazedOpeningMinWidth, isGlazedAssembly, resizeGlazedOpening } from '../core/glazed-openings.js';
 import { bindGlazedOpeningFields, glazedElevationMarkup, glazedOpeningFields } from './glazed-opening-props.js';
 import { wallZRange } from '../core/wall-z-range.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
@@ -770,10 +770,10 @@ function renderPlaceOpeningProps(panel, compact = false) {
           <option value="${id}" ${preset.type === id ? 'selected' : ''}>${title}</option>`).join('')}
         </select></label>
       <div class="prop-grid">
-        <label class="prop-field"><span>Ширина, мм</span>
+        <label class="prop-field"><span>${assembly ? 'Ширина блока' : 'Ширина'}, мм</span>
           <input id="presetW" type="number" step="50" min="300" value="${preset.width}"></label>
-        <label class="prop-field"><span>Высота, мм</span>
-          <input id="presetH" type="number" step="50" min="300" value="${sample.height}" ${!isDoor && preset.heightMode === 'level' ? 'disabled' : ''}></label>
+        <label class="prop-field"><span>${assembly ? 'Высота блока' : 'Высота'}, мм</span>
+          <input id="presetH" type="number" step="50" min="300" value="${sample.height}" ${assembly || (!isDoor && preset.heightMode === 'level') ? 'disabled' : ''}></label>
       </div>
       ${glazedOpeningFields(preset, 'preset')}
       ${isDoor || assembly ? '' : `<label class="check-row"><input id="presetHeightLinked" type="checkbox" ${preset.heightMode === 'level' ? 'checked' : ''}>
@@ -792,7 +792,10 @@ function renderPlaceOpeningProps(panel, compact = false) {
   panel.querySelector('#presetType').addEventListener('change', (e) => {
     save(presetWithType(tool.openKind, preset, e.target.value, activeLevel(state.project).height));
   });
-  panel.querySelector('#presetW').addEventListener('change', (e) => save({ width: Math.max(glazedOpeningMinWidth(preset), Number(e.target.value) || preset.width) }));
+  panel.querySelector('#presetW').addEventListener('change', (e) => {
+    const width = Math.max(glazedOpeningMinWidth(preset), Number(e.target.value) || preset.width);
+    save(assembly ? resizeGlazedOpening(preset, { width }) : { width });
+  });
   bindGlazedOpeningFields(panel, preset, 'preset', save);
   panel.querySelector('#presetH').addEventListener('change', (e) => save({
     height: Math.max(300, Number(e.target.value) || preset.height), heightMode: 'custom',
@@ -1028,10 +1031,10 @@ function renderOpeningProps(panel, opening) {
         ${spanTop && upper ? `<label class="prop-field"><span>Отступ от потолка · ${escapeHtml(upper.name)}, мм</span>
           <input id="openTopGap" type="number" step="50" min="0" max="${spanOption.maxTop - spanOption.minTop}" value="${Math.round(spanOption.maxTop - spanTop)}"></label>` : ''}`}
       <div class="prop-grid">
-        <label class="prop-field"><span>Ширина, мм</span>
+        <label class="prop-field"><span>${assembly ? 'Ширина блока' : 'Ширина'}, мм</span>
           <input id="openW" type="number" step="50" min="300" value="${opening.width}"></label>
-        <label class="prop-field"><span>Высота, мм</span>
-          <input id="openH" type="number" step="50" min="300" value="${effectiveHeight}" ${!isDoor && (opening.heightMode === 'level' || spanTop) ? 'disabled' : ''}></label>
+        <label class="prop-field"><span>${assembly ? 'Высота блока' : 'Высота'}, мм</span>
+          <input id="openH" type="number" step="50" min="300" value="${effectiveHeight}" ${assembly || (!isDoor && (opening.heightMode === 'level' || spanTop)) ? 'disabled' : ''}></label>
       </div>
       ${glazedOpeningFields(opening, 'open')}
       ${isDoor || assembly ? '' : `<label class="check-row"><input id="openHeightLinked" type="checkbox" ${opening.heightMode === 'level' ? 'checked' : ''}>
@@ -1097,6 +1100,7 @@ function renderOpeningProps(panel, opening) {
   panel.querySelector('#openW').addEventListener('change', (e) => {
     const width = Math.max(glazedOpeningMinWidth(opening), Number(e.target.value) || opening.width);
     commitOpening(() => {
+      if (assembly) { Object.assign(opening, resizeGlazedOpening(opening, { width })); return; }
       const oldWidth = opening.width;
       opening.width = width;
       const clamped = fit(openingPos(opening));
