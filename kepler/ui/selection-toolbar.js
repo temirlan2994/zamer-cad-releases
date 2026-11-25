@@ -146,7 +146,7 @@ function contentForSelection(sel) {
     const assembly = glazedAssemblySpec(opening);
     const canFlip = (door && ['single', 'double', undefined].includes(opening.type)) || (assembly && assembly.doorType !== 'sliding');
     return {
-      label: assembly ? 'Окно с дверью' : door ? 'Дверь' : 'Окно',
+      label: assembly ? assembly.leftWindow || assembly.rightWindow ? 'Дверь с окнами' : 'Дверь' : door ? 'Дверь' : 'Окно',
       html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}
         ${canFlip ? button('flip-hinge', '⇆', 'Петли') + button('flip-swing', '↷', 'Открывание') : ''}
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,

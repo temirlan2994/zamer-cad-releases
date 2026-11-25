@@ -15,6 +15,8 @@ import { toast } from './dom.js';
 import { computeOpeningParams, openingSnapOpts } from './plan-actions.js';
 import { state } from './state.js';
 import { afterChange, mutate, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
+import { cancelTool, selectObject } from './tools.js';
+import { switchLevel } from './levels.js';
 
 let env = null;
 let ghost = null;
@@ -126,6 +128,15 @@ export function openingToolClick(event) {
   const { opening, hit, snap } = ghost;
   const level = state.project.levels.find((candidate) => candidate.id === hit.levelId);
   mutate(() => { level.openings.push(opening); });
+  if (isGlazedAssembly(opening)) {
+    ghost = null;
+    cancelTool();
+    if (state.project.activeLevel !== level.id) switchLevel(level.id, { planView: false });
+    selectObject({ type: 'opening', id: opening.id });
+    env.redraw?.(true);
+    toast('Дверь установлена · Окна слева и справа можно включить в свойствах');
+    return true;
+  }
   toast(`${opening.kind === 'door' ? 'Дверь' : 'Окно'} · ${level.name}${snap.label ? ` · ${snap.label}` : ''}`);
   ghost = null;
   env.redraw?.(true);

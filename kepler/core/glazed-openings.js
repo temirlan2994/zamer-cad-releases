@@ -1,10 +1,10 @@
 // Оконно-дверной блок хранится одним проёмом. Для плана, 3D и расчётов
 // получаем отдельные створки с тем же id: перенос и Undo относятся ко всему блоку.
 export const GLAZED_OPENING_TYPES = {
-  'glazed-swing': 'Остекление с распашной дверью',
+  'glazed-swing': 'Распашная',
   'glazed-double': 'Остекление с двумя распашными дверями',
-  'glazed-sliding': 'Остекление с раздвижными дверями',
-  'balcony-swing': 'Балконный блок · распашная дверь',
+  'glazed-sliding': 'Раздвижная',
+  'balcony-swing': 'Балконная дверь',
   'balcony-sliding': 'Балконный блок · раздвижная дверь',
 };
 export const isGlazedAssembly = (opening) => Boolean(GLAZED_OPENING_TYPES[opening?.type]) && !opening.assemblyPart;
@@ -73,6 +73,15 @@ function assemblyUpdate(assembly, spec) {
       assembly.rightWindow ? assembly.windowSill + assembly.rightHeight : 0),
     sill: 0, heightMode: 'custom', assembly,
   };
+}
+
+export function setGlazedType(opening, type) {
+  const spec = glazedAssemblySpec(opening);
+  if (!spec || !GLAZED_OPENING_TYPES[type]) return null;
+  const assembly = assemblyConfig(opening, spec);
+  const balcony = type.startsWith('balcony-');
+  if (!balcony) assembly.windowSill = 0;
+  return { type, ...assemblyUpdate(assembly, { balcony }) };
 }
 
 // Размеры каждой части независимы. Общий габарит следует за их суммой.

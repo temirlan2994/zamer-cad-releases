@@ -85,6 +85,17 @@ test('центр верхнего окна липнет к нижнему и к�
   assert.match(result.label, /размер как у окна/);
 });
 
+test('дверь с боковыми окнами выравнивается по нижнему окну без подмены размеров двери', () => {
+  const { project, wall } = house();
+  const opening = { kind: 'window', type: 'balcony-swing', width: 900, height: 2300, sill: 0,
+    assembly: { doorWidth: 900, doorHeight: 2300, leftWindow: false, rightWindow: false } };
+  const result = snapOpeningToLower(opening, 2260, lowerOpeningTargets(project, 'L2', wall), 100);
+  assert.equal(result.snapped, true);
+  assert.equal(result.center, 2200);
+  assert.deepEqual(result.opening, opening);
+  assert.doesNotMatch(result.label, /размер как/);
+});
+
 test('край проёма липнет отдельно; Shift-эквивалент с нулевым допуском не липнет', () => {
   const { project, wall } = house();
   const targets = lowerOpeningTargets(project, 'L2', wall);

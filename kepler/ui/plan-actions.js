@@ -290,6 +290,12 @@ export function placeOpeningAt(at) {
   if (res.error) { toast(res.error); return; }
   const { opening } = res;
   mutate(() => { state.project.openings.push(opening); });
+  if (isGlazedAssembly(opening)) {
+    cancelTool();
+    selectObject({ type: 'opening', id: opening.id });
+    toast('Дверь установлена · Окна слева и справа можно включить в свойствах');
+    return;
+  }
   // Инструмент остаётся активным: можно ставить следующий проём подряд.
   // Esc — выход; проём правится кликом по нему после выхода.
   state.ghostOpening = null; state.ghostOpeningFull = null; state.ghostDoor = null;

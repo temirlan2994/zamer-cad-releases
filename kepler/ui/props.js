@@ -1013,7 +1013,7 @@ function renderOpeningProps(panel, opening) {
   }
 
   panel.innerHTML = `
-    <h2>${assembly ? 'Окно с дверью' : isDoor ? 'Дверь' : 'Окно'}</h2>
+    <h2>${assembly ? 'Дверь с боковыми окнами' : isDoor ? 'Дверь' : 'Окно'}</h2>
     <p class="subtitle">${opening.host ? 'Ручная стена' : room ? `Стена «${escapeHtml(room.name)}»` : 'Стена'}</p>
     <div class="elev-wrap">${elevationSVG({ ...opening, height: effectiveHeight, sill: effectiveSill })}</div>
     <div class="prop-block">
@@ -1111,13 +1111,14 @@ function renderOpeningProps(panel, opening) {
   panel.querySelector('#openType').addEventListener('change', (e) => {
     const type = e.target.value;
     commitOpening(() => {
+      const previous = { ...opening };
       opening.type = type;
       if (!isGlazedAssembly(opening)) delete opening.assembly;
       if (!isDoor) {
         // Высокие окна следуют единой отметке этажа, обычные — индивидуальны.
         const top = activeLevel(state.project).height - 400;
         if (isGlazedAssembly(opening)) {
-          Object.assign(opening, presetWithType('window', opening, type, level.height));
+          Object.assign(opening, presetWithType('window', previous, type, level.height));
           delete opening.span;
         } else if (HIGH_WINDOW_TYPES.has(type)) {
           opening.heightMode = 'level';

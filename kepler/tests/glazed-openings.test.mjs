@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, createRoom, createOpening, serializeProject, deserializeProject } from '../core/model.js';
 import { glazedOpeningParts, glazedAssemblySpec, resizeGlazedOpening, setGlazedPartSize, setGlazedWindow } from '../core/glazed-openings.js';
-import { applyOpeningPreset } from '../core/opening-preset.js';
+import { applyOpeningPreset, presetWithType } from '../core/opening-preset.js';
 import { OPENING_PRESETS, presetToOpening } from '../core/opening-catalog.js';
 import { deriveWalls, doorLeaves, doorLink } from '../core/walls.js';
 import { levelWindowOpenings } from '../core/spanning-windows.js';
@@ -178,4 +178,14 @@ test('общая рамка старого блока с неявной шири
   parts = glazedOpeningParts(opening);
   assert.deepEqual(parts.map((p) => [p.width, p.height]), [[1800, 2300], [500, 1000]]);
   assert.equal(opening.height, 2300, 'дверь определяет габарит, если окно ниже неё');
+});
+
+test('смена распашной двери на раздвижную сохраняет размеры двери и боковых окон', () => {
+  const { opening } = fixture('balcony-swing');
+  Object.assign(opening, setGlazedWindow(opening, 'left', true, 700));
+  Object.assign(opening, setGlazedPartSize(opening, 'door', 'height', 2100));
+  const before = glazedOpeningParts(opening).map((p) => [p.width, p.height]);
+  const next = presetWithType('window', opening, 'glazed-sliding');
+  assert.deepEqual(glazedOpeningParts(next).map((p) => [p.width, p.height]), before);
+  assert.equal(glazedOpeningParts(next)[0].type, 'sliding');
 });

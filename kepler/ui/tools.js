@@ -144,6 +144,7 @@ export function startPlaceRoom(type) {
 }
 
 export function openingPlacementHint(tool) {
+  if (isGlazedAssembly(tool.preset)) return 'Поставьте дверь на стену. Окна слева и справа включаются в свойствах.';
   if (tool.preset?.presetId === 'corner-glazing') return 'Нажмите на наружную стену у нужного угла, чтобы поставить оба крыла витража';
   return tool.openKind === 'door'
     ? 'Кликайте по стенам — можно ставить несколько дверей · Пробел — петли / направление · Esc — выход'

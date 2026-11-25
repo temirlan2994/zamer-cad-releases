@@ -31,13 +31,21 @@ const W = (cat, id, title, type, width, height, sill, keywords = '') => ({
   heightMode: ['panoramic', 'lift-slide', 'french'].includes(type) ? 'level' : 'custom',
   frameMaterial: 'aluminum', frameColor: 'anthracite',
 });
+const G = (id, title, type, width, keywords) => ({
+  ...W('with-door', id, title, type, width, 2300, 0, keywords),
+  assembly: {
+    doorWidth: width, doorHeight: 2300, leftWindow: false, rightWindow: false,
+    leftWidth: 1200, rightWidth: 1200,
+    leftHeight: type.startsWith('balcony-') ? 1400 : 2300,
+    rightHeight: type.startsWith('balcony-') ? 1400 : 2300,
+    windowSill: type.startsWith('balcony-') ? 900 : 0,
+  },
+});
 
 export const OPENING_PRESETS = [
-  W('with-door', 'glazed-swing-2400', 'Витраж с распашной дверью', 'glazed-swing', 2400, 2300, 0, 'дверь двери распашная распашные стеклянная терраса выход панорамный'),
-  W('with-door', 'glazed-double-1800', 'Две распашные стеклянные двери', 'glazed-double', 1800, 2300, 0, 'дверь распашная стеклянная балкон выход'),
-  W('with-door', 'glazed-sliding-3000', 'Витраж с раздвижными дверями', 'glazed-sliding', 3000, 2400, 0, 'дверь двери раздвижная раздвижные стеклянная терраса портал'),
-  W('with-door', 'balcony-swing-2200', 'Окно и распашная балконная дверь', 'balcony-swing', 2200, 2300, 0, 'балконный блок окно дверь двери распашная распашные'),
-  W('with-door', 'balcony-sliding-3000', 'Окно и раздвижная балконная дверь', 'balcony-sliding', 3000, 2300, 0, 'балконный блок окно дверь двери раздвижная раздвижные'),
+  G('glazed-swing', 'Распашная', 'glazed-swing', 900, 'дверь двери распашные стеклянная витраж терраса выход'),
+  G('glazed-sliding', 'Раздвижная', 'glazed-sliding', 1800, 'дверь двери раздвижные стеклянная витраж терраса портал'),
+  G('balcony-door', 'Балконная дверь', 'balcony-swing', 900, 'балконный блок окно дверь распашная'),
   D('interior', 'door-600', 'Дверь 600', 'single', 600, 2000, 'санузел ванная туалет кладовая'),
   D('interior', 'door-700', 'Дверь 700', 'single', 700, 2000, 'санузел ванная кухня'),
   D('interior', 'door-800', 'Дверь 800', 'single', 800, 2100, 'комната спальня межкомнатная'),
@@ -109,6 +117,11 @@ export function presetToOpening(preset, levelHeight = 3000) {
   };
   const top = Math.max(600, levelHeight - 400);
   if (out.sill + out.height > top) out.height = Math.max(300, top - out.sill);
+  if (out.assembly) {
+    out.assembly.doorHeight = Math.min(out.height, out.assembly.doorHeight || out.height);
+    for (const side of ['left', 'right']) out.assembly[`${side}Height`] = Math.max(300,
+      Math.min(out.assembly[`${side}Height`], out.height - out.assembly.windowSill));
+  }
   return out;
 }
 
