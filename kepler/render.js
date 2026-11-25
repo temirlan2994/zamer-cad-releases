@@ -714,19 +714,8 @@ export function createRenderer(canvas) {
           ctx.stroke();
           ctx.restore();
         }
-        ctx.save();
-        ctx.strokeStyle = houseTokens.wallBearing;
-        ctx.globalAlpha = lsDark ? 0.9 : 0.76;
-        ctx.lineWidth = px(1.15);
-        ctx.lineJoin = 'miter';
-        for (const wall of walls) for (const poly of wall.polys || (wall.poly ? [wall.poly] : [])) {
-          if (poly.length < 3) continue;
-          ctx.beginPath();
-          poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-          ctx.closePath();
-          ctx.stroke();
-        }
-        ctx.restore();
+        // Обводим только объединённый контур выше: границы отдельных
+        // частей стены создавали тёмные швы и квадраты на L/T-стыках.
         for (const wall of walls) {
           const selected = state.selection?.type === 'wall' && state.selection.key === wall.key
             && (state.selection.from === undefined || Math.abs(state.selection.from - wall.from) < 1);
