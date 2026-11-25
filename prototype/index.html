@@ -561,7 +561,7 @@
             <fieldset class="spen-settings-group">
               <legend>Samsung S Pen</legend>
               <label class="project-gesture-setting" for="projectSpenEnabled">
-                <span><strong>Автоматический режим S Pen</strong><small>Включается после извлечения или первого наведения пера</small></span>
+                <span><strong>Автоматический режим S Pen</strong><small>Перо — черчение и выбор, палец — перемещение вида</small></span>
                 <input class="layer-switch" id="projectSpenEnabled" type="checkbox" checked />
               </label>
               <label class="project-gesture-setting" for="projectSpenHover">
@@ -569,11 +569,11 @@
                 <input class="layer-switch" id="projectSpenHover" type="checkbox" checked />
               </label>
               <label class="project-gesture-setting" for="projectSpenButton">
-                <span><strong>Боковая кнопка</strong><small>Нажатие — Esc / Выбор, удержание с касанием — перемещение чертежа</small></span>
+                <span><strong>Боковая кнопка</strong><small>Нажатие — Esc / Выбор</small></span>
                 <input class="layer-switch" id="projectSpenButton" type="checkbox" checked />
               </label>
               <label class="project-gesture-setting" for="projectSpenPalm">
-                <span><strong>Защита от ладони</strong><small>Игнорировать случайное касание холста пальцем рядом с пером</small></span>
+                <span><strong>Защита от ладони</strong><small>Игнорировать широкие касания ладонью рядом с пером</small></span>
                 <input class="layer-switch" id="projectSpenPalm" type="checkbox" checked />
               </label>
               <label class="project-gesture-setting" for="projectSpenCompact">
@@ -700,7 +700,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=330"></script>
+    <script type="module" src="./app.js?v=331"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

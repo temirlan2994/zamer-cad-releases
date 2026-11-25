@@ -26,7 +26,10 @@ export function nativeSpenClientPoint(detail, viewport) {
   return { x: detail.x * viewport.width / detail.width, y: detail.y * viewport.height / detail.height };
 }
 
-export function shouldRejectSpenPalmTouch(settings, runtime, now, graceMs = 850) {
+export function shouldRejectSpenPalmTouch(settings, runtime, now, contact = {}, graceMs = 850) {
   if (!settings?.enabled || !settings.palmRejection || !runtime?.active) return false;
-  return Boolean(runtime.hovering || (Number.isFinite(runtime.lastHover) && now - runtime.lastHover <= graceMs));
+  // A fingertip must remain available for navigation while the pen hovers.
+  // Reject broad palm contacts near the pen, not every touch on the screen.
+  const penNearby = runtime.hovering || (Number.isFinite(runtime.lastHover) && now - runtime.lastHover <= graceMs);
+  return Boolean(penNearby && Math.max(contact.width || 0, contact.height || 0) >= 40);
 }

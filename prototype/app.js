@@ -882,6 +882,7 @@ const spenRuntime = {
   active: false,
   hovering: false,
   nativeHover: false,
+  contactId: null,
   point: null,
   lastHover: -Infinity,
   barrelDown: false,
@@ -987,7 +988,7 @@ function spenModeEnabled() {
 }
 
 function spenCursorActive() {
-  return spenModeEnabled() && spenSettings.hoverCursor && spenRuntime.hovering && Boolean(spenRuntime.point);
+  return spenModeEnabled() && (spenRuntime.contactId !== null || (spenSettings.hoverCursor && spenRuntime.hovering)) && Boolean(spenRuntime.point);
 }
 
 function inputCursorScreen() {
@@ -11547,7 +11548,7 @@ function finishFigureGrip(pointer) {
   if (!pointer.moved) {
     state.selectedFigureGrip = pointer.grip;
     hideSelectToolMenu();
-    centerViewOnWorldPoint(pointer.grip.point);
+    if (!spenCursorActive()) centerViewOnWorldPoint(pointer.grip.point);
     resetSnapTracking();
     statusChip.textContent = "Наведите крестик на новое место точки и тапните";
     return;
@@ -11617,7 +11618,7 @@ function finishLineGrip(pointer) {
     if (pointer.grip.point === "middle") {
       const base = midpoint({ x: entity.x1, y: entity.y1 }, { x: entity.x2, y: entity.y2 });
       startMoveLikeCommand(entity, "move");
-      centerViewOnWorldPoint(base);
+      if (!spenCursorActive()) centerViewOnWorldPoint(base);
       commitMoveCommandPoint(base);
     } else {
       selectLineEndpoint(pointer.grip);
@@ -11647,10 +11648,10 @@ function selectLineEndpoint(endpoint) {
   state.endpointEditBefore = entityGeometry(entity);
   state.drawing = null;
   const geometry = selectedEndpointGeometry();
-  if (geometry) centerViewOnWorldPoint(geometry.moving);
+  if (geometry && !spenCursorActive()) centerViewOnWorldPoint(geometry.moving);
   resetSnapTracking();
   updateSelectedEndpointEditors(geometry ? endpointCursorPoint(geometry) : null);
-  statusChip.textContent = "Конец линии выбран. Подведите центр к новой точке и тапните";
+  statusChip.textContent = spenCursorActive() ? "Конец линии выбран. Укажите пером новую точку" : "Конец линии выбран. Подведите центр к новой точке и тапните";
   draw();
   return true;
 }
@@ -12088,9 +12089,15 @@ window.addEventListener("zamer-spen-hover", (event) => {
   }
   draw();
 });
-window.addEventListener("blur", clearSpenHover);
+window.addEventListener("blur", () => {
+  spenRuntime.contactId = null;
+  clearSpenHover();
+});
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) clearSpenHover();
+  if (document.hidden) {
+    spenRuntime.contactId = null;
+    clearSpenHover();
+  }
 });
 
 canvas.addEventListener("pointerover", updateSpenHover);
@@ -12103,27 +12110,24 @@ canvas.addEventListener("pointerleave", (event) => {
 
 canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
-  if (event.pointerType === "touch" && shouldRejectSpenPalmTouch(spenSettings, spenRuntime, performance.now())) {
+  // Finish the current pen/finger gesture before starting one from the other
+  // device. A pen and a finger must never be treated as a two-finger pinch.
+  if (spenModeEnabled() && event.pointerType === "touch" && spenRuntime.contactId !== null) return;
+  if (event.pointerType === "touch" && shouldRejectSpenPalmTouch(spenSettings, spenRuntime, performance.now(), event)) {
     statusChip.textContent = "S Pen рядом · случайное касание ладонью заблокировано";
     return;
   }
   const screen = getPointer(event);
   if (event.pointerType === "pen") {
     activateSpenFromPointer(event);
+    if (spenModeEnabled() && state.activePointers.size > 0) return;
+    spenRuntime.nativeHover = false;
+    spenRuntime.contactId = event.pointerId;
     const barrel = spenBarrelButtonPressed(event);
     spenRuntime.barrelDown = barrel;
     if (spenSettings.enabled && spenSettings.sideButton && barrel) {
       activatePlainSelect();
-      if (event.button === 0 || (event.buttons & 1)) {
-        try {
-          canvas.setPointerCapture(event.pointerId);
-        } catch { /* Interrupted S Pen streams may not support capture. */ }
-        rememberPointer(event);
-        state.pointer = { id: event.pointerId, screen, startScreen: screen, world: screenToWorld(screen), moved: false, mode: "spen-pan" };
-        statusChip.textContent = "S Pen · перемещайте чертёж";
-      } else {
-        statusChip.textContent = "S Pen · Esc / Выбор";
-      }
+      statusChip.textContent = "S Pen · Esc / Выбор";
       draw();
       return;
     }
@@ -12162,6 +12166,10 @@ function startCanvasPointerAction(event, screen) {
     else closeMetricEntry();
   }
   state.pointerStartedAt = event.timeStamp;
+  if (spenModeEnabled() && event.pointerType === "touch") {
+    state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "touch-pan" };
+    return;
+  }
   if (state.leaderInput) {
     state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "pan" };
     return;
@@ -12459,27 +12467,38 @@ canvas.addEventListener("pointermove", (event) => {
   const screen = getPointer(event);
   if (tapZoom?.event.pointerId === event.pointerId && updateTapZoom(event, screen)) return;
   if (state.pinch || state.gestureSuppressTap || !state.pointer || state.pointer.id !== event.pointerId) return;
-  const isDragging = Boolean(event.buttons & 1) || event.pointerType === "touch" || state.pointer?.mode === "spen-pan";
+  const isDragging = Boolean(event.buttons & 1) || event.pointerType === "touch";
   if (!isDragging) return;
+  const penGesture = spenModeEnabled() && event.pointerType === "pen";
+  const penPlacesPoint = penGesture && (["survey-point", "dimension-attach", "line-edit", "endpoint-place", "move-command", "offset-command"].includes(state.pointer.mode) ||
+    (state.pointer.mode === "pan" && state.tool !== "select" && !state.leaderInput));
+  if (penPlacesPoint) {
+    // The preview follows the pen; lifting it commits the current point.
+    // Do not translate the viewport or suppress this placement as a pan.
+    state.pointer.screen = screen;
+    draw();
+    return;
+  }
   const travel = Math.hypot(screen.x - state.pointer.startScreen.x, screen.y - state.pointer.startScreen.y);
   if (travel > TAP_MOVE_TOLERANCE) {
     window.clearTimeout(state.pointer.selectionHoldTimer);
     state.pointer.moved = true;
   }
   if (state.pointer.mode === "select-only") {
+    if (penGesture) { draw(); return; }
     state.pointer.mode = activationGestureMode(state.pointer.moved);
     if (state.pointer.mode === "select-only") return;
     // This gesture belongs to the viewport, even while crossing other objects.
     // Do not activate or move the object when the finger is released.
     state.pointer.tapCandidateId = null;
   }
-  if (state.pointer.mode === "spen-pan") {
+  if (state.pointer.mode === "touch-pan") {
     if (!state.pointer.moved) return;
     state.view.panX += screen.x - state.pointer.screen.x;
     state.view.panY += screen.y - state.pointer.screen.y;
     state.pointer.screen = screen;
     resetSnapTracking();
-    statusChip.textContent = "S Pen · перемещение чертежа";
+    statusChip.textContent = "Перемещение вида пальцем";
     draw();
     return;
   }
@@ -12570,7 +12589,7 @@ canvas.addEventListener("pointermove", (event) => {
       const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
       statusChip.textContent = `Размер ${dimensionDisplayLength(entity)}`;
     }
-  } else {
+  } else if (!penGesture) {
     state.dimensionSnapHint = null;
     state.view.panX += screen.x - state.pointer.screen.x;
     state.view.panY += screen.y - state.pointer.screen.y;
@@ -12589,6 +12608,14 @@ canvas.addEventListener("contextmenu", (event) => {
 });
 
 function finishCanvasPointer(event, canceled = false) {
+  try {
+    finishCanvasPointerEvent(event, canceled);
+  } finally {
+    if (spenRuntime.contactId === event.pointerId) spenRuntime.contactId = null;
+  }
+}
+
+function finishCanvasPointerEvent(event, canceled = false) {
   if (event.pointerType === "pen") {
     if (canceled) clearSpenHover();
     else {
@@ -12649,12 +12676,13 @@ function finishCanvasPointer(event, canceled = false) {
 }
 
 function finishCanvasPointerAction(event) {
-  const spenPan = state.pointer?.mode === "spen-pan";
-  const overlap = spenPan ? null : overlappingSelectionForTap(event, state.pointer);
+  const touchPan = state.pointer?.mode === "touch-pan";
+  const penGesture = spenModeEnabled() && event.pointerType === "pen";
+  const overlap = touchPan ? null : overlappingSelectionForTap(event, state.pointer);
   state.selectionPickCycle = null;
-  const annotation = spenPan || overlap ? null : annotationForDoubleTap(event, state.pointer);
-  if (spenPan) {
-    statusChip.textContent = "S Pen · чертёж перемещён";
+  const annotation = touchPan || overlap ? null : annotationForDoubleTap(event, state.pointer);
+  if (touchPan) {
+    if (state.pointer.moved) statusChip.textContent = "Вид перемещён пальцем";
   } else if (overlap) {
     state.lastAnnotationTap = null;
     state.dimensionPickCycle = null;
@@ -12700,7 +12728,7 @@ function finishCanvasPointerAction(event) {
   } else if (state.pointer.mode === "angular-grip") {
     finishAngularGrip(state.pointer);
   } else if (state.pointer.mode === "line-edit") {
-    if (!state.pointer.moved) pickLineEditPoint(state.pointer.startScreen);
+    if (!state.pointer.moved) pickLineEditPoint(penGesture ? getPointer(event) : state.pointer.startScreen);
   } else if (state.pointer.mode === "quick-trim-once") {
     if (!state.pointer.moved) applyQuickEdit("trim", state.pointer.startScreen);
   } else if (state.pointer?.mode === "offset-command") {
@@ -12739,7 +12767,7 @@ function finishCanvasPointerAction(event) {
       if (hitId && state.selectedIds.includes(hitId)) state.directManipulationIds.add(hitId);
       draw();
     } else {
-      commitCursorPoint(state.pointer.startScreen);
+      commitCursorPoint(penGesture ? getPointer(event) : state.pointer.startScreen);
     }
   } else {
     finishPointerMoveUndo();
