@@ -28,11 +28,12 @@ async function client(page, x, y) {
   }, [x, y]);
 }
 
-async function place(page, preset) {
+async function place(page, preset, configure = null) {
   await scene(page);
   await clickToolbarTool(page, 'windowToolBtn');
   await page.click('#openingCats [data-cat="with-door"]');
   await page.click(`#openingItems [data-preset="${preset}"]`);
+  if (configure) await configure(page);
   await settleView(page);
   await page.evaluate(async () => {
     const { planToScreen, requestDraw } = await import('./ui/view.js');
@@ -89,7 +90,8 @@ describe('окна с дверью из каталога', () => {
     await page.mouse.click(at.x, at.y);
     await page.waitForSelector('#openDoorWidth');
     await page.fill('#openDoorWidth', '800'); await page.press('#openDoorWidth', 'Tab');
-    await page.selectOption('#openDoorSide', 'end');
+    await page.uncheck('#openWindowRight');
+    await page.check('#openWindowLeft');
     await page.fill('#openWindowSill', '1100'); await page.press('#openWindowSill', 'Tab');
     const current = await data(page);
     assert.equal(current.stored[0].width, 2200);
@@ -117,6 +119,43 @@ describe('окна с дверью из каталога', () => {
     await page.keyboard.press('Control+z');
     current = await data(page);
     assert.equal(current.stored.length, 1); assert.equal(current.parts.length, 2);
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('боковые окна настраиваются до вставки, отключаются независимо и восстанавливаются с прежней шириной', async () => {
+    const { page } = app;
+    await place(page, 'glazed-swing-2400', async () => {
+      await page.check('#presetWindowLeft');
+      await page.fill('#presetWindowWidthLeft', '700');
+      await page.press('#presetWindowWidthLeft', 'Tab');
+    });
+    let current = await data(page);
+    assert.equal(current.stored[0].width, 3100);
+    assert.deepEqual(current.parts.map((p) => p.width), [900, 700, 1500]);
+    const at = await client(page, 2600, -125);
+    await page.mouse.click(at.x, at.y);
+    await page.waitForSelector('#openWindowLeft');
+    await page.uncheck('#openWindowLeft');
+    current = await data(page);
+    assert.equal(current.stored[0].width, 2400);
+    assert.deepEqual(current.parts.map((p) => p.width), [900, 1500]);
+    await page.uncheck('#openWindowRight');
+    current = await data(page);
+    assert.equal(current.stored[0].width, 900);
+    assert.equal(current.parts.length, 1);
+    await page.check('#openWindowLeft');
+    assert.equal((await data(page)).stored[0].width, 1600);
+    await page.check('#openWindowRight');
+    current = await data(page);
+    assert.equal(current.stored[0].width, 3100);
+    assert.deepEqual(current.parts.map((p) => p.width), [900, 700, 1500]);
+    // Изменение, не помещающееся на стене, откатывается целиком.
+    await page.fill('#openWindowWidthLeft', '7000'); await page.press('#openWindowWidthLeft', 'Tab');
+    assert.equal((await data(page)).stored[0].width, 3100);
+    assert.equal(await page.inputValue('#openWindowWidthLeft'), '700');
+    await page.uncheck('#openWindowRight');
+    await page.keyboard.press('Control+z');
+    assert.equal((await data(page)).parts.length, 3);
     assert.deepEqual(app.errors, []);
   });
 });
@@ -149,6 +188,19 @@ describe('оконно-дверной блок на телефоне', () => {
     assert.equal(current.parts.length, 2);
     assert.equal(current.parts[0].type, 'sliding');
     assert.equal(current.parts[1].sill, 900);
+    await page.evaluate(async () => {
+      const { cancelTool, selectObject } = await import('./ui/tools.js');
+      cancelTool();
+      selectObject({ type: 'opening', id: window.__kepler.state.project.openings[0].id });
+    });
+    await page.tap('#mobileBar [data-sheet="props"]');
+    await page.tap('#openWindowLeft');
+    assert.equal((await data(page)).parts.length, 3);
+    await page.tap('#openWindowRight');
+    assert.equal((await data(page)).parts.length, 2);
+    await page.tap('#openWindowLeft');
+    assert.equal((await data(page)).parts.length, 1);
+    assert.equal((await data(page)).stored[0].width, 1800);
     assert.deepEqual(app.errors, []);
   });
 });

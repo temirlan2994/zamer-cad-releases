@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, createRoom, createOpening, serializeProject, deserializeProject } from '../core/model.js';
-import { glazedOpeningParts, glazedAssemblySpec } from '../core/glazed-openings.js';
+import { glazedOpeningParts, glazedAssemblySpec, setGlazedWindow } from '../core/glazed-openings.js';
 import { applyOpeningPreset } from '../core/opening-preset.js';
 import { OPENING_PRESETS, presetToOpening } from '../core/opening-catalog.js';
 import { deriveWalls, doorLeaves, doorLink } from '../core/walls.js';
@@ -98,4 +98,49 @@ test('экспорт и решатель получают дверь и окно
   const contract = projectToLayoutInput(p);
   assert.equal(new Set(contract.openings.map((o) => o.id)).size, 2);
   assert.ok(contract.openings.some((o) => o.kind === 'hinged_door'));
+});
+
+test('окна независимо добавляются слева и справа, дверь сохраняет ширину, удалённая секция помнит свой размер', () => {
+  for (const type of ['glazed-swing', 'balcony-swing']) {
+    const { opening } = fixture(type, type.startsWith('balcony') ? 2200 : 2400);
+    const initial = structuredClone(opening);
+    const doorWidth = glazedAssemblySpec(opening).doorWidth;
+    const rightWidth = glazedAssemblySpec(opening).rightWidth;
+    const update = setGlazedWindow(opening, 'left', true, 700);
+    assert.deepEqual(opening, initial, 'расчёт не меняет исходный объект');
+    Object.assign(opening, update);
+    let parts = glazedOpeningParts(opening);
+    assert.deepEqual(parts.map((p) => p.assemblyPart), ['door', 'window-left', 'window-right']);
+    assert.deepEqual(parts.map((p) => p.width), [doorWidth, 700, rightWidth]);
+    const centers = parts.map((p) => p.offset);
+    assert.ok(centers[1] < centers[0] && centers[0] < centers[2]);
+    Object.assign(opening, setGlazedWindow(opening, 'right', false));
+    parts = glazedOpeningParts(opening);
+    assert.deepEqual(parts.map((p) => p.assemblyPart), ['door', 'window-left']);
+    Object.assign(opening, setGlazedWindow(opening, 'left', false));
+    assert.equal(opening.width, doorWidth);
+    assert.deepEqual(glazedOpeningParts(opening).map((p) => p.kind), ['door']);
+    Object.assign(opening, setGlazedWindow(opening, 'right', true));
+    assert.equal(glazedAssemblySpec(opening).rightWidth, rightWidth);
+    assert.equal(glazedAssemblySpec(opening).doorWidth, doorWidth);
+    Object.assign(opening, setGlazedWindow(opening, 'left', true));
+    assert.equal(glazedAssemblySpec(opening).leftWidth, 700);
+  }
+});
+
+test('двусторонний блок сохраняет обе секции в файле, 3D и экспорте с уникальными id', () => {
+  const { p, opening } = fixture();
+  Object.assign(opening, setGlazedWindow(opening, 'left', true, 600));
+  const restored = deserializeProject(serializeProject(p));
+  assert.deepEqual(restored.openings[0].assembly, opening.assembly);
+  const parts = levelWindowOpenings(restored, deriveWalls(restored));
+  assert.equal(parts.length, 3);
+  const glass = buildHouseMesh(restored, { roof: false, site: false }).filter((f) => f.kind === 'glass' && f.openingId === opening.id);
+  assert.equal(glass.length, 3);
+  const { text, counts } = buildIfc(restored);
+  assert.equal(counts.doors, 1); assert.equal(counts.windows, 2);
+  const guids = [...text.matchAll(/=IFC(?:OPENINGELEMENT|DOOR|WINDOW)\('([^']+)'/g)].map((m) => m[1]);
+  assert.equal(guids.length, 6); assert.equal(new Set(guids).size, 6);
+  const exported = buildStructuredExport(restored).levels[0].openings;
+  assert.equal(new Set(exported.map((o) => o.id)).size, 3);
 });

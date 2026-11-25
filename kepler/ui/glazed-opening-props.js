@@ -1,24 +1,39 @@
-import { glazedAssemblySpec, glazedOpeningParts } from '../core/glazed-openings.js';
+import { glazedAssemblySpec, glazedOpeningParts, setGlazedWindow } from '../core/glazed-openings.js';
 
 export function glazedOpeningFields(opening, prefix) {
   const spec = glazedAssemblySpec(opening);
   if (!spec) return '';
   return `<label class="prop-field"><span>Ширина дверной части, мм</span>
-      <input id="${prefix}DoorWidth" type="number" min="300" step="50" max="${spec.width - (spec.balcony ? 400 : 0)}" value="${Math.round(spec.doorWidth)}"></label>
-    <label class="prop-field"><span>Расположение двери</span><select id="${prefix}DoorSide">
-      <option value="start" ${spec.doorSide === 'start' ? 'selected' : ''}>Слева / в начале стены</option>
-      <option value="end" ${spec.doorSide === 'end' ? 'selected' : ''}>Справа / в конце стены</option>
-    </select></label>
+      <input id="${prefix}DoorWidth" type="number" min="300" step="50" value="${Math.round(spec.doorWidth)}"></label>
+    ${['left', 'right'].map((side) => {
+      const label = side === 'left' ? 'слева' : 'справа';
+      const suffix = side === 'left' ? 'Left' : 'Right';
+      return `<label class="check-row"><input id="${prefix}Window${suffix}" type="checkbox" ${spec[`${side}Window`] ? 'checked' : ''}>
+        <span>Окно ${label}</span></label>
+        ${spec[`${side}Window`] ? `<label class="prop-field"><span>Ширина окна ${label}, мм</span>
+          <input id="${prefix}WindowWidth${suffix}" type="number" min="300" step="50" value="${Math.round(spec[`${side}Width`])}"></label>` : ''}`;
+    }).join('')}
     ${spec.balcony ? `<label class="prop-field"><span>Подоконник оконной части, мм</span>
       <input id="${prefix}WindowSill" type="number" min="0" step="50" max="${spec.height - 300}" value="${Math.round(spec.windowSill)}"></label>` : ''}`;
 }
 
 export function bindGlazedOpeningFields(panel, opening, prefix, save) {
-  for (const [suffix, field] of [['DoorWidth', 'doorWidth'], ['DoorSide', 'doorSide'], ['WindowSill', 'windowSill']]) {
+  for (const side of ['left', 'right']) {
+    const suffix = side === 'left' ? 'Left' : 'Right';
+    panel.querySelector(`#${prefix}Window${suffix}`)?.addEventListener('change', (event) => {
+      save(setGlazedWindow(opening, side, event.target.checked));
+    });
+    panel.querySelector(`#${prefix}WindowWidth${suffix}`)?.addEventListener('change', (event) => {
+      save(setGlazedWindow(opening, side, true, event.target.value));
+    });
+  }
+  for (const [suffix, field] of [['DoorWidth', 'doorWidth'], ['WindowSill', 'windowSill']]) {
     panel.querySelector(`#${prefix}${suffix}`)?.addEventListener('change', (event) => {
-      const value = field === 'doorSide' ? event.target.value : Number(event.target.value);
+      const value = Number(event.target.value);
       if (typeof value === 'number' && !Number.isFinite(value)) return;
-      save({ assembly: { ...opening.assembly, [field]: value } });
+      const spec = glazedAssemblySpec(opening);
+      save({ ...(field === 'doorWidth' && !spec.leftWindow && !spec.rightWindow ? { width: Math.max(300, value) } : {}),
+        assembly: { ...opening.assembly, [field]: value } });
     });
   }
 }
