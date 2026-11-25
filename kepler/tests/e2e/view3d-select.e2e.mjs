@@ -95,9 +95,10 @@ describe('3D: мебель и выбор объектов', () => {
     assert.ok((await d3(page)).highlightedAll > 0, 'предмет подсвечен');
     assert.match(await page.textContent('#v3Hint'), /Delete/);
     assert.deepEqual((await d3(page)).objectGizmo.axes, ['x', 'y', 'z'], 'мебель получает полноценный XYZ-гизмо');
+    assert.match(await page.textContent('#v3Hint'), /Z — высота/);
   });
 
-  it('стрелка X гизмо двигает мебель только по X, Undo возвращает', async () => {
+  it('стрелка X гизмо с заранее нажатым Shift двигает мебель только по X, Undo возвращает', async () => {
     const { page } = app;
     await page.mouse.click(hits.item.x, hits.item.y);
     const gizmo = (await d3(page)).objectGizmo;
@@ -114,9 +115,15 @@ describe('3D: мебель и выбор объектов', () => {
       y: p.y + (gizmo.tips.x.y - gizmo.origin.y) * 0.45,
     };
     await page.mouse.move(p.x, p.y);
-    await page.mouse.down();
-    await page.mouse.move(q.x, q.y, { steps: 4 });
-    await page.mouse.up();
+    await page.keyboard.down('Shift');
+    try {
+      await page.mouse.down();
+      await page.mouse.move(q.x, q.y, { steps: 4 });
+      assert.match(await page.textContent('#v3Hint'), /^X [+-]?\d+ мм · Shift/);
+      await page.mouse.up();
+    } finally {
+      await page.keyboard.up('Shift');
+    }
     const moved = await page.evaluate((id) => {
       const item = window.__kepler.state.project.items.find((entry) => entry.id === id);
       return { x: item.x, y: item.y, z: item.elev3d || 0 };
@@ -164,6 +171,9 @@ describe('3D: мебель и выбор объектов', () => {
     assert.match(await page.textContent('#propsBody'), /Туя|Ландшафт/i);
     assert.ok((await d3(page)).highlightedAll > 0, 'дерево подсвечено');
     assert.deepEqual((await d3(page)).objectGizmo.axes, ['x', 'y'], 'дерево можно двигать только по земле, без Z');
+    const hint = await page.textContent('#v3Hint');
+    assert.match(hint, /X\/Y — по участку/);
+    assert.doesNotMatch(hint, /\bZ\b/);
     const n = await count();
     await page.keyboard.press('Delete');
     assert.equal(await count(), n - 1);
@@ -332,6 +342,7 @@ describe('3D: этажи', () => {
 
   it('планы этажей помнят отдельные масштабы и положения', async () => {
     const { page } = app;
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     const camera = () => page.evaluate(() => {
       const { scale, panX, panY } = window.__kepler.state.view;
       return { scale, panX, panY };

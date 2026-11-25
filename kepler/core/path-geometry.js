@@ -464,15 +464,17 @@ export function layoutSlabs(points, o, opts = {}) {
     for (const { c: c0, len } of centers) {
       let c = c0;
       const jitter = strict ? 0 : (rand() - 0.5) * 0.08;
-      const shift = strict ? 0 : (rand() - 0.5) * width * 0.08;
-      const across = strict ? (P.across ?? width) : Math.round((P.across ?? width) * (0.9 + rand() * 0.1));
+      const stagger = o.meta?.staggerSlabs === true;
+      const shift = stagger ? (idx % 2 ? -1 : 1) * width * 0.07 : strict ? 0 : (rand() - 0.5) * width * 0.08;
+      const across = stagger ? Math.round(Math.min(P.across ?? width, width) * (idx % 2 ? 0.76 : 0.84))
+        : strict ? (P.across ?? width) : Math.round((P.across ?? width) * (0.9 + rand() * 0.1));
       const tr = strict ? 0 : rand();
       const make = (cc) => {
         const p = curve ? along(r.pts, cc) : { ...add(r.pts[0], mul(r.u0, cc)), angle: Math.atan2(r.u0.y, r.u0.x) };
-        const d = d0 + shift;
+        const d = stagger ? alignShift(P.align, width, across) + shift * Number(P.align === 'center') : d0 + shift;
         return {
           x: p.x - Math.sin(p.angle) * d, y: p.y + Math.cos(p.angle) * d, angle: p.angle + jitter,
-          along: Math.round(len), across, tone: tr, run: k,
+          along: Math.round(stagger && idx % 2 ? len * 0.82 : len), across, tone: tr, run: k,
         };
       };
       let slab = make(c);

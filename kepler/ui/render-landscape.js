@@ -12,7 +12,7 @@ import { LOUNGE_COLORS, loungeParts } from '../core/landscape-lounge.js';
 import {
   LS_COLORS, SHAPE_RANK, curbLines, insetPolygon, isPathShape, isRoundObject, landscapeDef, planterWall, stairsInfo, objectAreaM2, objectColors,
   lineLayout, objectCorners, objectLengthM, objectOutline, objectPath, pathBoards, pointAlong, polylineLength,
-  seededRandom, steppingSlabs, variantOf, waterCurtainParts, fmtElev, retainingEdges, retainingInfo,
+  seededRandom, stairTreads, steppingSlabs, variantOf, waterCurtainParts, fmtElev, retainingEdges, retainingInfo,
 } from '../core/landscape.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import { frameCorners, frameEdges, frameRotators } from '../core/landscape-handles.js';
@@ -2144,14 +2144,15 @@ const BUILD_LOOKS = {
   // Наружная лестница: ступени поперёк, «вверх» — к −Y (стрелка), борта по бокам.
   stairs(ctx, o, a, b, C, rc) {
     const st = stairsInfo(o);
-    const n = Math.max(1, st.steps);
-    const t = (b * 2) / n;
+    const treads = stairTreads(o, st);
+    const n = treads.length;
     const cw = st.cheek;
     const x0 = -a + cw; const x1 = a - cw;
     const sd = rc.shadowLocal;
     // Ступени: снизу (+Y) вверх, выше — чуть светлее.
     for (let i = 0; i < n; i += 1) {
-      const yb = b - i * t; const yt = yb - t;
+      const { bottom: yb, top: yt } = treads[i];
+      const t = yb - yt;
       ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
       ctx.fillRect(x0, yt, x1 - x0, t);
       if (!rc.mono) {
@@ -2171,7 +2172,7 @@ const BUILD_LOOKS = {
           ctx.beginPath();
           if (o.variant === 'wood') {
             for (const k of [1 / 3, 2 / 3]) { ctx.moveTo(x0, yt + t * k); ctx.lineTo(x1, yt + t * k); }
-          } else if (o.variant === 'stone') {
+          } else if (o.variant === 'stone' || o.variant === 'graphite') {
             const R = seededRandom(`${o.id}:${i}`);
             for (let x = x0 + 450 + R() * 300; x < x1 - 200; x += 500 + R() * 400) { ctx.moveTo(x, yt); ctx.lineTo(x, yb); }
           }
@@ -2191,7 +2192,7 @@ const BUILD_LOOKS = {
     }
     // Рёбра ступеней (носики).
     ctx.beginPath();
-    for (let i = 1; i < n; i += 1) { const y = b - i * t; ctx.moveTo(x0, y); ctx.lineTo(x1, y); }
+    for (const { bottom } of treads.slice(1)) { ctx.moveTo(x0, bottom); ctx.lineTo(x1, bottom); }
     ink(ctx, rc, 0.8, 0.95);
     // Борта — как стенка короба: верх и двойная линия.
     if (cw > 0) {
@@ -2206,6 +2207,7 @@ const BUILD_LOOKS = {
     ink(ctx, rc, rc.mono ? 1 : 0.9, 0.95);
     // Стрелка «вверх»: точка у нижней ступени, остриё у верхней.
     const fw = x1 - x0;
+    const t = treads[0].bottom - treads[0].top;
     const y0 = b - Math.min(t * 0.5, b * 0.4);
     const yEnd = -b + Math.min(t * 0.3, b * 0.2);
     const head = Math.min(fw * 0.18, t * 0.7, 220);
@@ -2878,7 +2880,7 @@ export function drawLandscapeDraft(ctx, tool, opts, color) {
     const o = {
       id: '__draft-ls__', kind: tool.lsKind, x: 0, y: 0, rotation: 0, w: 1, h: 1, points: pts,
       width: tool.opts?.width, smooth: tool.opts?.smooth, variant: tool.opts?.variant || def.variants[0].id, meta: {},
-      color: tool.opts?.color,
+      ...tool.opts,
     };
     ctx.save();
     ctx.globalAlpha = 0.62;

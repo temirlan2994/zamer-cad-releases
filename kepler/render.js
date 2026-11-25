@@ -761,8 +761,18 @@ export function createRenderer(canvas) {
     setView(view);
     if (lsObjects.length && !planLs) drawLandscapeRaised(ctx, lsObjects, lsOpts);
     if (landscape && state.ghostLandscape) drawLandscapeGhost(ctx, state.ghostLandscape, lsOpts, tokens.accent);
+    const flightStart = landscape && state.tool?.kind === 'ls-flight' ? state.tool.first : null;
+    if (flightStart) {
+      ctx.beginPath();
+      ctx.arc(flightStart.x, flightStart.y, px(5), 0, Math.PI * 2);
+      ctx.fillStyle = tokens.accent;
+      ctx.fill();
+      ctx.lineWidth = px(1.5);
+      ctx.strokeStyle = tokens.canvas;
+      ctx.stroke();
+    }
     if (landscape && state.tool?.kind === 'draw-landscape') drawLandscapeDraft(ctx, state.tool, lsOpts, tokens.accent);
-    if (landscape && state.tool?.kind === 'ls-array') drawLandscapeArrayPreview(ctx, state.tool, lsOpts, tokens.accent);
+    if (landscape && ['ls-array', 'ls-route'].includes(state.tool?.kind)) drawLandscapeArrayPreview(ctx, state.tool, lsOpts, tokens.accent);
     if (site) drawSiteOver(ctx, state, site, tokens, px);
 
     state._calLabelAt = null;

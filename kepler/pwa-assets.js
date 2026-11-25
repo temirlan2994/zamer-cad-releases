@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "dda4f283a7c21b42",
+  "version": "51f7d7968e600843",
   "assets": [
     "./",
     "./analysis-panels.css",
@@ -107,6 +107,8 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/opening-snap3d.js",
     "./core/opening-spacing.js",
     "./core/ortho-grid.js",
+    "./core/outdoor-route.js",
+    "./core/outdoor-stair-links.js",
     "./core/path-geometry.js",
     "./core/pdf.js",
     "./core/pick3d.js",
@@ -158,6 +160,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/walls-v2.js",
     "./core/walls.js",
     "./core/whole-home-layout.js",
+    "./core/workflow-status.js",
     "./core/zamer/blocks.js",
     "./core/zamer/dxf-writer.js",
     "./core/zamer/dxf.js",
@@ -230,6 +233,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/object-gizmo3d.js",
     "./ui/opening-library.js",
     "./ui/opening3d.js",
+    "./ui/outdoor-route.js",
     "./ui/plan-actions.js",
     "./ui/plan-grids.js",
     "./ui/plan-landscape.js",
@@ -237,6 +241,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/plan-roofs.js",
     "./ui/plan-section.js",
     "./ui/plan-shadows.js",
+    "./ui/project-history.js",
     "./ui/project-name.js",
     "./ui/project-route.js",
     "./ui/project-thumbnail.js",
@@ -310,6 +315,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/workspace-views.js",
     "./workbench.css",
     "./workers/layout-worker.js",
+    "./workers/workflow-status-worker.js",
     "./workspace-views.css"
   ]
 });

@@ -6,7 +6,7 @@
 import { toWorld } from './building.js';
 import {
   createLandscapeObject, distanceToPolygon, isPathShape, landscapeDef, lineLayout, objectColors, objectOutline,
-  ELEV_LIMIT, MAX_STAIR_RISE, PLATFORM_KINDS, applyStairsDrop, objectPath, pathBoards, platformTop, pointAlong, polygonArea, polylineLength, seededRandom, steppingSlabs, toWorld as landscapeWorld,
+  ELEV_LIMIT, MAX_STAIR_RISE, PLATFORM_KINDS, applyStairsDrop, isLevelPath, normalizeElev, objectPath, pathBoards, pathSlabThickness, platformTop, pointAlong, pointInObject, polygonArea, polylineLength, seededRandom, steppingSlabs, toWorld as landscapeWorld,
 } from './landscape.js';
 import { groundLevel, levelProject } from './model.js';
 import { buildingFootprint } from './site-check.js';
@@ -17,6 +17,45 @@ import { pointInPolygon, segmentsIntersect } from './zamer/geometry.js';
 export const PLANT_KINDS = ['tree-pine', 'tree-spruce', 'tree-birch', 'tree-oak', 'tree-fruit', 'tree-thuja', 'tree-bonsai', 'shrub-box', 'shrub-flower', 'shrub-juniper', 'grass-clump', 'boulder'];
 
 const closedPath = (path) => [...path, path[0]];
+
+export function walkingLevel(point, objects, ground, clearance = 0) {
+  const datum = ground.siteDatum ?? 0;
+  const surfaces = objects.filter((o) => o.kind !== 'sunken-lounge'
+    && (PLATFORM_KINDS.has(o.kind) || isLevelPath(o)) && pointInObject(o, point, 60));
+  if (!surfaces.length) return Math.round(ground(point.x, point.y) - datum + clearance);
+  return Math.round(Math.max(...surfaces.map((o) => isLevelPath(o)
+    ? o.elev : platformTop(o, ground(o.x, o.y) - datum))));
+}
+
+export function stairsBetween(a, b, { aLevel, bLevel, width = 2400, variant = 'graphite', landing = 0, assumeRise = true, id } = {}) {
+  const za = normalizeElev(aLevel);
+  const zb = normalizeElev(bLevel);
+  if (za == null || zb == null) return { error: 'Укажите отметки концов' };
+  const low = za <= zb ? a : b;
+  const high = za <= zb ? b : a;
+  const lower = Math.min(za, zb);
+  const upper = za === zb && assumeRise ? normalizeElev(za + 450) : Math.max(za, zb);
+  const rise = upper - lower;
+  if (!(rise > 0 && rise <= MAX_STAIR_RISE)) return { error: 'Перепад должен быть от 1 до 6000 мм' };
+  const run = Math.hypot(low.x - high.x, low.y - high.y);
+  if (run > landscapeDef('stairs-out').max.h) return { error: 'Длина лестницы должна быть до 48 м' };
+  const landingLength = Math.max(0, Math.min(6000, Math.round(landing)));
+  const available = run - landingLength;
+  const least = Math.max(landingLength ? 2 : 1, Math.ceil(rise / 200), Math.ceil(available / 1200));
+  const most = Math.min(60, Math.floor(available / 200));
+  if (least > most) return { error: 'Увеличьте расстояние или укоротите площадку' };
+  const steps = Math.min(most, Math.max(least, Math.round(rise / 140)));
+  const rotation = Math.atan2(high.x - low.x, low.y - high.y) * 180 / Math.PI;
+  const obj = createLandscapeObject('stairs-out', 0, 0, {
+    id, w: width, rotation, variant, elev: lower, elevTo: upper,
+    meta: { steps, tread: Math.round(available / steps), landing: landingLength, measured: true },
+  });
+  // Верхний край точно совпадает с выбранной площадкой после округления проступи.
+  const axis = landscapeWorld(obj, 0, obj.h / 2);
+  obj.x = Math.round(high.x + axis.x);
+  obj.y = Math.round(high.y + axis.y);
+  return { obj, assumedRise: za === zb };
+}
 
 // Snap the upper landing of an outdoor stair to the chosen side of a platform.
 // Both elevations are site-datum levels. +Y in the stair's axes points downhill.
@@ -66,6 +105,7 @@ export function platformLevelEdit(objects, platform, ground = 0) {
   const level = Math.round(platformTop(platform, ground));
   const outline = objectOutline(platform);
   const stairs = objects.filter((stair) => {
+    if (stair.meta?.stairLinks) return false;
     if (stair.kind !== 'stairs-out' || !Number.isFinite(stair.elev) || Math.abs(stair.elevTo - level) > 1 || !Number.isFinite(stair.elevTo)) return false;
     // Probe either side of the upper landing. A neighbouring flight whose
     // upper edge stops short or faces into the deck remains independent.
@@ -494,20 +534,23 @@ export function explodePath(o) {
   const round = (p) => ({ x: Math.round(p.x), y: Math.round(p.y) });
   if (o.variant === 'stepping') {
     const objects = steppingSlabs(o).map((s) => createLandscapeObject('slab', s.x, s.y, {
-      w: s.along, h: s.across, rotation: deg(s.angle), color: colors[s.ci ?? 0], height: 40,
+      w: s.along, h: s.across, rotation: deg(s.angle), color: colors[s.ci ?? 0], height: pathSlabThickness(o),
+      ...(isLevelPath(o) ? { elev: o.elev, meta: { pathLevel: 'fixed' } } : {}),
     }));
     return { objects, kind: 'slab' };
   }
   if (o.variant === 'deck') {
+    const level = isLevelPath(o) ? { elev: o.elev, meta: { pathLevel: 'fixed' } } : {};
     const objects = pathBoards(o).map((b) => (b.poly
-      ? createLandscapeObject('deck-area', 0, 0, { points: b.poly.map(round), color: colors[b.ci ?? 0], height: 40 })
-      : createLandscapeObject('board', b.x, b.y, { w: b.along, h: b.across, rotation: deg(b.angle), color: colors[b.ci ?? 0], height: 40 })));
+      ? createLandscapeObject('deck-area', 0, 0, { points: b.poly.map(round), color: colors[b.ci ?? 0], height: 40, ...level })
+      : createLandscapeObject('board', b.x, b.y, { w: b.along, h: b.across, rotation: deg(b.angle), color: colors[b.ci ?? 0], height: 40, ...level })));
     return { objects, kind: 'board' };
   }
   const [kind, variant] = AREA_OF[o.variant] || AREA_OF.pavers;
   const objects = lineLayout(o).pieces
     .map((pc) => pc.poly.map(round))
     .filter((poly) => poly.length >= 3 && polygonArea(poly) > 100)
-    .map((poly) => createLandscapeObject(kind, 0, 0, { points: poly, variant, height, ...(o.color ? { color: o.color } : {}) }));
+    .map((poly) => createLandscapeObject(kind, 0, 0, { points: poly, variant, height, ...(o.color ? { color: o.color } : {}),
+      ...(isLevelPath(o) ? { elev: o.elev } : {}) }));
   return { objects, kind: 'area' };
 }

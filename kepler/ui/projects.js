@@ -5,7 +5,7 @@
 import { deserializeProject, serializeProject } from '../core/model.js';
 import { projectPreviewHtml, safeProjectPreview } from '../core/project-preview.js';
 import {
-  deleteProject, getProject, hashText, listProjects, loadDraft, loadShared, loadVersion, newId, publishProject,
+  deleteProject, getProject, listProjects, loadDraft, loadShared, loadVersion, newId, publishProject,
   saveDraft, saveVersion, unpublishProject, updateProjectPreview, watchProjects, watchShared,
 } from '../core/storage.js';
 import {
@@ -22,6 +22,7 @@ import {
 import {
   currentProjectName, PROJECT_NAME_EVENT, syncProjectNameUi,
 } from './project-name.js';
+import { preserveProjectVersion, recoveryVersions } from './project-history.js';
 import { state } from './state.js';
 import { closeStartMenu, openStartMenu, rememberEditor } from './start-menu.js';
 import { shouldUseRemoteProject } from './startup-cloud.js';
@@ -75,6 +76,7 @@ const expanded = new Set();
 let startProjectsRequest = 0;
 const START_PAGE_SIZE = 6;
 let startVisibleCount = START_PAGE_SIZE;
+let visibleRecovery = [];
 let activeEditor = null; // { pid, lease, unsubscribe, timer, lastHeartbeat }
 let handoffBusy = false;
 let pendingLeaseFlow = null;
@@ -439,7 +441,7 @@ async function handoffRequested(lease) {
     }
     if (activeEditor === current) stopLeaseMonitoring();
     clearPendingFor(current.pid);
-    lostEditor = { pid: current.pid, lease: granted.lease, localText };
+    lostEditor = { pid: current.pid, lease: granted.lease, localText, saved: true };
     state.editLocked = true;
     state.editLockReason = 'lost';
     setEditLockBusy(false, 'Последняя модель сохранена в облаке и передана другому устройству.');
@@ -701,6 +703,43 @@ function shownProjectName(project) {
   return project.id && project.id === state.pid ? currentProjectName() : project.name || 'Без названия';
 }
 
+function historyContext(pid = state.pid, fileId = state.project.fileHistoryId) {
+  return { pid, fileId, scope: getStorageScope() };
+}
+
+async function renderRecovery() {
+  const pane = el('projectRecovery');
+  const rows = el('projectRecoveryRows');
+  const context = historyContext();
+  pane.hidden = true;
+  rows.replaceChildren();
+  visibleRecovery = [];
+  if (tab !== 'mine') return;
+  const versions = await recoveryVersions(context);
+  if (!isProjectsOpen() || tab !== 'mine' || context.pid !== state.pid
+    || context.fileId !== state.project.fileHistoryId || context.scope !== getStorageScope()) return;
+  visibleRecovery = versions;
+  pane.hidden = !versions.length;
+  rows.innerHTML = versions.map((version, index) => `
+    <div class="prj-ver">
+      <span>${escapeHtml(fmtDate(version.at))} · ${escapeHtml(version.note || 'Сохранённый снимок')}</span>
+      <button type="button" data-act="restore-history" data-vid="${index}">Восстановить</button>
+    </div>`).join('');
+}
+
+function legacyBackup(project) {
+  return project.id !== state.pid && / — резерв \d{1,2}\.\d{1,2},?\s+\d{1,2}:\d{2}/i.test(project.name || '');
+}
+
+function splitProjectList(list, query, toggle) {
+  const regular = list.filter((project) => !legacyBackup(project));
+  const backups = list.length - regular.length;
+  const show = toggle.getAttribute('aria-expanded') === 'true';
+  toggle.hidden = !backups || Boolean(query.trim());
+  toggle.textContent = `${show ? 'Скрыть' : 'Показать'} старые резервные копии (${backups})`;
+  return show || query.trim() ? list : regular;
+}
+
 function searchText(value) {
   return String(value ?? '').normalize('NFKC').toLocaleLowerCase('ru').replaceAll('ё', 'е').trim();
 }
@@ -739,7 +778,7 @@ function renderStartProjects(list) {
   const box = el('startRecentProjects');
   const status = el('startRecentStatus');
   const query = el('startProjectSearch').value;
-  const matches = matchingProjects(list, query);
+  const matches = matchingProjects(splitProjectList(list, query, el('startLegacyBackups')), query);
   const recent = matches.slice(0, startVisibleCount);
   section.hidden = list.length === 0;
   el('startExamplesSection').hidden = Boolean(query.trim()) && list.length > 0;
@@ -747,9 +786,10 @@ function renderStartProjects(list) {
   const more = el('startProjectMore');
   more.hidden = recent.length >= matches.length;
   more.textContent = `Показать ещё (${Math.min(START_PAGE_SIZE, matches.length - recent.length)})`;
-  if (!recent.length && list.length) status.textContent = 'Совпадений нет';
+  if (!recent.length && list.length) status.textContent = query.trim() ? 'Совпадений нет' : 'Основных проектов пока нет';
   else if (recent.length < matches.length) status.textContent = `Показано ${recent.length} из ${matches.length}`;
-  else status.textContent = query.trim() ? `Найдено ${matches.length} из ${list.length}` : `Всего ${list.length}`;
+  else if (matches.length) status.textContent = query.trim() ? `Найдено ${matches.length} из ${list.length}` : `Всего ${matches.length}`;
+  else status.textContent = '';
   box.innerHTML = recent.map((project) => {
     const stats = latestStats(project);
     const current = project.id === state.pid;
@@ -780,6 +820,7 @@ async function refreshStartProjects() {
   el('startRecentProjects').replaceChildren();
   el('startProjectFilter').hidden = true;
   el('startProjectMore').hidden = true;
+  el('startLegacyBackups').hidden = true;
   try {
     if (!backend) await refreshBackend({ restartWatch: false });
     const list = await listProjects(backend.db, backend.root);
@@ -799,7 +840,9 @@ function render() {
   if (!backend) return;
   const query = el('projectSearch').value;
   const list = tab === 'mine' ? projects : shared;
-  const matches = matchingProjects(list, query);
+  const toggle = el('projectLegacyBackups');
+  toggle.hidden = true;
+  const matches = matchingProjects(tab === 'mine' ? splitProjectList(list, query, toggle) : list, query);
   el('projectFilter').hidden = list.length < 2 && !query;
   el('projectSearchStatus').textContent = query.trim() && list.length
     ? matches.length ? `Найдено ${matches.length} из ${list.length}` : 'Совпадений нет'
@@ -855,10 +898,12 @@ function render() {
   }).join('');
 }
 
-function openText(text, pid, missing, name = null, { resetHistory = false } = {}) {
+function openText(text, pid, missing, name = null, { resetHistory = false, keepFileHistory = false } = {}) {
   const before = snapshot();
   const beforePid = state.pid;
+  const fileId = state.project.fileHistoryId;
   restoreFrom(text);
+  if (fileId && (keepFileHistory || (pid && pid === beforePid))) state.project.fileHistoryId = fileId;
   if (pid && name) state.project.name = name;
   if (resetHistory) clearHistory(); else pushHistory(before, beforePid);
   state.pid = pid;
@@ -898,49 +943,6 @@ async function loadLatestServerProject(pid, vid = null, { fallbackText = null } 
   return loadVersion(backend.db, backend.root, pid);
 }
 
-function backupName(text) {
-  try {
-    const value = JSON.parse(text)?.name;
-    return typeof value === 'string' && value.trim() ? value.trim() : 'Проект';
-  } catch { return 'Проект'; }
-}
-
-function projectTextHash(text) {
-  try { return hashText(JSON.stringify(JSON.parse(text))); }
-  catch { return hashText(String(text || '')); }
-}
-
-async function backupLocalDifference(localText, remoteText) {
-  if (!localText || !remoteText || projectTextHash(localText) === projectTextHash(remoteText)) return null;
-  const stamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-  let body;
-  try {
-    const data = JSON.parse(localText);
-    data.name = `${backupName(localText)} — резерв ${stamp}`;
-    body = JSON.stringify(data);
-  } catch { body = localText; }
-  const pid = newId('p');
-  try {
-    await saveVersion(backend.db, backend.root, body, {
-      pid, note: 'Автоматическая копия перед загрузкой модели с другого устройства', stats: projectStats(),
-    });
-    toast('Несинхронизированные изменения сохранены отдельным резервным проектом');
-    return pid;
-  } catch {
-    try {
-      const local = await getLocalBackend();
-      await saveVersion(local.db, local.root, body, {
-        pid, note: 'Локальный резерв перед передачей между устройствами', stats: projectStats(),
-      });
-      toast('Изменения сохранены локальной резервной копией', true);
-      return pid;
-    } catch {
-      toast('Не удалось создать резерв; локальный черновик оставлен в браузере', true);
-      return null;
-    }
-  }
-}
-
 async function preserveQueuedProjectBeforeSwitch(targetPid) {
   const currentPid = state.pid;
   if (activeEditor || !currentPid || currentPid === targetPid) return true;
@@ -968,12 +970,17 @@ async function releaseCandidateLease(pid, lease) {
 }
 
 async function activateLoadedProject(pid, lease, loaded, name = null, { localBackup = null } = {}) {
+  const reason = state.editLockReason;
+  const locked = state.editLocked;
   state.editLocked = true;
   state.editLockReason = 'loading';
   cancelEditingGesture();
-  if (localBackup) await backupLocalDifference(localBackup, loaded.text);
-  if (activeEditor) await detachActiveEditor({ release: activeEditor.pid !== pid });
   try {
+    if (localBackup) await preserveProjectVersion(historyContext(pid), localBackup, {
+      compare: loaded.missing?.length ? null : loaded.text,
+      note: loaded.version?.isDraft || !loaded.version ? 'Изменения до загрузки из облака' : 'Снимок до открытия другой версии',
+    });
+    if (activeEditor) await detachActiveEditor({ release: activeEditor.pid !== pid });
     // Сначала восстанавливаем inert стартового окна, затем openText закрывает
     // его. Иначе edit-lock мог вернуть устаревший inert уже открытому редактору.
     hideEditLock();
@@ -984,6 +991,8 @@ async function activateLoadedProject(pid, lease, loaded, name = null, { localBac
     tweak(() => {});
     if (loaded.localOnly) scheduleCloudDraft(loaded.text, { immediate: true });
   } catch (error) {
+    state.editLocked = locked;
+    state.editLockReason = reason;
     await releaseCandidateLease(pid, lease);
     throw error;
   }
@@ -1097,6 +1106,16 @@ async function handleEditLockProjects() {
     } catch { /* запрос мог уже исчезнуть */ }
     finishPendingLease(null);
   }
+  if (lostEditor?.localText && !lostEditor.saved) {
+    try {
+      await preserveProjectVersion(historyContext(lostEditor.pid), lostEditor.localText, {
+        note: 'Изменения до передачи редактирования',
+      });
+    } catch (error) {
+      setEditLockBusy(false, error.message, 'error');
+      return;
+    }
+  }
   hideEditLock();
   if (activeEditor) {
     state.editLocked = false;
@@ -1107,19 +1126,6 @@ async function handleEditLockProjects() {
   state.editLocked = true;
   state.editLockReason = 'choose-project';
   await openProjectChooser({ initial: true });
-}
-
-async function saveReplacementBackup(text) {
-  if (!text) return;
-  try {
-    const local = await getLocalBackend();
-    await saveVersion(local.db, local.root, text, {
-      pid: newId('p'), note: 'Резерв перед переключением проекта', stats: null,
-    });
-    toast('Последние изменения прежнего проекта сохранены локальной резервной копией', true);
-  } catch {
-    toast('Не удалось синхронизировать прежний проект; его локальная копия оставлена в браузере', true);
-  }
 }
 
 function handleProjectReplaced(event) {
@@ -1140,6 +1146,7 @@ function handleProjectReplaced(event) {
   }
   replacementBusy = true;
   const target = backend;
+  const context = historyContext(previousPid, null);
   state.editLocked = true;
   state.editLockReason = 'switching-project';
   cancelEditingGesture();
@@ -1157,7 +1164,24 @@ function handleProjectReplaced(event) {
       saved = await flushCloudDraft();
     } catch { /* ниже останется локальная резервная копия */ }
     if (!saved) {
-      await saveReplacementBackup(previousText);
+      try {
+        const text = pendingCloudDrafts.get(previousPid)?.text || previousText;
+        if (!text) throw new Error('Нет полного снимка');
+        await preserveProjectVersion(context, text, { note: 'Несинхронизированные изменения перед переключением' });
+        toast('Изменения сохранены в истории прежнего проекта на этом устройстве');
+      } catch (error) {
+        replacementBusy = false;
+        const text = pendingCloudDrafts.get(previousPid)?.text || previousText;
+        if (text) restoreFrom(text);
+        state.pid = previousPid;
+        syncProjectNameUi();
+        if (activeEditor === current) {
+          unlockEditor();
+          tweak(() => {});
+        } else lockEditor('moved', { localText: text });
+        toast(`Переключение отменено: ${error.message}`, true);
+        return;
+      }
       clearPendingFor(previousPid);
     }
     if (activeEditor === current) stopLeaseMonitoring();
@@ -1468,6 +1492,18 @@ async function onAction(button) {
     if (act === 'toggle') {
       if (expanded.has(pid)) expanded.delete(pid); else expanded.add(pid);
       render();
+    } else if (act === 'restore-history') {
+      const version = visibleRecovery[Number(vid)];
+      if (!version || !await flushBeforeSwitch()) return;
+      const context = historyContext();
+      const loaded = await version.load();
+      if (loaded.missing?.length) throw new Error('Не удалось прочитать все данные этого снимка');
+      const current = serializeProject(state.project, { pretty: false });
+      await preserveProjectVersion(context, current, { compare: loaded.text, note: 'Состояние перед восстановлением' });
+      if (context.pid && usesEditLease() && !activeEditorFence(context.pid)) {
+        throw new Error('Сначала подтвердите право редактирования проекта');
+      }
+      openText(loaded.text, context.pid, loaded.missing, currentProjectName(), { keepFileHistory: true });
     } else if (act === 'open') {
       const meta = projects.find((candidate) => candidate.id === pid);
       const name = state.pid === pid ? currentProjectName() : meta?.name;
@@ -1478,10 +1514,16 @@ async function onAction(button) {
         try {
           ({ lease } = await acquireProjectLease(pid, { kind: 'occupied' }));
           if (!lease) return;
-          const localBackup = state.pid === pid
+          let localBackup = state.pid === pid
             ? serializeProject(state.project, { pretty: false })
             : null;
+          if (vid && !localBackup) {
+            const current = await loadLatestServerProject(pid);
+            if (current.missing?.length) throw new Error('Текущая версия проекта загрузилась не полностью');
+            localBackup = current.text;
+          }
           const loaded = await loadLatestServerProject(pid, vid || null);
+          if (vid && loaded.missing?.length) throw new Error('Не удалось прочитать все данные этой версии');
           await activateLoadedProject(pid, lease, loaded, loaded.meta?.name, { localBackup });
         } catch (error) {
           await releaseCandidateLease(pid, lease);
@@ -1494,6 +1536,14 @@ async function onAction(button) {
           return;
         }
         const { text, missing } = await loadVersion(backend.db, backend.root, pid, vid || null);
+        if (vid || state.pid === pid) {
+          if (missing?.length) throw new Error('Не удалось прочитать все данные этой версии');
+          const current = state.pid === pid
+            ? { text: serializeProject(state.project, { pretty: false }), missing: [] }
+            : await loadVersion(backend.db, backend.root, pid);
+          if (current.missing?.length) throw new Error('Текущая версия проекта загрузилась не полностью');
+          await preserveProjectVersion(historyContext(pid), current.text, { compare: text, note: 'Снимок до открытия другой версии' });
+        }
         openText(text, pid, missing, name);
       }
     } else if (act === 'open-shared') {
@@ -1578,6 +1628,7 @@ function setTab(next) {
   el('prjTabShared').classList.toggle('active', tab === 'shared');
   el('projectsSave').hidden = tab !== 'mine';
   el('projectsList').innerHTML = '<p class="hint">Загрузка…</p>';
+  renderRecovery().catch(() => toast('История на устройстве временно недоступна', true));
   watch();
 }
 
@@ -1667,6 +1718,7 @@ export async function openProjects() {
   document.querySelector('.app')?.setAttribute('inert', '');
   el('projectsClose').focus({ preventScroll: true });
   el('projectsList').innerHTML = '<p class="hint">Загрузка…</p>';
+  el('projectLegacyBackups').setAttribute('aria-expanded', 'false');
   account = await getAccountState();
   renderAccount();
   await refreshBackend({ restartWatch: false });
@@ -1678,6 +1730,7 @@ export async function openProjectChooser(options = {}) {
   el('startProjectClear').hidden = true;
   el('startExamplesSection').hidden = false;
   startVisibleCount = START_PAGE_SIZE;
+  el('startLegacyBackups').setAttribute('aria-expanded', 'false');
   openStartMenu(options);
   renderAccount();
   if (loginGateActive()) {
@@ -1775,6 +1828,17 @@ export function bindProjects(initialAccount = null) {
     renderStartProjects(projects);
     el('startRecentProjects').children[firstNewIndex]?.focus();
   });
+  el('startLegacyBackups').addEventListener('click', (event) => {
+    const button = event.currentTarget;
+    button.setAttribute('aria-expanded', button.getAttribute('aria-expanded') === 'true' ? 'false' : 'true');
+    startVisibleCount = START_PAGE_SIZE;
+    renderStartProjects(projects);
+  });
+  el('projectLegacyBackups').addEventListener('click', (event) => {
+    const button = event.currentTarget;
+    button.setAttribute('aria-expanded', button.getAttribute('aria-expanded') === 'true' ? 'false' : 'true');
+    render();
+  });
   el('prjSave').addEventListener('click', saveCurrent);
   el('googleSignIn').addEventListener('click', handleSignIn);
   el('startGoogleSignIn').addEventListener('click', handleSignIn);
@@ -1782,6 +1846,10 @@ export function bindProjects(initialAccount = null) {
   el('startGoogleSignOut').addEventListener('click', handleSignOut);
   el('projectsTransferBtn').addEventListener('click', transferLocalProjects);
   el('projectsList').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-act]');
+    if (button) onAction(button);
+  });
+  el('projectRecoveryRows').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-act]');
     if (button) onAction(button);
   });

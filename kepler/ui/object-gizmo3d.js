@@ -19,6 +19,7 @@ export function initObjectGizmo3d(value) { env = value; }
 export const objectGizmoDragging = () => Boolean(drag);
 
 function target() {
+  if (state.tool || state.editLocked) return null;
   const sel = state.selection;
   if (sel?.type === 'item') {
     const object = state.project?.items?.find((entry) => entry.id === sel.id);
@@ -33,9 +34,17 @@ function target() {
   return null;
 }
 
+const axesOf = (t) => (t.canZ ? ['x', 'y', 'z'] : ['x', 'y']);
+const belongsTo = (t, face) => (t.type === 'item' ? face.itemId === t.id : face.landscapeId === t.id);
+
+export function visibleObjectGizmoAxes() {
+  const t = target();
+  return t && env?.faces().some((face) => belongsTo(t, face) && face.pts?.length) ? axesOf(t) : null;
+}
+
 function bounds(t = target()) {
   if (!t || !env) return null;
-  const list = env.faces().filter((face) => (t.type === 'item' ? face.itemId === t.id : face.landscapeId === t.id));
+  const list = env.faces().filter((face) => belongsTo(t, face));
   const pts = list.flatMap((face) => face.pts || []);
   if (!pts.length) return null;
   return {
@@ -94,8 +103,7 @@ export function objectGizmoOverlay() {
     edges: Q.map((p, i) => [p, Q[(i + 1) % Q.length]]), edgeRgba: [0.75, 0.5, 0.05, 0.95],
   }];
   const B = env.basis();
-  const axes = t.canZ ? ['x', 'y', 'z'] : ['x', 'y'];
-  for (const axis of axes) {
+  for (const axis of axesOf(t)) {
     const a = GIZMO_AXES[axis];
     const side = unit(cross(a, B.f));
     if (!side) continue;
@@ -203,30 +211,38 @@ export function moveObjectGizmoDrag(event) {
       elev3d: Math.max(0, Math.round((Number(start.elev3d) || 0) + dz)),
     }
     : movedLandscape(start, dx, dy, dz);
-  let changed = dx !== 0 || dy !== 0 || dz !== 0;
   if (drag.platformEdit) {
     const edit = drag.platformEdit;
     edit.stairs.forEach((stair, index) => Object.assign(stair, drag.stairStarts[index]));
     const level = Math.round(Math.max(edit.min, Math.min(edit.max, drag.startElev + dz)));
-    changed = level !== edit.level;
-    if (changed) setPlatformLevel({ ...edit, platform: next }, level);
+    if (level !== edit.level) setPlatformLevel({ ...edit, platform: next }, level);
     else if (Number.isFinite(start.elev)) next.elev = start.elev;
     else delete next.elev;
   }
   replaceObject(next);
-  drag.changed = changed;
+  const movedZ = drag.target.type === 'item'
+    ? next.elev3d - (Number(start.elev3d) || 0)
+    : (next.elev ?? drag.startElev) - drag.startElev;
+  drag.changed = next.x !== start.x || next.y !== start.y || movedZ !== 0;
   const signed = (v) => `${v > 0 ? '+' : ''}${Math.round(v)}`;
-  env.hint(`${drag.part.toUpperCase()}: ${signed(dx)}, ${signed(dy)}${drag.target.canZ ? `, ${signed(dz)}` : ''} мм · Shift — без шага`);
+  const values = { x: dx, y: dy, z: movedZ };
+  const readout = [...drag.part].map((axis) => `${axis.toUpperCase()} ${signed(values[axis])} мм`).join(' · ');
+  env.hint(readout + (event.pointerType === 'touch' ? '' : ' · Shift — без шага'));
   env.rebuild();
 }
 
 export function finishObjectGizmoDrag() {
   const current = drag;
   drag = null; hover = null;
-  if (!current?.changed) { env.redraw(); return; }
+  if (!current?.changed) {
+    if (current) env.hint();
+    env.redraw();
+    return;
+  }
   pushHistory(current.before);
   afterChange();
   env.rebuild();
+  env.hint();
 }
 
 export function cancelObjectGizmoDrag() {
@@ -236,6 +252,7 @@ export function cancelObjectGizmoDrag() {
   replaceObject(current.start);
   drag = null; hover = null;
   env.rebuild();
+  env.hint();
 }
 
 // Для e2e: реальные экранные точки и допустимые оси выбранного объекта.
@@ -246,7 +263,7 @@ export function debugObjectGizmo3d() {
   const scr = screen(t, b);
   return {
     target: { type: t.type, id: t.id },
-    axes: t.canZ ? ['x', 'y', 'z'] : ['x', 'y'],
+    axes: axesOf(t),
     origin: scr.origin,
     tips: scr.tips,
     plane: scr.plane,

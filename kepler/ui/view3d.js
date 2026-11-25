@@ -71,6 +71,7 @@ import {
 import {
   cancelObjectGizmoDrag, clearObjectGizmoHover, debugObjectGizmo3d, finishObjectGizmoDrag, initObjectGizmo3d,
   moveObjectGizmoDrag, objectGizmoDragging, objectGizmoHover, objectGizmoOverlay, objectGizmoPartAt, startObjectGizmoDrag,
+  visibleObjectGizmoAxes,
 } from './object-gizmo3d.js';
 
 // dist — масштаб ортографического вида; eyeDist — физическое расстояние до
@@ -80,7 +81,7 @@ const cam = {
   yaw: -2.2, pitch: 0.62, dist: 25000, eyeDist: 50000,
   projection: 'orthographic', target: { x: 0, y: 0, z: 1500 },
 };
-const layerPreferences = { roof: true, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all', masses: true };
+const layerPreferences = { roof: true, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all', masses: true, evening: false };
 let opts = layerPreferences;
 let interior = null;
 const LAYERS_KEY = 'kepler-3d-layers'; // запомненные слои: мебель, этажи, массы
@@ -96,6 +97,7 @@ function loadLayers() {
     if (raw && typeof raw.roof === 'boolean') opts.roof = raw.roof;
     if (raw && LEVEL_MODES.has(raw.levels)) opts.levels = raw.levels;
     if (raw && typeof raw.masses === 'boolean') opts.masses = raw.masses;
+    if (raw && typeof raw.evening === 'boolean') opts.evening = raw.evening;
     if (raw && ['perspective', 'orthographic'].includes(raw.projection)) cam.projection = raw.projection;
   } catch { /* нет хранилища — по умолчанию */ }
 }
@@ -105,7 +107,7 @@ function saveLayers() {
   try {
     const prev = JSON.parse(localStorage.getItem(LAYERS_KEY) || 'null') || {}; // и флажок «Магнит масс» (ui/mass3d.js)
     localStorage.setItem(LAYERS_KEY, JSON.stringify({
-      ...prev, roof: opts.roof, furniture: opts.furniture, levels: opts.levels, masses: opts.masses,
+      ...prev, roof: opts.roof, furniture: opts.furniture, levels: opts.levels, masses: opts.masses, evening: opts.evening,
       projection: frontFacade?.previous.projection ?? cam.projection,
     }));
   } catch { /* нет хранилища */ }
@@ -337,12 +339,18 @@ function selectionOverlay() {
 const groundShown = (f) => (f.kind !== 'massUnder' && f.kind !== 'massLine') ||
   (state.selection?.type === 'mass' && state.selection.id === f.massId);
 
+function sceneColor(face) {
+  const color = faceColor(face);
+  if (!opts.evening || face.emissive || face.kind?.startsWith('overlay')) return color;
+  return mixHex(color, '#1c2542', 0.58);
+}
+
 function uploadGeometry() {
   if (!gl) return;
   geomDirty = false;
   for (const set of [glState.buffers, glState.under]) if (set) for (const b of Object.values(set)) gl.deleteBuffer(b.buf);
   // Подземная часть масс — отдельно: рисуется сквозь землю (GREATER).
-  glState.buffers = sceneBuffers(gl, faces.filter((f) => f.kind !== 'massUnder' && groundShown(f)), faceColor, faceAlpha);
+  glState.buffers = sceneBuffers(gl, faces.filter((f) => f.kind !== 'massUnder' && groundShown(f)), sceneColor, faceAlpha);
   glState.under = sceneBuffers(gl, faces.filter((f) => f.kind === 'massUnder' && groundShown(f)), faceColor, faceAlpha);
   uploadOverlay();
 }
@@ -365,7 +373,7 @@ function renderGl(canvas) {
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * dpr);
   }
-  drawSceneGL(glState, cam, width, height);
+  drawSceneGL(glState, cam, width, height, opts.evening ? [0.11, 0.15, 0.23] : undefined);
 }
 
 // ---------------------------------------------------------------- canvas 2D
@@ -381,8 +389,8 @@ function render2d(canvas) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const sky = ctx.createLinearGradient(0, 0, 0, height);
-  sky.addColorStop(0, '#dfe9f5');
-  sky.addColorStop(1, '#f7f9fb');
+  sky.addColorStop(0, opts.evening ? '#171d31' : '#dfe9f5');
+  sky.addColorStop(1, opts.evening ? '#303c55' : '#f7f9fb');
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, width, height);
 
@@ -415,7 +423,7 @@ function render2d(canvas) {
     }
     if (behind) continue;
     const light = face.flat ? 1 : 0.6 + 0.4 * Math.max(0, dot(n, LIGHT));
-    const [r, g, b] = hexRgb(faceColor(face));
+    const [r, g, b] = hexRgb(sceneColor(face));
     const edgePts = Array.isArray(face.edges) ? face.edges.map(([a0, b0]) => [a0, b0].map((raw) => {
       return projectPoint(cam, width, height, raw);
     })) : null;
@@ -681,7 +689,6 @@ function syncReliefControl() {
 
 const HINT_IDLE = 'Тяните, чтобы вращать · Нажмите на объект, чтобы выбрать';
 const HINT_OBJ = 'Delete — удалить · Ctrl+C/V/D — копировать/вставить/дублировать · R — повернуть мебель · Esc — снять выбор';
-const HINT_GIZMO = 'Гизмо: стрелка X/Y/Z — одна ось · жёлтый квадрат — по земле · Shift — без шага · Delete — удалить';
 const HINT_SEL = 'Тяните верх стены — высота, бок — сдвиг (Alt — толщина), торец ручной стены — длина · двойной клик по грани — число · Ctrl — без привязки';
 const HINT_SEL_TOUCH = 'Удерживайте грань выбранной стены и тяните: верх — высота, бок — сдвиг';
 const HINT_SITE = 'Редактирование приостановлено';
@@ -691,6 +698,17 @@ const HINT_ROOF = 'Крыша: точки — вынос (по плоскост�
 const HINT_ROOF_TOOL = 'Ручная крыша: клик по помещению — накрыть · Shift+клик — добавить к выбранной · клик по крыше — выбрать · Esc — выйти';
 const HINT_FURNITURE_TOOL = 'Нажмите на пол, чтобы поставить объект · Пробел — повернуть · Esc — закончить';
 let touchUsed = false;
+
+function objectGizmoHint() {
+  const axes = visibleObjectGizmoAxes();
+  if (!axes) return state.selection?.type === 'landscape' && state.selection.ids?.length > 1
+    ? 'Для перемещения в 3D выберите один объект' : '';
+  const movement = axes.includes('z')
+    ? 'X/Y — по горизонтали · Z — высота · Квадрат — обе оси X/Y'
+    : 'X/Y — по участку · Квадрат — обе оси X/Y';
+  const touch = touchUsed || window.matchMedia('(pointer: coarse)').matches;
+  return movement + (touch ? '' : ' · Shift — без шага · Delete — удалить');
+}
 
 function setHint(text) {
   const hint = el('v3Hint');
@@ -710,7 +728,7 @@ function setHint(text) {
     else if (state.selection?.type === 'opening') text = openingSelectionHint();
     else if (frontFacade && (!state.selection || selectedRef())) text = 'Выберите окно или отделку для правки · Тяните фон, чтобы сдвинуть вид';
     else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
-    else if (state.selection?.type === 'item' || state.selection?.type === 'landscape') text = HINT_GIZMO;
+    else if (state.selection?.type === 'item' || state.selection?.type === 'landscape') text = objectGizmoHint();
     else if (selectedObject()) text = HINT_OBJ;
     else text = HINT_IDLE;
   }
@@ -807,6 +825,8 @@ function syncLayerControls() {
   if (lv) lv.value = opts.levels;
   const ms = el('v3Masses');
   if (ms) ms.checked = opts.masses;
+  const evening = el('v3Evening');
+  if (evening) evening.checked = opts.evening;
 }
 
 function syncCameraControls() {
@@ -1394,6 +1414,14 @@ function onDown(e) {
     setHint();
     return;
   }
+  // Shift на ручке снимает шаг. На свободном фоне он перемещает камеру.
+  const objectPart = e.button === 0 && pointers.size === 1 ? objectGizmoPartAt(e) : null;
+  if (objectPart && startObjectGizmoDrag(e, objectPart)) {
+    gesture = { kind: 'object-gizmo' };
+    canvas.style.cursor = 'grabbing';
+    setHint();
+    return;
+  }
   // Инструмент «Масса»: клик (без сдвига) — шаг жеста; потянули — вращение
   // (с Shift — сдвиг вида), как обычно.
   const massTool = massToolOn() && wallsEditable() && e.button === 0 && pointers.size === 1;
@@ -1438,15 +1466,6 @@ function onDown(e) {
   if (massPart && startMassDrag(e, massPart)) {
     gesture = { kind: 'mass' };
     el('canvas3d').style.cursor = massPart.part.startsWith('g') ? 'grabbing' : el('canvas3d').style.cursor;
-    setHint();
-    return;
-  }
-  // Обычные объекты используют единый 3D-гизмо: мебель — XYZ, деревья и
-  // прочие наземные объекты — только XY, высотные объекты участка — XYZ.
-  const objectPart = wallsEditable() ? objectGizmoPartAt(e) : null;
-  if (objectPart && startObjectGizmoDrag(e, objectPart)) {
-    gesture = { kind: 'object-gizmo' };
-    el('canvas3d').style.cursor = 'grabbing';
     setHint();
     return;
   }
@@ -1790,6 +1809,7 @@ export function bind3d() {
   el('v3Roof')?.addEventListener('change', (e) => set3dRoofVisibility(e.target.checked));
   el('v3Site')?.addEventListener('change', (e) => { opts.site = e.target.checked; refresh3d(); });
   el('v3Landscape')?.addEventListener('change', (e) => { opts.landscape = e.target.checked; refresh3d(); });
+  el('v3Evening')?.addEventListener('change', (e) => { opts.evening = e.target.checked; saveLayers(); refresh3d(); });
   loadLayers();
   syncLayerControls();
   el('v3Furniture')?.addEventListener('change', (e) => {

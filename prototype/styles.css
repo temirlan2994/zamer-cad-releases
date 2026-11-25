@@ -95,6 +95,18 @@ input {
   display: none;
 }
 
+.brand-logo img {
+  display: block;
+  height: auto;
+  max-width: 100%;
+  width: 100%;
+}
+.brand-logo .brand-logo-dark { display: none; }
+.app-shell[data-theme="dark"] .brand-logo .brand-logo-light { display: none; }
+.app-shell[data-theme="dark"] .brand-logo .brand-logo-dark { display: block; }
+.auth-brand { margin-block: 4px 10px; width: 220px; }
+.home-brand { margin-bottom: 9px; width: 164px; }
+
 .auth-screen {
   align-items: center;
   background:
@@ -213,6 +225,7 @@ input {
 .project-home-head {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: space-between;
   margin-bottom: 17px;
@@ -221,7 +234,7 @@ input {
 .project-home-title { min-width: 0; }
 
 .project-home h1 {
-  font-size: clamp(1.65rem, 8vw, 2.1rem);
+  font-size: 1.25rem;
   font-weight: 760;
   letter-spacing: -.055em;
   line-height: 1.08;
@@ -1348,6 +1361,24 @@ button.project-card-open:active { background: var(--surface-2); }
 .project-gesture-setting .layer-switch { flex: 0 0 auto; }
 .project-gesture-setting:has(input:focus-visible) { outline: 2px solid var(--readable-accent); outline-offset: 2px; }
 
+.spen-settings-group {
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 12px;
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+  padding: 7px;
+}
+.spen-settings-group legend {
+  color: var(--readable-accent);
+  font-size: .8rem;
+  font-weight: 800;
+  padding-inline: 6px;
+}
+.spen-settings-group .project-gesture-setting { min-height: 52px; }
+.spen-settings-group .project-gesture-setting:has(input:disabled) { opacity: .5; }
+
 .annotation-scale-setting { gap: 6px; }
 
 .survey-content .annotation-scale-opener {
@@ -2045,6 +2076,40 @@ button.project-card-open:active { background: var(--surface-2); }
 .save-indicator[data-state="error"] {
   color: var(--error-text);
 }
+
+.spen-indicator {
+  align-items: center;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--readable-accent);
+  display: inline-flex;
+  font-size: .68rem;
+  font-weight: 800;
+  gap: 4px;
+  min-height: 24px;
+  padding: 3px 8px;
+  position: absolute;
+  right: 10px;
+  top: 42px;
+  z-index: 6;
+}
+
+.app-shell.spen-compact-ui .canvas-escape-button {
+  border-radius: 11px;
+  height: 56px;
+  min-width: 64px;
+  padding-inline: 8px;
+  width: 64px;
+}
+.app-shell.spen-compact-ui .canvas-frame-button {
+  height: 40px;
+  top: 70px;
+  width: 40px;
+}
+.app-shell.spen-compact-ui .quick-edit-modes .icon-button { height: 40px; }
+.app-shell.spen-compact-ui .tool-rail { padding-top: 4px; }
+.app-shell.spen-compact-ui .tool { height: 46px; }
 
 .workspace:has(:is(#drawToolMenu, #dimensionToolMenu, #annotationToolMenu, #selectModeMenu):not([hidden])) :is(.corner-metrics, .draft-metric-labels),
 .app-shell:has(#snapMore[open]) :is(.corner-metrics, .draft-metric-labels),

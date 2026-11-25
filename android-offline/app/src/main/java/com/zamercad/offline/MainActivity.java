@@ -1,9 +1,13 @@
 package com.zamercad.offline;
 
 import android.app.Activity;
+import android.annotation.SuppressLint;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Insets;
@@ -16,6 +20,7 @@ import android.provider.MediaStore;
 import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
+import android.view.MotionEvent;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.MimeTypeMap;
@@ -49,6 +54,7 @@ public final class MainActivity extends Activity {
     private static final String APP_PATH_PREFIX = "/assets/";
     private static final String EXPORT_DIRECTORY = Environment.DIRECTORY_DOWNLOADS + "/Zamer CAD";
     private static final int MAX_EXPORT_BYTES = 32 * 1024 * 1024;
+    private static final String SPEN_INSERT_ACTION = "com.samsung.pen.INSERT";
     private static final String HANDLE_BACK_SCRIPT =
         "(function(){var home=document.getElementById('projectHome');" +
         "if(home&&home.hidden){var back=document.getElementById('backToProjectsButton');" +
@@ -69,6 +75,16 @@ public final class MainActivity extends Activity {
     private int imeInsetBottom;
     private boolean typedImeVisible;
     private volatile KeyboardViewport keyboardViewport = new KeyboardViewport(false, 0);
+    private boolean sPenActive;
+    private boolean sPenDetected;
+    private boolean sPenReceiverRegistered;
+
+    private final BroadcastReceiver sPenReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            handleSpenInsert(intent);
+        }
+    };
 
     private record ExportedFile(String requestId, Uri uri, String fileName, String mimeType) {}
 
@@ -93,6 +109,14 @@ public final class MainActivity extends Activity {
         });
         webView.setBackgroundColor(Color.rgb(248, 250, 253));
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        webView.setOnGenericMotionListener((view, event) -> {
+            noteSpenInput(event);
+            return false;
+        });
+        webView.setOnTouchListener((view, event) -> {
+            noteSpenInput(event);
+            return false;
+        });
         // Insets belong to the native parent: WebView padding does not resize
         // the CSS viewport and lets fixed/absolute page content cover system bars.
         viewport = new FrameLayout(this);
@@ -161,6 +185,8 @@ public final class MainActivity extends Activity {
             }
         });
 
+        registerSpenReceiver();
+
         if (savedInstanceState == null) {
             webView.loadUrl(APP_ORIGIN + APP_PATH_PREFIX + "index.html?apk=1");
         } else {
@@ -172,6 +198,58 @@ public final class MainActivity extends Activity {
         if (webView != null && !isDestroyed()) {
             webView.evaluateJavascript("window.zamerUpdateAvailable?.(" + JSONObject.quote(version) + ");", null);
         }
+    }
+
+    private void noteSpenInput(MotionEvent event) {
+        if (event == null) return;
+        boolean stylus = false;
+        for (int index = 0; index < event.getPointerCount(); index++) {
+            int type = event.getToolType(index);
+            if (type == MotionEvent.TOOL_TYPE_STYLUS || type == MotionEvent.TOOL_TYPE_ERASER) {
+                stylus = true;
+                break;
+            }
+        }
+        if (!stylus || (sPenDetected && sPenActive)) return;
+        sPenDetected = true;
+        sPenActive = true;
+        dispatchSpenState();
+    }
+
+    private void handleSpenInsert(Intent intent) {
+        if (intent == null || !SPEN_INSERT_ACTION.equals(intent.getAction()) || !intent.hasExtra("penInsert")) return;
+        boolean inserted = intent.getBooleanExtra("penInsert", true);
+        sPenDetected = true;
+        sPenActive = !inserted;
+        dispatchSpenState();
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private void registerSpenReceiver() {
+        IntentFilter filter = new IntentFilter(SPEN_INSERT_ACTION);
+        try {
+            Intent sticky = Build.VERSION.SDK_INT >= 33
+                ? registerReceiver(sPenReceiver, filter, Context.RECEIVER_EXPORTED)
+                : registerReceiver(sPenReceiver, filter);
+            sPenReceiverRegistered = true;
+            if (sticky != null) handleSpenInsert(sticky);
+        } catch (RuntimeException ignored) {
+            sPenReceiverRegistered = false;
+        }
+    }
+
+    private String sPenStateJson() {
+        boolean samsung = Build.MANUFACTURER != null && Build.MANUFACTURER.toLowerCase(Locale.ROOT).contains("samsung");
+        return "{\"supported\":" + (samsung || sPenDetected) +
+            ",\"detected\":" + sPenDetected + ",\"active\":" + sPenActive + "}";
+    }
+
+    private void dispatchSpenState() {
+        if (webView == null || isDestroyed()) return;
+        webView.evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('zamer-spen-state',{detail:" + sPenStateJson() + "}));",
+            null
+        );
     }
 
     private void updateKeyboardViewport() {
@@ -253,10 +331,19 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (updater != null) updater.onResume();
+        dispatchSpenState();
     }
 
     @Override
     protected void onDestroy() {
+        if (sPenReceiverRegistered) {
+            try {
+                unregisterReceiver(sPenReceiver);
+            } catch (RuntimeException ignored) {
+                // The Samsung pen service may disappear while the activity is stopping.
+            }
+            sPenReceiverRegistered = false;
+        }
         if (updater != null) updater.close();
         if (surveyLaser != null) surveyLaser.close();
         if (webView != null) {
@@ -276,6 +363,11 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String keyboardViewport() {
             return keyboardViewport.json();
+        }
+
+        @JavascriptInterface
+        public String spenState() {
+            return sPenStateJson();
         }
 
         @JavascriptInterface
@@ -491,6 +583,12 @@ public final class MainActivity extends Activity {
     }
 
     private final class LocalAssetClient extends WebViewClient {
+        @Override
+        public void onPageFinished(WebView view, String url) {
+            super.onPageFinished(view, url);
+            dispatchSpenState();
+        }
+
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             Uri uri = request.getUrl();

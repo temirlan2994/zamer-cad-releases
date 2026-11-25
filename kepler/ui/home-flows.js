@@ -8,6 +8,7 @@ import { roomType } from '../core/catalog.js';
 import { analyzeHomeFlows } from '../core/home-flows.js';
 import { ensureLayoutBrief } from '../core/layout-brief.js';
 import { LAYOUT_SCENARIOS } from '../core/layout-knowledge.generated.js';
+import { flowsMissionStatuses } from '../core/workflow-status.js';
 import { escapeHtml } from './dom.js';
 
 const asArray = (value) => (Array.isArray(value) ? value : []);
@@ -362,11 +363,7 @@ export function homeFlowsHtml(project, state = {}) {
   const unknownRoutes = Number(summary.unknownRouteCount) || 0;
   const activeScenarios = Number(summary.activeScenarioCount) || 0;
   const activeMission = !zoneCount ? 'zones' : !activeScenarios ? 'scenarios' : 'routes';
-  const missionStatus = {
-    zones: zoneCount ? 'checked' : 'unknown',
-    scenarios: activeScenarios ? 'checked' : 'attention',
-    routes: routeProblems ? 'blocked' : unknownRoutes ? 'attention' : routeCount ? 'checked' : 'unknown',
-  };
+  const missionStatus = flowsMissionStatuses(result);
   return `<div class="home-flows" data-home-flows>
     <nav class="analysis-mission-trail home-mission-trail" aria-label="Шаги анализа связей">
       <span data-status="${missionStatus.zones}"${activeMission === 'zones' ? ' aria-current="step"' : ''}><i aria-hidden="true">1</i><b>Зоны</b></span>

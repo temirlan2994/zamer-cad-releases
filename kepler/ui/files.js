@@ -8,16 +8,18 @@ import { createProject, levelProject, serializeProject } from '../core/model.js'
 import { reconcileEats } from '../core/v7/eat-bridge.js';
 import { buildRoomScheduleCsv } from '../core/schedule.js';
 import { buildTemplate } from '../core/templates.js';
-import { saveFile, saveZip } from './cloud.js';
+import { getBackend, saveFile, saveZip } from './cloud.js';
 import { refs, toast } from './dom.js';
 import { applyLibraryTab } from './library.js';
 import { applyModeRotation } from './modes.js';
 import { planGridPref } from './plan-grids.js';
+import { fileWithProjectHistory, importProjectHistory } from './project-history.js';
 import { safeProjectFileName, syncProjectNameUi } from './project-name.js';
 import { exportSolarReport, openSolarReport } from './solar-report-ui.js';
 import { buildSample } from './sample.js';
 import { buildCurrentSheetPng, buildSheetsPdf } from './sheet.js';
 import { state } from './state.js';
+import { GUEST_STORAGE_SCOPE, getStorageScope } from './storage-scope.js';
 import {
   afterChange, flushAutosave, pushHistory, refreshDerived, restoreFrom, snapshotIfContent,
 } from './store.js';
@@ -25,6 +27,7 @@ import { fitView } from './view.js';
 
 const download = (filename, data, mime) => saveFile(filename, data, mime);
 export const PROJECT_REPLACED_EVENT = 'kepler:project-replaced';
+let fileRequest = 0;
 
 function announceProjectReplaced(previousPid, previousText = null) {
   document.dispatchEvent(new CustomEvent(PROJECT_REPLACED_EVENT, {
@@ -36,12 +39,31 @@ export function safeFileName() {
   return safeProjectFileName();
 }
 
+async function portableProject(project, pid) {
+  const context = { pid, fileId: project.fileHistoryId, scope: getStorageScope() };
+  const text = serializeProject(project, { pretty: false });
+  const target = pid ? await getBackend() : null;
+  const targetScope = target?.mode === 'cloud' ? target.uid : GUEST_STORAGE_SCOPE;
+  const result = await fileWithProjectHistory(text, context, targetScope === context.scope ? target : null);
+  if (pid && targetScope !== context.scope) result.partial = true;
+  return result;
+}
+
+function historyDownloadWarning({ partial }) {
+  if (partial) toast('Файл сохранён. Часть истории недоступна или превышает лимит файла (50 МиБ).', true);
+}
+
 export function handleExport(kind) {
   refs.exportDropdown.hidden = true;
   document.getElementById('exportBtn').setAttribute('aria-expanded', 'false');
   if (kind === 'project') {
-    download(`${safeFileName()}.kepler.json`, serializeProject(state.project), 'application/json');
-    toast('Файл проекта сохраняется (.kepler.json)');
+    const filename = `${safeFileName()}.kepler.json`;
+    if (state.pid || state.project.fileHistoryId) toast('Собираем файл проекта с историей…');
+    return portableProject(state.project, state.pid).then(async (result) => {
+      if (!await download(filename, result.text, 'application/json')) return;
+      if (result.partial) historyDownloadWarning(result);
+      else toast(result.count ? `Файл проекта сохранён с историей · версий: ${result.count}` : 'Файл проекта сохраняется (.kepler.json)');
+    }).catch((error) => toast(`Не удалось скачать файл: ${error.message}`, true));
   } else if (kind === 'json') {
     download(`${safeFileName()}.export.json`, JSON.stringify(buildStructuredExport(state.project), null, 2), 'application/json');
     toast('Структурированный JSON для Revit-плагина');
@@ -88,17 +110,22 @@ export function handleExport(kind) {
     download(`${safeFileName()}-revit.dxf`, buildProjectDxf(state.project, { profile: 'revit' }), 'application/dxf');
     toast('DXF с Revit-слоями (ZAMER_*) сохраняется');
   } else if (kind === 'zip') {
-    const { text } = buildIfc(state.project);
+    const project = state.project;
+    const { text } = buildIfc(project);
     const name = safeFileName();
-    saveZip(`${name}.zip`, [
-      { name: `${name}.kepler.json`, data: serializeProject(state.project) },
-      { name: `${name}.dxf`, data: buildProjectDxf(state.project) },
-      { name: `${name}-revit.dxf`, data: buildProjectDxf(state.project, { profile: 'revit' }) },
-      { name: `${name}.ifc`, data: text },
-      { name: `${name}-экспликация.csv`, data: buildRoomScheduleCsv(state.project) },
-      ...(state.project.site?.landscape?.objects?.length ? [{ name: `${name}-ландшафт.csv`, data: buildLandscapeCsv(state.project) }] : []),
-    ]);
-    toast('Архив: проект, DXF, DXF для Revit, IFC, экспликация');
+    return portableProject(project, state.pid).then(async (result) => {
+      const saved = await saveZip(`${name}.zip`, [
+        { name: `${name}.kepler.json`, data: result.text },
+        { name: `${name}.dxf`, data: buildProjectDxf(project) },
+        { name: `${name}-revit.dxf`, data: buildProjectDxf(project, { profile: 'revit' }) },
+        { name: `${name}.ifc`, data: text },
+        { name: `${name}-экспликация.csv`, data: buildRoomScheduleCsv(project) },
+        ...(project.site?.landscape?.objects?.length ? [{ name: `${name}-ландшафт.csv`, data: buildLandscapeCsv(project) }] : []),
+      ]);
+      if (!saved) return;
+      if (result.partial) historyDownloadWarning(result);
+      else toast('Архив: проект, DXF, DXF для Revit, IFC, экспликация');
+    }).catch((error) => toast(`Не удалось скачать архив: ${error.message}`, true));
   } else if (kind === 'copy') {
     const text = serializeProject(state.project);
     if (navigator.clipboard?.writeText) {
@@ -112,14 +139,30 @@ export function handleExport(kind) {
 }
 
 export function openProjectFile(file) {
+  const request = ++fileRequest;
+  const previous = state.project;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
+      if (request !== fileRequest || state.project !== previous) return;
+      let text = String(reader.result);
+      const raw = JSON.parse(text);
+      let historyError = null;
+      if (raw?.projectHistory || raw?.fileHistoryId) {
+        try {
+          text = JSON.stringify(await importProjectHistory(raw, getStorageScope()));
+        } catch (error) {
+          const { projectHistory: _history, fileHistoryId: _id, ...project } = raw;
+          text = JSON.stringify(project);
+          historyError = error;
+        }
+      }
+      if (request !== fileRequest || state.project !== previous) return;
       const before = snapshotIfContent();
       const beforePid = state.pid;
       const previousText = before ? serializeProject(state.project, { pretty: false }) : null;
       flushAutosave({ cloudImmediate: true });
-      restoreFrom(String(reader.result));
+      restoreFrom(text);
       // Оси из файла — по порядку (автонумерация; ручные марки сохраняются).
       if (planGridPref().auto && state.project.grids?.length) state.project.grids = autoNumberGrids(state.project.grids);
       state.pid = null;
@@ -127,11 +170,13 @@ export function openProjectFile(file) {
       if (before) pushHistory(before, beforePid);
       fitView();
       syncProjectNameUi();
-      toast(`Открыт проект «${state.project.name}»`);
+      if (historyError) toast(`Проект открыт. История осталась в файле: ${historyError.message}`, true);
+      else toast(`Открыт проект «${state.project.name}»`);
     } catch (error) {
-      toast(`Не удалось открыть: ${error.message}`, true);
+      if (request === fileRequest) toast(`Не удалось открыть: ${error.message}`, true);
     }
   };
+  reader.onerror = () => { if (request === fileRequest) toast('Не удалось прочитать файл проекта', true); };
   reader.readAsText(file);
 }
 

@@ -3,22 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
-    <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=320" />
+    <title>Zamer CAD</title>
+    <link rel="stylesheet" href="./styles.css?v=321" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Замер" />
-    <link rel="apple-touch-icon" href="./icons/icon-180.png" />
-    <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/icon-180.png?v=2" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
+    <link rel="icon" type="image/svg+xml" href="./icons/favicon.svg" />
   </head>
   <body>
     <main class="app-shell" data-theme="light">
       <section class="auth-screen" id="authScreen" aria-label="Вход">
         <form class="auth-panel" id="authForm">
-          <span class="panel-kicker">Zamer CAD</span>
+          <div class="brand-logo auth-brand">
+            <img class="brand-logo-light" src="./icons/logo.svg" alt="Zamer CAD" width="1370" height="300" />
+            <img class="brand-logo-dark" src="./icons/logo-dark.svg" alt="Zamer CAD" width="1370" height="300" />
+          </div>
           <h1>Вход в аккаунт</h1>
           <p>Ваши чертежи будут храниться внутри аккаунта и не смешиваться с другими пользователями.</p>
           <label>
@@ -39,6 +43,10 @@
       <section class="project-home" id="projectHome" aria-label="Проекты">
         <header class="project-home-head">
           <div class="project-home-title">
+            <div class="brand-logo home-brand">
+              <img class="brand-logo-light" src="./icons/logo.svg" alt="Zamer CAD" width="1370" height="300" />
+              <img class="brand-logo-dark" src="./icons/logo-dark.svg" alt="Zamer CAD" width="1370" height="300" />
+            </div>
             <h1>Проекты</h1>
             <span class="account-badge" id="accountBadge" hidden></span>
           </div>
@@ -373,6 +381,7 @@
           <p id="circleTangentError" role="status" hidden></p>
         </section>
         <div class="save-indicator" id="saveIndicator" role="status" aria-atomic="true" data-state="idle">Сохранение...</div>
+        <div class="spen-indicator" id="spenIndicator" role="status" hidden><span aria-hidden="true">✎</span> S Pen</div>
         <div class="draft-metric-labels metric-fields" id="draftMetricLabels" role="group" aria-label="Размеры на чертеже" hidden>
           <div class="draft-metric-pair">
             <div class="metric-field" id="draftLengthEditor" hidden>
@@ -549,6 +558,29 @@
               <span><strong>Масштаб двойным тапом</strong><small>Вниз — увеличить, вверх — уменьшить · центр экрана сохраняется</small></span>
               <input class="layer-switch" id="projectTapZoom" type="checkbox" checked />
             </label>
+            <fieldset class="spen-settings-group">
+              <legend>Samsung S Pen</legend>
+              <label class="project-gesture-setting" for="projectSpenEnabled">
+                <span><strong>Автоматический режим S Pen</strong><small>Включается после извлечения или первого наведения пера</small></span>
+                <input class="layer-switch" id="projectSpenEnabled" type="checkbox" checked />
+              </label>
+              <label class="project-gesture-setting" for="projectSpenHover">
+                <span><strong>Курсор при наведении</strong><small>Крестик, построение и привязки следуют за кончиком пера</small></span>
+                <input class="layer-switch" id="projectSpenHover" type="checkbox" checked />
+              </label>
+              <label class="project-gesture-setting" for="projectSpenButton">
+                <span><strong>Боковая кнопка</strong><small>Нажатие — Esc / Выбор, удержание с касанием — перемещение чертежа</small></span>
+                <input class="layer-switch" id="projectSpenButton" type="checkbox" checked />
+              </label>
+              <label class="project-gesture-setting" for="projectSpenPalm">
+                <span><strong>Защита от ладони</strong><small>Игнорировать случайное касание холста пальцем рядом с пером</small></span>
+                <input class="layer-switch" id="projectSpenPalm" type="checkbox" checked />
+              </label>
+              <label class="project-gesture-setting" for="projectSpenCompact">
+                <span><strong>Компактный интерфейс</strong><small>Освободить больше места для чертежа, пока S Pen активен</small></span>
+                <input class="layer-switch" id="projectSpenCompact" type="checkbox" checked />
+              </label>
+            </fieldset>
             <div class="survey-field annotation-scale-setting">
               <span>Масштаб</span>
               <input id="annotationScaleSelect" type="hidden" value="1" />

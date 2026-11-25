@@ -18,6 +18,8 @@ import { roomRects } from '../core/room-shape.js';
 import { collectIssues } from '../core/issues.js';
 import { massVoidTargetGeometryKey, pruneOrphanMassVoids } from '../core/mesh3d.js';
 import { captureGroundReference } from '../core/terrain.js';
+import { groundFn } from '../core/landscape-section.js';
+import { syncOutdoorStairs } from '../core/outdoor-stair-links.js';
 import { toast } from './dom.js';
 import { getBlob, putBlob } from './localdb.js';
 import { renderLevelBar } from './levels.js';
@@ -419,6 +421,11 @@ export function scheduleAnalytics({ delay = 180 } = {}) {
 }
 
 export function afterChange() {
+  const landscape = state.project?.site?.landscape?.objects;
+  if (landscape?.some((o) => o.meta?.stairLinks)) {
+    const invalid = syncOutdoorStairs(landscape, groundFn(state.project));
+    if (invalid) toast('Лестница сохранила прежнюю форму. Проверьте расстояние и перепад между её краями.', true);
+  }
   const removedFacades = syncFacadeHosts(state.project, state.walls);
   if (state.selection?.type === 'mass' && removedFacades.includes(state.selection.id)) state.selection = null;
   const removedVoids = pruneVoidsAfterTargetChange();

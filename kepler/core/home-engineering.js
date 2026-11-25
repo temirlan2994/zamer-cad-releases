@@ -417,3 +417,26 @@ export function analyzeHomeEngineering(project = {}) {
     warnings,
   };
 }
+
+export function engineeringMissionStatuses(project, analysis) {
+  const points = project?.layoutBrief?.fixedEngineering;
+  const findings = array(analysis.points?.records);
+  const conflicts = array(analysis.conflicts).length > 0;
+  const surveyed = Array.isArray(points);
+  const sources = conflicts ? 'blocked' : !surveyed ? 'unknown'
+    : !points.length || (findings.length && findings.every((point) => point.status === 'fact')) ? 'checked'
+      : findings.some((point) => ['fact', 'candidate'].includes(point.status)) ? 'attention' : 'unknown';
+  const ventilation = analysis.ventilation?.status;
+  const hasUncertainty = analysis.summary?.roomCount > 0
+    && (!surveyed || analysis.points?.surveyStatus === 'confirmed_empty'
+      || array(analysis.candidates?.shafts).length > 0);
+  return {
+    'engineering-connections': conflicts ? 'blocked' : !surveyed ? 'unknown'
+      : sources === 'checked' ? 'checked' : 'attention',
+    'engineering-wet': analysis.summary?.wetRoomCount ? 'attention' : 'unknown',
+    'engineering-vertical': array(analysis.candidates?.vertical).length ? 'attention' : 'unknown',
+    'engineering-ventilation': ventilation === 'fact' ? 'checked' : ventilation === 'candidate' ? 'attention' : 'unknown',
+    'engineering-points': sources,
+    'engineering-warnings': conflicts ? 'blocked' : hasUncertainty ? 'attention' : 'checked',
+  };
+}

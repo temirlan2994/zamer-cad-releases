@@ -77,8 +77,7 @@ function safeWindows(project) {
 /**
  * Дешёвая сводка исходных данных всего дома. Не запускает лучевые карты.
  */
-export function analyzeHomeClimateOverview(project = {}) {
-  const engineering = analyzeHomeEngineering(project);
+export function analyzeHomeClimateOverview(project = {}, { engineering = analyzeHomeEngineering(project) } = {}) {
   const solar = solarSource(project);
   const windows = safeWindows(project);
   const byRoom = new Map();

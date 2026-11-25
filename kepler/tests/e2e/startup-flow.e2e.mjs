@@ -215,6 +215,53 @@ it('F5 при подтверждённом редакторе на другом 
   } finally { await app.close(); }
 });
 
+it('разные черновики после передачи редактирования сохраняются под одним проектом', async () => {
+  const app = await startApp({ query: 'authGate=1' });
+  const { page } = app;
+  try {
+    await useTestAccount(page, () => 'architect');
+    await reloadEditor(page);
+    await openSample(page);
+    await saveVersion(page, 'K330');
+    const { pid } = await readModel(page);
+    const remote = await page.evaluate(async (id) => {
+      const { db, root } = await (await import('./ui/cloud.js')).getBackend();
+      const { takeoverEditLease } = await import('./core/edit-lease.js');
+      const { saveDraft } = await import('./core/storage.js');
+      const { serializeProject } = await import('./core/model.js');
+      const { tweak } = await import('./ui/store.js');
+      const { project } = window.__kepler.state;
+      const remoteProject = { ...project, levels: project.levels.map((level) => ({ ...level, height: 3160 })) };
+      tweak(() => { project.levels[0].height = 3470; });
+      const { lease } = await takeoverEditLease(db, root, id, {
+        sessionId: 'remote-tab', deviceId: 'remote-device', deviceName: 'Второй компьютер',
+      }, { force: true });
+      await saveDraft(db, root, serializeProject(remoteProject), {
+        pid: id, editor: { sessionId: lease.sessionId, epoch: lease.epoch },
+      });
+      return lease;
+    }, pid);
+    await page.waitForSelector('#editLockScreen:not([hidden])');
+    await page.click('#editLockProjects');
+    await page.waitForSelector('#startProjectsView');
+    const cards = page.locator('#startRecentProjects [data-pid]');
+    await cards.first().waitFor();
+    assert.equal(await cards.count(), 1);
+    await page.evaluate(async ({ id, lease }) => {
+      const { db, root } = await (await import('./ui/cloud.js')).getBackend();
+      const { releaseEditLease } = await import('./core/edit-lease.js');
+      await releaseEditLease(db, root, id, lease);
+    }, { id: pid, lease: remote });
+    await cards.first().click();
+    await page.waitForFunction(() => window.__kepler.state.project.levels[0].height === 3160);
+    await page.click('#projectsBtn');
+    await page.locator('#projectRecoveryRows .prj-ver').filter({ hasText: 'Изменения до передачи' }).getByRole('button').click();
+    await page.waitForFunction(() => window.__kepler.state.project.levels[0].height === 3470);
+    assert.equal((await readModel(page)).pid, pid);
+    assert.deepEqual(app.errors, []);
+  } finally { await app.close(); }
+});
+
 it('вкладки с разными проектами одного аккаунта восстанавливают каждая свой план', async () => {
   const app = await startApp({ query: 'authGate=1' });
   const first = app.page;

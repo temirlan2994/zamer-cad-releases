@@ -327,7 +327,11 @@ function buildSiteExport(site, project) {
 
 function stairsExport(o) {
   const st = stairsInfo(o);
-  return { steps: st.steps, riser_mm: Math.round(st.riser), tread_mm: st.tread, flight_mm: Math.round(st.flight), rise_mm: Math.round(st.rise), cheek_mm: st.cheek };
+  return {
+    steps: st.steps, riser_mm: Math.round(st.riser), tread_mm: st.tread, flight_mm: Math.round(st.flight),
+    rise_mm: Math.round(st.rise), cheek_mm: st.cheek,
+    ...(st.landing ? { landing_extra_mm: st.landing } : {}),
+  };
 }
 
 function retainingExport(o) {

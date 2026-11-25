@@ -12,7 +12,7 @@ import { clipFace } from './geom/clip.js';
 import { toLocal } from './building.js';
 import {
   LS_COLORS, curbLines, insetPolygon, isPathShape, isRoundObject, landscapeDef, lineLayout, objectColors, objectOutline,
-  PLATFORM_KINDS, distanceToPolygon, elevOf, loungeEntranceLevel, objectPath, platformTop, planterInner, retainingInfo, ribbonOutline, seededRandom, stairsInfo, steppingSlabs, waterCurtainParts,
+  PLATFORM_KINDS, distanceToPolygon, elevOf, gradedPathLevel, isGradedPath, isLevelPath, loungeEntranceLevel, objectLengthM, objectPath, pathSurfaceThickness, platformTop, planterInner, retainingInfo, ribbonOutline, seededRandom, stairTreads, stairsInfo, steppingSlabs, waterCurtainParts,
 } from './landscape.js';
 
 const v = (x, y, z) => ({ x, y, z });
@@ -60,6 +60,27 @@ function flat(poly, z, color, hz, extra = {}) {
   return triangulate(poly).map((t) => ({
     pts: t.map((p) => v(p.x, p.y, z + hz(p.x, p.y))), normal: v(0, 0, 1), color, kind: KIND, twoSided: true, ...extra,
   }));
+}
+
+// Длинная дорожка должна считывать землю также между вершинами её контура.
+function terrainPathFaces(poly, o, z, color, hz) {
+  const pending = triangulate(poly);
+  const spacing = Math.max(1000, objectLengthM(o) * 1000 / 160, o.width / 5);
+  const faces = [];
+  while (pending.length) {
+    const tri = pending.pop();
+    const lengths = tri.map((p, i) => Math.hypot(p.x - tri[(i + 1) % 3].x, p.y - tri[(i + 1) % 3].y));
+    const length = Math.max(...lengths);
+    if (length <= spacing) {
+      faces.push(...flat(tri, z, color, hz));
+      continue;
+    }
+    const edge = lengths.indexOf(length);
+    const a = tri[edge]; const b = tri[(edge + 1) % 3]; const c = tri[(edge + 2) % 3];
+    const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    pending.push([a, m, c], [m, b, c]);
+  }
+  return faces;
 }
 
 // Призма: верх (треугольниками) и бока; низ — по земле.
@@ -286,13 +307,11 @@ function objectFaces(o, def, outline, path, hz, dryOutlines) {
   // --- Наружная лестница: ступени-блоки реальной высоты, борта по бокам.
   if (look === 'stairs') {
     const st = stairsInfo(o);
-    const n = Math.max(1, st.steps);
-    const t = o.h / n;
     const fw = Math.max(100, st.flight);
     const at2 = (lx, ly) => ({ x: o.x + lx * Math.cos(rot) - ly * Math.sin(rot), y: o.y + lx * Math.sin(rot) + ly * Math.cos(rot) });
-    for (let i = 0; i < n; i += 1) {
-      const ly = o.h / 2 - (i + 0.5) * t; // снизу (+Y) вверх
-      const zTop = (i + 1) * st.riser;
+    for (const { bottom, top, z: zTop } of stairTreads(o, st)) {
+      const ly = (bottom + top) / 2;
+      const t = bottom - top;
       const c = at2(0, ly);
       faces.push(...prism(rectPoly(c.x, c.y, fw, t, rot), 0, zTop, C[0], hz, { side: C[1] }));
       if (st.cheek > 0) {
@@ -315,13 +334,19 @@ function objectFaces(o, def, outline, path, hz, dryOutlines) {
   }
   // --- Покрытия-линии: дорожки.
   if (def.shape === 'line') {
+    const z = pathSurfaceThickness(o);
     if (o.kind === 'path' && o.variant === 'stepping') {
-      for (const sl of steppingSlabs(o)) faces.push(...prism(rectPoly(sl.x, sl.y, sl.along, sl.across, sl.angle), 0, 40, C[sl.ci ?? 0] || C[0], hz));
+      for (const sl of steppingSlabs(o)) {
+        const base = o.meta?.pathLevel === 'terrain' ? () => hz(sl.x, sl.y) : hz;
+        const color = C[sl.ci ?? 0] || C[0];
+        faces.push(...prism(rectPoly(sl.x, sl.y, sl.along, sl.across, sl.angle), 0, z, color, base,
+          { side: o.meta?.pathLevel === 'terrain' ? C[1] : color }));
+      }
       return faces;
     }
-    const z = o.variant === 'deck' ? 120 : 25;
+    if (o.kind === 'path' && o.meta?.pathLevel === 'terrain') return terrainPathFaces(outline, o, z, C[0], hz);
     // Контур — с углами по типу (срез/встык/угловая/скругление).
-    return o.variant === 'deck' ? prism(outline, 0, z, C[0], hz, { side: C[1] }) : flat(outline, z, C[0], hz);
+    return o.variant === 'deck' || isLevelPath(o) || isGradedPath(o) ? prism(outline, 0, z, C[0], hz, { side: C[1] }) : flat(outline, z, C[0], hz);
   }
   // --- Вода.
   if (look === 'pool' || look === 'area-pool' || look === 'jacuzzi') {
@@ -428,9 +453,11 @@ function objectFaces(o, def, outline, path, hz, dryOutlines) {
     return faces;
   }
   if (look === 'lamp') {
-    const H = Math.max(500, h);
+    const low = o.meta?.routeLight === true;
+    const H = Math.max(low ? 240 : 500, h);
     faces.push(...box(o.x, o.y, 90, 90, 0, H, LS_COLORS.metal[0], hz));
-    faces.push(...box(o.x, o.y, 220, 220, H, H + 160, '#fff1b8', hz));
+    faces.push(...box(o.x, o.y, low ? 145 : 220, low ? 145 : 220, H, H + (low ? 65 : 160), '#fff1b8', hz)
+      .map((f) => ({ ...f, emissive: true })));
     return faces;
   }
   if (look === 'greenhouse') {
@@ -575,7 +602,7 @@ export function cutLandscapeGround(faces, project, hz) {
 }
 
 // Все грани ландшафта в осях дома. hz(x, y) — рельеф (оси дома) или null.
-export function landscapeFaces(project, hz = null) {
+export function landscapeFaces(project, hz = null, { evening = false } = {}) {
   const objects = project.site?.landscape?.objects || [];
   if (!objects.length) return [];
   const b = project.building;
@@ -604,7 +631,13 @@ export function landscapeFaces(project, hz = null) {
     const platform = PLATFORM_KINDS.has(o.kind);
     const fixedPlatform = platform && (Number.isFinite(o.elev) || o.height > 0 || lounge);
     const fixedStair = o.kind === 'stairs-out' && Number.isFinite(o.elev);
-    const hz2 = fixedStair ? () => datum + elev : up ? (x, y) => ground(x, y) + up : ground;
+    const levelPath = isLevelPath(o);
+    const graded = isGradedPath(o);
+    const fixedLamp = o.kind === 'lamp' && o.meta?.routeLight === true && Number.isFinite(o.elev);
+    const fromBase = levelPath ? pathSurfaceThickness(o) : 0;
+    const hz2 = graded ? (x, y) => datum + gradedPathLevel(o, x, y, path) - pathSurfaceThickness(o)
+      : fixedStair || levelPath || fixedLamp ? () => datum + elev - fromBase
+        : up ? (x, y) => ground(x, y) + up : ground;
     const firstFace = faces.length;
     if (platform) {
       const top = fixedPlatform ? () => datum + platformTop(o, ground(c.x, c.y) - datum) : ground;
@@ -634,16 +667,23 @@ export function landscapeFaces(project, hz = null) {
       } else for (const face of built) faces.push(face);
     }
     // Приподнятая площадка/лестница — на подиуме: бока от земли до отметки.
-    if (!platform && (elev > 0 || fixedStair) && outline.length >= 3) {
+    if (!platform && !levelPath && !graded && !fixedLamp && (elev > 0 || fixedStair) && outline.length >= 3) {
       const C = objectColors({ kind: 'curb', variant: o.kind === 'deck-area' ? 'wood' : 'stone' });
       faces.push(...prism(outline, 0, 0, C[1], hz2, { top: false, bottomAt: ground }));
     }
-    if (!platform && o.curb) for (const f of curbFaces(o, hz2)) faces.push(f);
+    if (!platform && o.curb) for (const f of curbFaces(o, levelPath ? () => datum + elev : hz2)) faces.push(f);
     // Идентификатор хранится на каждой грани: 3D выбирает не условную
     // категорию «ландшафт», а конкретное дерево, дорожку или сооружение.
     for (let i = firstFace; i < faces.length; i += 1) {
       faces[i].landscapeId = o0.id;
       faces[i].landscapeKind = o0.kind;
+    }
+    if (evening && o.kind === 'lamp') {
+      for (const [radius, alpha] of [[1100, 0.07], [720, 0.1], [360, 0.15]]) {
+        const floor = (x, y) => Math.max(ground(x, y), hz2(x, y));
+        faces.push(...flat(circlePoly(o.x, o.y, radius, radius, 16), 5, '#ffc678', floor,
+          { kind: 'landscape-light', emissive: true, alpha }));
+      }
     }
   }
   return faces;
