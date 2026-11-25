@@ -4705,6 +4705,16 @@ function startSelectionDrag(type, pointerId, screen) {
   draw();
 }
 
+function startPenSelectionDrag(screen) {
+  const pointer = state.pointer;
+  if (!pointer?.penWindowCandidate || pointDistance(pointer.startScreen, screen) <= TAP_MOVE_TOLERANCE) return false;
+  startSelectionDrag("window", pointer.id, pointer.startScreen);
+  state.pointer.moved = true;
+  state.pointer.screen = screen;
+  updateSelectionDrag(screen);
+  return true;
+}
+
 function scheduleSelectionLongPress(pointer) {
   if (state.tool !== "select" || state.selectTool !== "select" || pointer.mode !== "pan" || pointer.tapCandidateId) return;
   pointer.selectionHoldTimer = window.setTimeout(() => {
@@ -12398,6 +12408,11 @@ function startCanvasPointerAction(event, screen) {
     dimensionControl = hitDimensionControl(screen);
     const controlEntity = dimensionControl?.entity;
     const hitId = controlEntity?.id || pickEntity(screen);
+    if (spenModeEnabled() && event.pointerType === "pen" && state.selectTool === "select" && viewportIsSelecting() && !dimensionControl) {
+      state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false,
+        mode: "select-only", tapCandidateId: hitId, penWindowCandidate: true };
+      return;
+    }
     const hitEntity = controlEntity || state.entities.find(entity => entity.id === hitId);
     if (hitId && ((!controlEntity && !canDragEntityDirectly(hitEntity)) ||
         requiresActivation(hitId, state.selectedIds, state.directManipulationIds))) {
@@ -12628,6 +12643,10 @@ canvas.addEventListener("pointermove", (event) => {
     window.clearTimeout(state.pointer.selectionHoldTimer);
     state.pointer.moved = true;
   }
+  if (startPenSelectionDrag(screen)) {
+    draw();
+    return;
+  }
   if (state.pointer.mode === "select-only") {
     if (penGesture) { draw(); return; }
     state.pointer.mode = activationGestureMode(state.pointer.moved);
@@ -12665,7 +12684,8 @@ canvas.addEventListener("pointermove", (event) => {
   if (state.pointer.mode === "selection-window" || state.pointer.mode === "selection-lasso") {
     updateSelectionDrag(screen);
     state.pointer.screen = screen;
-    statusChip.textContent = state.pointer.mode === "selection-lasso" ? "Лассо: отпустите палец для выбора" : "Выделение: отпустите палец для выбора";
+    const release = penGesture ? "перо" : "палец";
+    statusChip.textContent = state.pointer.mode === "selection-lasso" ? `Лассо: отпустите ${release} для выбора` : `Выделение: отпустите ${release} для выбора`;
     draw();
     return;
   }
@@ -12760,6 +12780,7 @@ function finishCanvasPointer(event, canceled = false) {
 }
 
 function finishCanvasPointerEvent(event, canceled = false) {
+  if (!canceled && state.pointer?.id === event.pointerId) startPenSelectionDrag(getPointer(event));
   if (state.pointer?.id === event.pointerId && pointDistance(getPointer(event), state.pointer.startScreen) > TAP_MOVE_TOLERANCE) {
     state.pointer.confirmedSnap = null;
   }
@@ -12845,9 +12866,10 @@ function finishCanvasPointerAction(event) {
       const hitId = state.pointer.tapCandidateId;
       applyTapSelection(hitId);
       if (state.selectedIds.includes(hitId)) state.directManipulationIds.add(hitId);
-      if (state.selectTool !== "multi") {
+      if (state.selectTool !== "multi" && state.selectedIds.includes(hitId)) {
         const entity = state.entities.find(item => item.id === hitId);
         if (entity?.dimensionKind === "angular") statusChip.textContent = "Угол выбран. Тяните дугу или точку измерения";
+        else if (penGesture) statusChip.textContent = "Объект выбран. Пером можно протянуть рамку";
         else statusChip.textContent = canDragEntityDirectly(entity)
           ? "Объект активирован. Теперь его можно перетащить"
           : "Объект выбран. Для перемещения нажмите «Переместить»";
@@ -12855,6 +12877,7 @@ function finishCanvasPointerAction(event) {
     }
   } else if (state.pointer?.mode === "selection-window" || state.pointer?.mode === "selection-lasso") {
     if (state.pointer.moved) {
+      if (penGesture) updateSelectionDrag(getPointer(event));
       finishSelectionDrag();
     } else {
       clearSelectionDrag();
