@@ -57,7 +57,7 @@ by Codex workspace dependencies, for example:
 
 The prototype is an installable Progressive Web App: manifest
 (`manifest.webmanifest`), a service worker (`sw.js`, network-first with offline
-fallback), and icons in `icons/` (regenerate with `npm run icons`).
+fallback), and icons in `icons/` (sync the approved originals from `brand/` with `npm run icons`).
 
 - **Quick look on the same Wi-Fi** — start the server bound to the LAN, then open
   the printed `Phone URL` on the device:
