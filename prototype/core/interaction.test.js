@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection,
-  nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, selectionFilterForProject, shouldDelayTapZoom, snapCandidateKind, tapZoomMoveIntent, tapZoomScale } from "./interaction.js";
+  nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, resolvePolarSnap, selectionFilterForProject, shouldDelayTapZoom, snapCandidateKind, tapZoomMoveIntent, tapZoomScale } from "./interaction.js";
 
 test("only furniture and text can be moved directly with a finger", () => {
   for (const type of ["block", "text"]) assert.equal(canDragEntityDirectly({type}), true);
@@ -59,6 +59,23 @@ test("Ortho and polar tracking are mutually exclusive like in AutoCAD", () => {
   assert.deepEqual([...normalizeDirectionalSnapModes(["end", "polar", "ortho"])], ["end", "ortho"]);
   assert.deepEqual([...normalizeDirectionalSnapModes(["end", "ortho", "polar"], "polar")], ["end", "polar"]);
   assert.deepEqual([...normalizeDirectionalSnapModes(["end", "polar"])], ["end", "polar"]);
+});
+
+test("polar tracking captures wider angles, holds through small jitter, and releases for intentional movement", () => {
+  const start = { x: 0, y: 0 };
+  const at = degrees => ({ x: 1000 * Math.cos(degrees * Math.PI / 180), y: 1000 * Math.sin(degrees * Math.PI / 180) });
+  assert.equal(resolvePolarSnap(at(1.9), start, 5).degrees, 0);
+  assert.equal(resolvePolarSnap(at(2.2), start, 5).snapped, false);
+  assert.equal(resolvePolarSnap(at(3.8), start, 15).degrees, 0);
+  assert.equal(resolvePolarSnap(at(4.2), start, 15).snapped, false);
+  assert.equal(resolvePolarSnap(at(5.8), start, 15, 0).degrees, 0);
+  assert.equal(resolvePolarSnap(at(6.2), start, 15, 0).snapped, false);
+  assert.equal(resolvePolarSnap(at(2.8), start, 5, 0).degrees, 0);
+  assert.equal(resolvePolarSnap(at(3.2), start, 5, 0).degrees, 355);
+  assert.equal(resolvePolarSnap(at(179), start, 15, -Math.PI).degrees, 180);
+  const result = resolvePolarSnap(at(93), start, 15);
+  assert.equal(result.degrees, 270);
+  assert.ok(Math.abs(Math.hypot(result.point.x, result.point.y) - 1000) < 1e-9);
 });
 
 test("CAD snap priority prefers precise object points without ignoring a much closer crossing", () => {
