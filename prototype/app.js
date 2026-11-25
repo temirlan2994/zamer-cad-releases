@@ -6,6 +6,7 @@ import { canExplodeEntity, createReusableBlockDefinition, createReusableBlockIns
   isReusableBlock, MAX_REUSABLE_BLOCKS, normalizeBlockName, normalizeReusableBlocks, reusableBlockBounds, reusableBlockTransform } from "./core/reusable-blocks.js";
 import { buildDxf, buildRevitDxf } from "./core/dxf.js";
 import { importDxf } from "./core/dxf-import.js";
+import { readNativeImportFile } from "./core/native-file-import.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./core/dimensions.js";
 import { additionalDimensionArtwork, additionalDimensionKinds, additionalDimensionPaths, angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./core/dimension-artwork.js";
 import { constrainLinePoint, linePointWithConstraint, linePolarPoint, parseLineDecimal } from "./core/line-input.js";
@@ -2336,6 +2337,7 @@ function showProjectDialog({ title, message = "", value = "", placeholder = "", 
       if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
       updateViewportLock();
       resolve(result);
+      window.setTimeout(processNativeImports, 0);
     };
     closeProjectDialog = finish;
 
@@ -2500,6 +2502,7 @@ function showImportSettingsDialog({ name, displayUnit = "mm" }) {
       if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
       updateViewportLock();
       resolve(result);
+      window.setTimeout(processNativeImports, 0);
     };
     closeProjectDialog = finish;
     cancelButton.addEventListener("click", () => finish(null));
@@ -2880,7 +2883,56 @@ async function exportProjectBackup(projectId) {
   showProjectMessage(result?.native ? "Копия в Загрузках" : "Копия отправлена в загрузки");
 }
 
+const pendingNativeImports = [];
+const pendingNativeImportIds = new Set();
+let nativeImportBusy = false;
+let projectImportBusy = false;
+
+window.zamerReceiveFile = (message) => {
+  if (!message?.id || pendingNativeImportIds.has(message.id)) return;
+  pendingNativeImportIds.add(message.id);
+  pendingNativeImports.push(message);
+  void processNativeImports();
+};
+
+async function processNativeImports() {
+  if (nativeImportBusy || projectImportBusy || closeProjectDialog || !authState.user || !authScreen.hidden ||
+      state.leaderInput || document.querySelector("dialog[open]")) return;
+  const message = pendingNativeImports.shift();
+  if (!message) return;
+  nativeImportBusy = true;
+  try {
+    const file = await readNativeImportFile(message);
+    if (projectHome.hidden) await showProjectHome();
+    if (projectHome.hidden) throw new Error("Не удалось сохранить текущий проект. Новый файл не открыт.");
+    await importProjectFile(file);
+  } catch (error) {
+    console.warn("Open Android file failed", error);
+    showProjectMessage(error.message || "Не удалось открыть файл", true);
+    if (projectHome.hidden) statusChip.textContent = error.message || "Не удалось открыть файл";
+  } finally {
+    pendingNativeImportIds.delete(message.id);
+    nativeImportBusy = false;
+    window.ZamerAndroid?.completeFileImport?.(message.id);
+    void processNativeImports();
+  }
+}
+
+document.addEventListener("close", () => void processNativeImports(), true);
+
 async function importProjectFile(file) {
+  if (!file) return;
+  if (projectImportBusy) throw new Error("Дождитесь открытия предыдущего файла");
+  projectImportBusy = true;
+  try {
+    await importProjectFileContent(file);
+  } finally {
+    projectImportBusy = false;
+    void processNativeImports();
+  }
+}
+
+async function importProjectFileContent(file) {
   if (!file) return;
   projectImportInput.value = "";
   if (!file.size || file.size > MAX_ZAMER_FILE_BYTES) throw new Error("Выберите непустой ZAMER, DWG или DXF размером до 32 МБ");
@@ -2908,7 +2960,10 @@ async function importProjectFile(file) {
   if (cad) {
     const name = await showProjectDialog({
       title: "Название импортируемого проекта", value: project.name || fileName, inputLabel: "Название проекта",
-      confirmText: "Импортировать", message: skipped ? `Пропущено объектов, которые Zamer не смог открыть — ${skipped}.` : "",
+      confirmText: "Импортировать", message: [
+        "Это импорт в проект Замера. Полное сохранение исходного DWG/DXF при обратном экспорте пока не поддерживается.",
+        skipped ? `Пропущено объектов, которые Zamer не смог открыть — ${skipped}.` : "",
+      ].filter(Boolean).join("\n"),
     });
     if (!name) return;
     await createProject({ name, project });
@@ -2965,6 +3020,7 @@ async function initProjectHome() {
   } catch (error) {
     console.warn("Direct project open failed", error);
   }
+  void processNativeImports();
 }
 
 function serializableProjectContent() {
@@ -8227,6 +8283,7 @@ function closeLeaderInput() {
   leaderUi.editor.hidden = true;
   leaderUi.text.value = "";
   updateViewportLock();
+  window.setTimeout(processNativeImports, 0);
 }
 
 function finishLeaderInput(save) {
@@ -16927,7 +16984,7 @@ setTool("select");
 initAppInstallPrompt();
 initSurveyPanel();
 syncInterfaceTheme();
-initAuthGate();
+initAuthGate().finally(() => window.ZamerAndroid?.readyForImports?.());
 lockPortraitOrientation();
 window.zamerDebug = {
   exportDxf: () => buildDxf(state.entities.filter((entity) => entity.layer !== TRACE_LAYER), { annotationScale: state.annotationScale, measurementSettings: state.measurementSettings,
