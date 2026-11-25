@@ -61,21 +61,50 @@ test("Ortho and polar tracking are mutually exclusive like in AutoCAD", () => {
   assert.deepEqual([...normalizeDirectionalSnapModes(["end", "polar"])], ["end", "polar"]);
 });
 
-test("polar tracking captures wider angles, holds through small jitter, and releases for intentional movement", () => {
+test("polar tracking holds small jitter while leaving a free band between adjacent rays", () => {
   const start = { x: 0, y: 0 };
   const at = degrees => ({ x: 1000 * Math.cos(degrees * Math.PI / 180), y: 1000 * Math.sin(degrees * Math.PI / 180) });
-  assert.equal(resolvePolarSnap(at(1.9), start, 5).degrees, 0);
-  assert.equal(resolvePolarSnap(at(2.2), start, 5).snapped, false);
-  assert.equal(resolvePolarSnap(at(3.8), start, 15).degrees, 0);
-  assert.equal(resolvePolarSnap(at(4.2), start, 15).snapped, false);
-  assert.equal(resolvePolarSnap(at(5.8), start, 15, 0).degrees, 0);
-  assert.equal(resolvePolarSnap(at(6.2), start, 15, 0).snapped, false);
-  assert.equal(resolvePolarSnap(at(2.8), start, 5, 0).degrees, 0);
-  assert.equal(resolvePolarSnap(at(3.2), start, 5, 0).degrees, 355);
+  assert.equal(resolvePolarSnap(at(1.4), start, 5).degrees, 0);
+  assert.equal(resolvePolarSnap(at(1.6), start, 5).snapped, false);
+  assert.equal(resolvePolarSnap(at(2.8), start, 15).degrees, 0);
+  assert.equal(resolvePolarSnap(at(3.2), start, 15).snapped, false);
+  assert.equal(resolvePolarSnap(at(4.4), start, 15, 0).degrees, 0);
+  assert.equal(resolvePolarSnap(at(4.6), start, 15, 0).snapped, false);
+  assert.equal(resolvePolarSnap(at(1.9), start, 5, 0).degrees, 0);
+  assert.equal(resolvePolarSnap(at(2.1), start, 5, 0).snapped, false);
+  assert.equal(resolvePolarSnap(at(3.6), start, 5, 0).degrees, 355);
   assert.equal(resolvePolarSnap(at(179), start, 15, -Math.PI).degrees, 180);
   const result = resolvePolarSnap(at(93), start, 15);
   assert.equal(result.degrees, 270);
   assert.ok(Math.abs(Math.hypot(result.point.x, result.point.y) - 1000) < 1e-9);
+});
+
+test("distant polar rays use a narrow screen-space capture and release radius", () => {
+  const start = { x: 0, y: 0 };
+  const at = degrees => ({ x: 1000 * Math.cos(degrees * Math.PI / 180), y: 1000 * Math.sin(degrees * Math.PI / 180) });
+  assert.equal(resolvePolarSnap(at(0.6), start, 15, null, 1).snapped, true);
+  assert.equal(resolvePolarSnap(at(0.8), start, 15, null, 1).snapped, false);
+  assert.equal(resolvePolarSnap(at(1), start, 15, 0, 1).snapped, true);
+  assert.equal(resolvePolarSnap(at(1.2), start, 15, 0, 1).snapped, false);
+  assert.equal(resolvePolarSnap(at(2.8), start, 15, null, 0.1).snapped, true);
+  for (const step of [5, 15, 30]) {
+    let lock = 0;
+    let free = 0;
+    for (let angle = 0; angle < step; angle += 0.1) {
+      const result = resolvePolarSnap(at(angle), start, step, lock, 0.1);
+      lock = result.snapped ? result.angle : null;
+      if (!result.snapped) free++;
+    }
+    assert.ok(free >= 10, `Step ${step} must leave a usable free interval`);
+  }
+});
+
+test("polar intersections have a smaller capture radius than ordinary object intersections", () => {
+  const polar = { point: { x: 0, y: 0 }, ux: 1, uy: 0, isPolar: true };
+  const vertical = { point: { x: 100, y: 0 }, ux: 0, uy: 1 };
+  assert.equal(nearestCompoundGuideIntersection({ x: 100, y: 15 }, [[polar, vertical]], 24, 12), null);
+  assert.equal(nearestCompoundGuideIntersection({ x: 100, y: 10 }, [[polar, vertical]], 24, 12).x, 100);
+  assert.equal(nearestCompoundGuideIntersection({ x: 100, y: 15 }, [[{ ...polar, isPolar: false }, vertical]], 24, 12).x, 100);
 });
 
 test("CAD snap priority prefers precise object points without ignoring a much closer crossing", () => {

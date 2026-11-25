@@ -111,7 +111,7 @@ export function polarRayGuides(start, stepDegrees) {
   });
 }
 
-export function resolvePolarSnap(point, start, stepDegrees, lockedAngle = null) {
+export function resolvePolarSnap(point, start, stepDegrees, lockedAngle = null, viewScale = null) {
   const free = { point, snapped: false };
   if (![point?.x, point?.y, start?.x, start?.y, stepDegrees].every(Number.isFinite) || stepDegrees <= 0 || stepDegrees > 180) return free;
   const dx = point.x - start.x;
@@ -121,8 +121,11 @@ export function resolvePolarSnap(point, start, stepDegrees, lockedAngle = null) 
   const step = stepDegrees * Math.PI / 180;
   const angle = Math.atan2(dy, dx);
   const delta = target => Math.abs(Math.atan2(Math.sin(angle - target), Math.cos(angle - target)));
-  const capture = Math.min(stepDegrees * 0.4, 4) * Math.PI / 180;
-  const release = Math.min(stepDegrees * 0.6, 6) * Math.PI / 180;
+  const screenLength = Number.isFinite(viewScale) && viewScale > 0 ? length * viewScale : 0;
+  const capture = Math.min(stepDegrees * 0.3 * Math.PI / 180, Math.PI / 60,
+    screenLength ? Math.asin(Math.min(1, 12 / screenLength)) : Math.PI);
+  const release = Math.min(stepDegrees * 0.4 * Math.PI / 180, Math.PI / 40,
+    screenLength ? Math.asin(Math.min(1, 18 / screenLength)) : Math.PI);
   let target = Math.round(angle / step) * step;
   if (Number.isFinite(lockedAngle) && delta(lockedAngle) <= release) target = lockedAngle;
   else if (delta(target) > capture) return free;
@@ -147,7 +150,7 @@ function guideAcceptsPoint(guide, point, epsilon = 0.000001) {
   return true;
 }
 
-export function nearestCompoundGuideIntersection(point, pairs, threshold) {
+export function nearestCompoundGuideIntersection(point, pairs, threshold, polarThreshold = threshold) {
   let best = null;
   let bestDistance = threshold;
   for (const [first, second] of pairs || []) {
@@ -159,7 +162,8 @@ export function nearestCompoundGuideIntersection(point, pairs, threshold) {
     const along = (dx * second.uy - dy * second.ux) / cross;
     const candidate = { x: first.point.x + first.ux * along, y: first.point.y + first.uy * along };
     const distance = Math.hypot(point.x - candidate.x, point.y - candidate.y);
-    if (distance > bestDistance || !guideAcceptsPoint(first, candidate) || !guideAcceptsPoint(second, candidate)) continue;
+    const limit = first.isPolar || second.isPolar ? Math.min(threshold, polarThreshold) : threshold;
+    if (distance > bestDistance || distance > limit || !guideAcceptsPoint(first, candidate) || !guideAcceptsPoint(second, candidate)) continue;
     bestDistance = distance;
     best = { ...candidate, guides: [first, second] };
   }
