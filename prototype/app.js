@@ -6774,7 +6774,8 @@ function updateFigureMetricInput(input) {
 
 function figureMetricPreview(key) {
   const edit = state.numericEdit?.figureMetric;
-  return edit?.key === key && isLinePoint(edit.point) ? edit.point : null;
+  if (!edit || edit.key !== key) return null;
+  return isLinePoint(edit.point) ? edit.point : edit.lockedBySpen ? edit.end : null;
 }
 
 function confirmFigureMetricInput(input, edit) {
@@ -6782,7 +6783,7 @@ function confirmFigureMetricInput(input, edit) {
     cancelFigureMetricInput();
     return;
   }
-  const point = figureMetricPreview(edit.key);
+  const point = isLinePoint(edit.point) ? edit.point : null;
   const draft = state.drawing;
   const grip = state.selectedFigureGrip;
   const target = grip && state.entities.find(entity => entity.id === grip.entityId);
@@ -7519,7 +7520,8 @@ function lineMetricContext() {
 
 function lineMetricPreview(key) {
   const edit = state.numericEdit?.lineMetric;
-  return edit?.key === key && isLinePoint(edit.point) ? edit.point : null;
+  if (!edit || edit.key !== key) return null;
+  return isLinePoint(edit.point) ? edit.point : edit.lockedBySpen ? edit.end : null;
 }
 
 function clearLineMetricEdit() {
@@ -7564,9 +7566,9 @@ function updateLineMetricPreview(edit) {
   const draft = state.drawing;
   const originalLength = distanceWorld(edit.start, edit.end);
   const length = edit.length ?? draft?.metricConstraint?.length ?? originalLength;
-  const axis = !edit.endpoint && state.tool === "line" && (edit.length > 0 || draft?.metricConstraint?.length > 0)
+  const axis = edit.lockedAngle === undefined && !edit.endpoint && state.tool === "line" && (edit.length > 0 || draft?.metricConstraint?.length > 0)
     ? lineAxisAngle(draft?.metricDirection, edit.start, rawCursorWorld()) : undefined;
-  const angle = edit.angle ?? draft?.metricConstraint?.angle ?? axis ??
+  const angle = edit.angle ?? edit.lockedAngle ?? draft?.metricConstraint?.angle ?? axis ??
     (originalLength > linePointEpsilon ? -radToDeg(angleBetweenPoints(edit.start, edit.end)) : undefined);
   edit.point = edit.length === null || edit.angle === null ? null : linePolarPoint(edit.start, length, angle);
 }
@@ -10625,7 +10627,8 @@ function syncLineControls() {
   const edit = state.lineEdit;
   const draft = state.tool === "line" ? state.drawing : null;
   const input = numericConfirmInput();
-  const choosingDirection = !surveyPointPicker && draft && (lineMetricKinds.get(input) === "length" || draft.metricConstraint?.length !== undefined);
+  const choosingDirection = !surveyPointPicker && draft && state.numericEdit?.lineMetric?.lockedAngle === undefined &&
+    (lineMetricKinds.get(input) === "length" || draft.metricConstraint?.length !== undefined);
   polylineArcMode.hidden = !drawing || Boolean(surveyPointPicker) || Boolean(input);
   polylineArcMode.setAttribute("aria-pressed", String(Boolean(drawing?.arcPhase)));
   linePointAssist.hidden = !choosingDirection && polylineArcMode.hidden;
@@ -12114,13 +12117,60 @@ function selectedEndPoint() {
   return { x: selected.x2, y: selected.y2 };
 }
 
-function updateSpenBarrel(event) {
+function beginSpenLengthInput() {
+  const draft = state.drawing;
+  if (!draft || state.leaderInput || surveyPointPicker || state.quickMeasure) return false;
+  const lineDraft = ["line", "polyline"].includes(state.tool) && !draft.arcPhase;
+  const end = lineMetricPreview(draft.start) ?? figureMetricPreview(draft) ?? (draft.lockedEnd ? draft.end : cursorWorld());
+  const figure = draftFigureReference(end);
+  if (!lineDraft && !figure) return false;
+  const input = lineDraft || figure.type === "circle" ? lengthInput : topLengthInput;
+  const current = state.numericEdit?.lineMetric || state.numericEdit?.figureMetric;
+  if (current?.lockedBySpen && current.key === (lineDraft ? draft.start : draft)) {
+    input.focus({ preventScroll: true });
+    window.ZamerAndroid?.showKeyboard?.();
+    return true;
+  }
+  const arc = figure?.arcEnd && draftArcFromBend(draft.start, figure.arcEnd, end)?.arc;
+  const length = lineDraft ? distanceWorld(draft.start, end) : figureMetrics(figure, arc).values[0];
+  if (!isLinePoint(end) || !(length > linePointEpsilon)) {
+    statusChip.textContent = "Сначала укажите направление пером";
+    return true;
+  }
+  // Capture the resolved point before focus/IME changes the viewport or the
+  // hover stream. The numeric preview must no longer follow the pen.
+  draft.end = { ...end };
+  drawNow();
+  beginNumericInputEdit(input);
+  const edit = state.numericEdit?.lineMetric || state.numericEdit?.figureMetric;
+  if (!edit) return true;
+  edit.end = { ...end };
+  edit.point = { ...end };
+  edit.lockedBySpen = true;
+  if (lineDraft) {
+    edit.length = length;
+    edit.lockedAngle = -radToDeg(angleBetweenPoints(draft.start, end));
+  } else edit.values.length = length;
+  input.value = edit.texts.length = formatProjectLength(length, state.measurementSettings, { suffix: false });
+  syncInlineEditorWidth(input);
+  input.focus({ preventScroll: true });
+  input.select();
+  window.ZamerAndroid?.showKeyboard?.();
+  statusChip.textContent = "Направление зафиксировано · введите размер и нажмите ✓";
+  draw();
+  return true;
+}
+
+function updateSpenBarrel(event, { allowContact = false } = {}) {
   const barrel = spenBarrelButtonPressed(event);
-  if (spenSettings.enabled && spenSettings.sideButton && barrel && !spenRuntime.barrelDown && !(event.buttons & 1)) {
+  const pressed = barrel && !spenRuntime.barrelDown;
+  spenRuntime.barrelDown = barrel;
+  if (!spenSettings.enabled || !spenSettings.sideButton || !barrel || (!allowContact && (event.buttons & 1))) return false;
+  if (pressed && !beginSpenLengthInput()) {
     activatePlainSelect();
     statusChip.textContent = "S Pen · Esc / Выбор";
   }
-  spenRuntime.barrelDown = barrel;
+  return true;
 }
 
 function clearSpenHover({ preservePreview = false } = {}) {
@@ -12213,11 +12263,7 @@ canvas.addEventListener("pointerdown", (event) => {
     if (spenModeEnabled() && state.activePointers.size > 0) return;
     spenRuntime.nativeHover = false;
     spenRuntime.contactId = event.pointerId;
-    const barrel = spenBarrelButtonPressed(event);
-    spenRuntime.barrelDown = barrel;
-    if (spenSettings.enabled && spenSettings.sideButton && barrel) {
-      activatePlainSelect();
-      statusChip.textContent = "S Pen · Esc / Выбор";
+    if (updateSpenBarrel(event, { allowContact: true })) {
       draw();
       return;
     }

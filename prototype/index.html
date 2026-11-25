@@ -571,7 +571,7 @@
                 <input class="layer-switch" id="projectSpenHover" type="checkbox" checked />
               </label>
               <label class="project-gesture-setting" for="projectSpenButton">
-                <span><strong>Боковая кнопка</strong><small>Нажатие — Esc / Выбор</small></span>
+                <span><strong>Боковая кнопка</strong><small>При построении — ввод размера с сохранением направления. В остальных случаях — Esc / Выбор</small></span>
                 <input class="layer-switch" id="projectSpenButton" type="checkbox" checked />
               </label>
               <label class="project-gesture-setting" for="projectSpenPalm">
@@ -709,7 +709,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=333"></script>
+    <script type="module" src="./app.js?v=334"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

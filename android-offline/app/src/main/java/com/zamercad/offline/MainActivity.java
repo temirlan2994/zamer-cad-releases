@@ -433,6 +433,21 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void showKeyboard() {
+            runOnUiThread(() -> {
+                if (webView == null || isDestroyed()) return;
+                webView.requestFocus();
+                // Native hover-button events are not WebView user gestures.
+                // Show the IME after the focused HTML input creates its connection.
+                webView.post(() -> {
+                    if (webView == null || isDestroyed() || !webView.hasFocus()) return;
+                    InputMethodManager keyboard = getSystemService(InputMethodManager.class);
+                    if (keyboard != null) keyboard.showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT);
+                });
+            });
+        }
+
+        @JavascriptInterface
         public void dismissKeyboard() {
             runOnUiThread(() -> {
                 if (webView == null || isDestroyed()) return;
