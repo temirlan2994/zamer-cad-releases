@@ -267,7 +267,8 @@ function startEntryDrag(world, hit = null) {
   if (created) {
     const kind = state.tool?.entryKind || 'gate';
     entry = { id: `entry-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, kind,
-      width: kind === 'wicket' ? 1000 : 4000, height: 1800, wicket: false, wicketWidth: 1000, wicketSide: 'right' };
+      opening: state.tool?.opening === 'sliding' && kind !== 'wicket' ? 'sliding' : 'swing',
+      width: kind === 'wicket' ? 1000 : 4000, height: 1800, wicket: kind !== 'wicket' && Boolean(state.tool?.wicket), wicketWidth: 1000, wicketSide: 'right' };
     const spot = computeEntryAt(world, entry);
     if (!spot) { toast('На этой стороне недостаточно места для ворот или калитки'); return; }
     Object.assign(entry, { x: spot.x, y: spot.y, dir: spot.dir });

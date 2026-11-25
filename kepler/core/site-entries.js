@@ -5,7 +5,7 @@ import { pointInPolygon } from './zamer/geometry.js';
 
 const finite = (v) => v !== null && v !== '' && Number.isFinite(Number(v));
 const clamp = (v, lo, hi, fallback) => finite(v) ? Math.max(lo, Math.min(hi, Number(v))) : fallback;
-export const entryTitle = (e) => e.kind === 'wicket' ? 'Калитка' : 'Ворота';
+export const entryTitle = (e) => e.kind === 'wicket' ? 'Калитка' : e.opening === 'sliding' ? 'Ворота раздвижные' : 'Ворота распашные';
 export function siteEntries(site) {
   return Array.isArray(site?.entries) && site.entries.length ? site.entries : site?.entry ? [{ ...site.entry, id: site.entry.id || 'entry-legacy', kind: 'gate' }] : [];
 }
@@ -17,7 +17,7 @@ export function normalizeSiteEntries(site) {
     while (seen.has(id)) id += '-copy';
     seen.add(id);
     const kind = e.kind === 'wicket' ? 'wicket' : 'gate';
-    return [{ id, kind, x: Number(e.x), y: Number(e.y), dir: clamp(e.dir ?? e.angle, -360, 360, 0),
+    return [{ id, kind, opening: kind === 'gate' && e.opening === 'sliding' ? 'sliding' : 'swing', x: Number(e.x), y: Number(e.y), dir: clamp(e.dir ?? e.angle, -360, 360, 0),
       width: clamp(e.width, kind === 'wicket' ? 600 : 2000, kind === 'wicket' ? 2000 : 10000, kind === 'wicket' ? 1000 : 4000),
       height: clamp(e.height, 600, 4000, 1800), wicket: kind === 'gate' && e.wicket === true,
       wicketWidth: clamp(e.wicketWidth, 600, 2000, 1000), wicketSide: e.wicketSide === 'left' ? 'left' : 'right' }];
@@ -36,7 +36,7 @@ export function entryById(site, id) {
 }
 export function entryParts(entry) {
   const width = Number(entry.width) || (entry.kind === 'wicket' ? 1000 : 4000);
-  const parts = [{ offset: 0, width, kind: entry.kind === 'wicket' ? 'wicket' : 'gate' }];
+  const parts = [{ offset: 0, width, kind: entry.kind === 'wicket' ? 'wicket' : 'gate', opening: entry.opening || 'swing' }];
   if (entry.kind !== 'wicket' && entry.wicket) {
     const w = Number(entry.wicketWidth) || 1000;
     parts.push({ offset: (entry.wicketSide === 'left' ? -1 : 1) * (width / 2 + 120 + w / 2), width: w, kind: 'wicket' });
@@ -91,7 +91,7 @@ export function entryLandscapeObjects(site) {
     const common = { kind: 'gate', rotation: (e.dir ?? e.angle ?? 0) - 90, height, h: 100, variant: 'gate', siteEntryId: e.id, colors: ['#454d53', '#30383f', '#657079'] };
     const objects = [];
     for (const [i, p] of parts.entries()) {
-      const n = p.kind === 'gate' ? 2 : 1;
+      const n = p.kind === 'gate' && p.opening !== 'sliding' ? 2 : 1;
       for (let j = 0; j < n; j += 1) objects.push({ ...common, id: `${e.id}-leaf-${i}-${j}`, ...at(p.offset - p.width / 2 + p.width / n * (j + .5)), w: p.width / n - 35 });
       for (const side of [-1, 1]) objects.push({ ...common, id: `${e.id}-post-${i}-${side}`, entryPost: true, ...at(p.offset + side * (p.width / 2 + 60)), w: 120, h: 180, height: height + 120 });
     }

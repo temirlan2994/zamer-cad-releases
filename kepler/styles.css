@@ -4857,3 +4857,24 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   .atrium-panel[data-picking="true"] .atrium-area,
   .atrium-panel[data-picking="true"] footer { display: none; }
 }
+
+/* Выбор ворот и калитки под одной кнопкой «Въезд». */
+.entry-menu {
+  box-sizing: border-box; width: min(390px, calc(100vw - 24px)); max-height: calc(100dvh - 32px);
+  padding: 20px; border: 1px solid var(--border); border-radius: 18px;
+  background: var(--surface); color: var(--text); box-shadow: 0 16px 60px #0004;
+}
+.entry-menu::backdrop { background: #0005; }
+.entry-menu-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 14px; }
+.entry-menu-head h2 { margin: 0; font-size: 20px; }
+.entry-menu-head button { min-width: 40px; min-height: 40px; font-size: 24px; }
+.entry-menu fieldset { display: grid; gap: 8px; margin: 0 0 14px; padding: 0; border: 0; }
+.entry-menu legend { margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.entry-choice { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
+.entry-choice:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.entry-choice:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.entry-choice svg { width: 44px; height: 32px; flex: none; }
+.entry-choice span { font-weight: 600; }
+.entry-menu-wicket { min-height: 44px; }
+.entry-menu-wicket[hidden] { display: none; }
+.entry-menu #entryMenuPlace { width: 100%; min-height: 44px; }

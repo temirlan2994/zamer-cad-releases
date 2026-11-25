@@ -860,7 +860,7 @@ export function createRenderer(canvas) {
     // Предпросмотр ворот/калитки целиком, с привязкой к стороне участка.
     if (state.entryGhost) {
       ctx.save(); ctx.globalAlpha = 0.6;
-      drawSiteEntry(ctx, { kind: state.tool?.entryKind || 'gate', ...state.entryGhost }, tokens.accent2, tokens, px);
+      drawSiteEntry(ctx, { kind: state.tool?.entryKind || 'gate', opening: state.tool?.opening, wicket: state.tool?.wicket, ...state.entryGhost }, tokens.accent2, tokens, px);
       ctx.restore();
     }
     if (state.draft?.points?.length) drawDraft(ctx, state.draft, tokens, px);
@@ -1510,6 +1510,13 @@ function drawSiteEntry(ctx, entry, color, tokens, px) {
     const left = p.offset - p.width / 2; const right = p.offset + p.width / 2;
     for (const x of [left, right]) ctx.fillRect(x - 60, -90, 120, 180);
     ctx.beginPath(); ctx.moveTo(left, 0); ctx.lineTo(right, 0); ctx.stroke();
+    if (p.kind === 'gate' && p.opening === 'sliding') {
+      ctx.strokeRect(left, -70, p.width, 140);
+      const y = 350; const end = right - 250; const start = left + 250;
+      ctx.beginPath(); ctx.moveTo(start, y); ctx.lineTo(end, y);
+      ctx.moveTo(end - 300, y - 160); ctx.lineTo(end, y); ctx.lineTo(end - 300, y + 160); ctx.stroke();
+      continue;
+    }
     const leaves = p.kind === 'gate' ? [[left, p.width / 2, 1], [right, p.width / 2, -1]] : [[left, p.width, 1]];
     for (const [hinge, length, sign] of leaves) {
       ctx.beginPath(); ctx.moveTo(hinge, 0); ctx.lineTo(hinge + sign * length * .7, length * .7); ctx.stroke();

@@ -15,6 +15,7 @@ test('старый въезд становится воротами, напра�
     const list = ensureSiteEntries(s);
     assert.equal(list.length, 1);
     assert.equal(list[0].dir, entry.dir ?? entry.angle);
+    assert.equal(list[0].opening, 'swing');
     assert.equal(s.entry, list[0]);
   }
 });
@@ -23,10 +24,12 @@ test('несколько ворот и калитка сохраняются в 
   Object.assign(p.site, site());
   p.site.entries = [gate('g1'), gate('g2', 16000), { ...gate('w', 21000), kind: 'wicket', width: 1000 }];
   p.site.entries[1].wicket = true;
+  p.site.entries[1].opening = 'sliding';
   syncPrimaryEntry(p.site);
   const loaded = deserializeProject(serializeProject(p));
   assert.deepEqual(loaded.site.entries, normalizeSiteEntries(p.site));
   assert.equal(loaded.site.entry.id, 'g1');
+  assert.equal(loaded.site.entries[1].opening, 'sliding');
   assert.equal(buildStructuredExport(loaded).site.entries.length, 3);
   loaded.site.entries.splice(0, 1); syncPrimaryEntry(loaded.site);
   assert.equal(loaded.site.entry.id, 'g2');
@@ -70,4 +73,12 @@ test('3D показывает обе створки, стойки и боков�
   assert.ok(faces.some((f) => f.siteEntryId === 'g'));
   assert.ok(faces.some((f) => f.siteEntryId === 'w'));
   assert.ok(pickFaces(faces).some((f) => f.pick?.type === 'site' && f.pick?.id === 'g'));
+});
+
+test('раздвижные ворота имеют одно полотно, боковая калитка остаётся отдельной створкой', () => {
+  const s = site(); s.entries = [{ ...gate('slide'), opening: 'sliding', wicket: true }];
+  const parts = entryLandscapeObjects(s).filter((o) => o.id.includes('leaf'));
+  assert.equal(parts.length, 2);
+  assert.equal(parts[0].w, 3965);
+  assert.equal(parts[1].w, 965);
 });
