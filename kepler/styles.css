@@ -1890,7 +1890,7 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   pointer-events: none;
   transition: opacity 0.18s, transform 0.18s;
   max-width: min(560px, 86vw);
-  z-index: 50;
+  z-index: 96;
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
@@ -2801,7 +2801,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   body:has(#projectRoute.has-project):not(.draw-open, .cat-open, .sheet-props, .sheet-library, .sheet-more) { --route-h: 56px; }
   .workspace { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
   /* сообщения — над навигацией и вторым рядом */
-  #toast { bottom: calc(64px + env(safe-area-inset-bottom, 0px) + var(--ribbon-h)); z-index: 70; }
+  #toast { bottom: calc(64px + env(safe-area-inset-bottom, 0px) + var(--ribbon-h)); }
   .tool-options { grid-column: 1; grid-row: 2; height: auto; min-height: 40px; padding: 4px 8px; }
   .tool-options.empty { display: none; }
   .to-keys { display: none; }
