@@ -23,6 +23,19 @@ export function spenModeActive(settings, runtime) {
   return settings?.mode === "pen" || (settings?.mode !== "finger" && settings?.enabled !== false && runtime?.active === true);
 }
 
+export function spenInputScreen(settings, runtime, view) {
+  if (!spenModeActive(settings, runtime) || !Number.isFinite(runtime?.point?.x) || !Number.isFinite(runtime?.point?.y)) return null;
+  if (!(settings.hoverCursor && runtime.hovering) && runtime.contactId == null && Number.isFinite(runtime.worldPoint?.x) && Number.isFinite(runtime.worldPoint?.y)) {
+    return { x: runtime.worldPoint.x * view.scale + view.panX, y: runtime.worldPoint.y * view.scale + view.panY };
+  }
+  return runtime.point;
+}
+
+export function isSpenPointer(settings, runtime, pointerType) {
+  // Some Samsung WebViews expose pen contact as a mouse after native hover.
+  return pointerType === "pen" || (pointerType === "mouse" && spenModeActive(settings, runtime));
+}
+
 export function spenBarrelButtonPressed({ button = -1, buttons = 0 } = {}) {
   return button === 2 || button === 5 || Boolean(buttons & 2) || Boolean(buttons & 32);
 }

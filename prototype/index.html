@@ -574,6 +574,8 @@
                 <span><strong>Боковая кнопка</strong><small>При построении — ввод размера с сохранением направления. В остальных случаях — Esc / Выбор</small></span>
                 <input class="layer-switch" id="projectSpenButton" type="checkbox" checked />
               </label>
+              <p class="spen-mode-help">Если кнопка пера открывает меню Samsung: в настройках телефона → Дополнительные функции → S Pen → Air Command отключите «Открывать кнопкой пера».</p>
+              <button id="projectSpenSystemSettings" type="button" class="survey-secondary" hidden>Настройки телефона</button>
               <label class="project-gesture-setting" for="projectSpenPalm">
                 <span><strong>Защита от ладони</strong><small>Игнорировать широкие касания ладонью рядом с пером</small></span>
                 <input class="layer-switch" id="projectSpenPalm" type="checkbox" checked />
@@ -709,7 +711,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=336"></script>
+    <script type="module" src="./app.js?v=337"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

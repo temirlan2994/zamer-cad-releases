@@ -18,6 +18,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
@@ -82,6 +83,7 @@ public final class MainActivity extends Activity {
     private boolean sPenDetected;
     private boolean sPenReceiverRegistered;
     private boolean sPenHovering;
+    private volatile boolean sPenButtonHandling = true;
     private final ArrayDeque<IncomingFile> incomingFiles = new ArrayDeque<>();
     private volatile IncomingFile activeIncomingFile;
     private int incomingFileCount;
@@ -126,13 +128,15 @@ public final class MainActivity extends Activity {
         webView.setOnHoverListener((view, event) -> {
             noteSpenInput(event);
             reportSpenHover(event);
-            return false;
+            return sPenButtonHandling && isSpenButtonMotion(event);
         });
         webView.setOnGenericMotionListener((view, event) -> {
             noteSpenInput(event);
             if (sPenHovering && (event.getActionMasked() == MotionEvent.ACTION_BUTTON_PRESS ||
                     event.getActionMasked() == MotionEvent.ACTION_BUTTON_RELEASE)) reportSpenHover(event);
-            return false;
+            // The app handles the barrel action; do not also forward it as a
+            // WebView secondary click. Samsung Air Command has its own setting.
+            return sPenButtonHandling && isSpenButtonMotion(event);
         });
         webView.setOnTouchListener((view, event) -> {
             noteSpenInput(event);
@@ -294,6 +298,14 @@ public final class MainActivity extends Activity {
         if (webView != null && !isDestroyed()) {
             webView.evaluateJavascript("window.zamerUpdateAvailable?.(" + JSONObject.quote(version) + ");", null);
         }
+    }
+
+    private static boolean isSpenButtonMotion(MotionEvent event) {
+        if (event.getPointerCount() == 0) return false;
+        int tool = event.getToolType(0);
+        if (tool != MotionEvent.TOOL_TYPE_STYLUS && tool != MotionEvent.TOOL_TYPE_ERASER) return false;
+        int buttons = event.getButtonState() | event.getActionButton();
+        return (buttons & (MotionEvent.BUTTON_STYLUS_PRIMARY | MotionEvent.BUTTON_SECONDARY)) != 0;
     }
 
     private void noteSpenInput(MotionEvent event) {
@@ -482,6 +494,19 @@ public final class MainActivity extends Activity {
     }
 
     private final class AndroidBridge {
+        @JavascriptInterface
+        public void setSpenButtonHandling(boolean handled) {
+            sPenButtonHandling = handled;
+        }
+
+        @JavascriptInterface
+        public void openSpenSettings() {
+            runOnUiThread(() -> {
+                try { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
+                catch (RuntimeException error) { Toast.makeText(MainActivity.this, "Откройте настройки телефона → Дополнительные функции → S Pen", Toast.LENGTH_LONG).show(); }
+            });
+        }
+
         @JavascriptInterface
         public void readyForImports() {
             runOnUiThread(() -> {
