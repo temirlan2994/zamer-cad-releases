@@ -153,6 +153,24 @@ export function planAnnotationGeometry(entity) {
   return geometryByPoints.get(source);
 }
 
+export function planAnnotationSnapGeometry(entity) {
+  const geometry = planAnnotationGeometry(entity);
+  if (!geometry) return { points: [], segments: [] };
+  const points = [];
+  const segments = [];
+  for (const [ringIndex, ring] of geometry.rings.entries()) {
+    for (let index = 0; index < ring.points.length; index += 1) {
+      const p1 = ring.points[index];
+      const p2 = ring.points[(index + 1) % ring.points.length];
+      points.push({ ...p1, pointKey: `contour-${ringIndex}-vertex-${index}`, snapRole: "corner" });
+      points.push({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2,
+        pointKey: `contour-${ringIndex}-mid-${index}`, snapRole: "mid" });
+      segments.push({ p1, p2 });
+    }
+  }
+  return { points, segments };
+}
+
 export function totalPlanAreaM2(entities) {
   let total = 0;
   for (const entity of entities || []) {

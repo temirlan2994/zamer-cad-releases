@@ -30,7 +30,7 @@ import { createSurveyLaser } from "./core/survey-laser.js";
 import { buildZip } from "./core/zip.js";
 import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatProjectLength,
   fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
-import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, totalPlanAreaM2, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
+import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planAnnotationSnapGeometry, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, totalPlanAreaM2, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
 import { planRegionAtPoint } from "./core/plan-region.js";
 import { normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed } from "./core/spen.js";
 import { ANNOTATION_LINE_SPACING, ANNOTATION_SCALE_PRESETS, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./core/annotation-text.js";
@@ -9805,6 +9805,7 @@ function objectPointRefs(entity) {
     }
     return refs;
   }
+  if (isPlanAnnotationZone(entity)) return planAnnotationSnapGeometry(entity).points;
   if (entity.type === "block") {
     return [
       ...blockCorners(entity).map((corner, index) => ({ ...corner, pointKey: `corner-${index}`, snapRole: "corner" })),
@@ -9922,6 +9923,8 @@ function drawableSnapSegments() {
       for (let i = 0; i < corners.length; i += 1) {
         segments.push({ p1: corners[i], p2: corners[(i + 1) % corners.length], entity });
       }
+    } else if (isPlanAnnotationZone(entity)) {
+      for (const segment of planAnnotationSnapGeometry(entity).segments) segments.push({ ...segment, entity });
     }
   }
   return segments;

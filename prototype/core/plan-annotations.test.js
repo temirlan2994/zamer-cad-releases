@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { pointInPolygon } from "./geometry.js";
 import { createPlanAnnotation, formatPlanArea, formatPlanElevation, MAX_PLAN_ANNOTATION_POINTS,
   normalizePlanAnnotation, PLAN_ELEVATION_STYLES, planAnnotationAnchors, planAnnotationGeometry,
-  planAnnotationPointsFromEntity, tessellatePolyline, totalPlanAreaM2 } from "./plan-annotations.js";
+  planAnnotationPointsFromEntity, planAnnotationSnapGeometry, tessellatePolyline, totalPlanAreaM2 } from "./plan-annotations.js";
 
 function rectangle(minX, minY, maxX, maxY) {
   return [{ x: minX, y: minY }, { x: maxX, y: minY }, { x: maxX, y: maxY }, { x: minX, y: maxY }];
@@ -38,6 +38,20 @@ test("one annotation reports the sum of disconnected contours and picks an inter
     assert.equal(createPlanAnnotation("overlap", "area", first, { contours: [first, changed] }), null);
   }
   assert.equal(normalizePlanAnnotation({ ...annotation, points: second }), null);
+});
+
+test("area boundaries expose every contour vertex, midpoint, and closing segment for object snaps", () => {
+  const first = rectangle(0, 0, 1000, 1000);
+  const second = rectangle(3000, 0, 5000, 2000);
+  const annotation = createPlanAnnotation("combined", "area", first, { contours: [first, second] });
+  const snap = planAnnotationSnapGeometry(annotation);
+  assert.equal(snap.points.length, 16);
+  assert.equal(snap.segments.length, 8);
+  assert.deepEqual(snap.points[0], { x: 0, y: 0, pointKey: "contour-0-vertex-0", snapRole: "corner" });
+  assert.deepEqual(snap.points[1], { x: 500, y: 0, pointKey: "contour-0-mid-0", snapRole: "mid" });
+  assert.deepEqual(snap.segments[3], { p1: first[3], p2: first[0] });
+  assert.deepEqual(snap.segments[7], { p1: second[3], p2: second[0] });
+  assert.deepEqual(planAnnotationSnapGeometry({ type: "area", points: [] }), { points: [], segments: [] });
 });
 
 test("project total sums every specified area and ignores elevations or invalid geometry", () => {
