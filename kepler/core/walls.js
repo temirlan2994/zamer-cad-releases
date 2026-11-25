@@ -13,6 +13,7 @@ import {
   roomBoundaryEdges, roomContainsPoint, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon, roomRects,
 } from './room-shape.js';
 import { cornerWindowGeometry } from './corner-windows.js';
+import { GLAZED_OPENING_TYPES, glazedOpeningParts, isGlazedAssembly } from './glazed-openings.js';
 import { overridePieces, spanHostId, spanOrigin } from './wall-spans.js';
 import { deriveWallsV2, resolveOpeningWall } from './walls-v2.js';
 
@@ -1011,6 +1012,7 @@ export function openingOwnerId(project, opening, walls) {
 
 // Какие два пространства соединяет дверь: ['outside'|roomId, roomId].
 export function doorLink(project, opening, walls) {
+  if (isGlazedAssembly(opening)) return doorLink(project, glazedOpeningParts(opening)[0], walls);
   if (opening.kind !== 'door') return null;
   const placed = openingRect(project, opening, walls);
   if (!placed) return null;
@@ -1036,6 +1038,7 @@ export const DOOR_TYPES = {
   none: 'Проём без двери',
 };
 export const WINDOW_TYPES = {
+  ...GLAZED_OPENING_TYPES,
   standard: 'Обычное (старое)',
   fixed: 'Глухое',
   'tilt-turn': 'Поворотно-откидное',
@@ -1061,6 +1064,7 @@ export function doorPlacementVariant(opening, turns = 0) {
 // Распашные створки двери: одна (single) или две половины от обоих косяков
 // (double); у раздвижной и проёма без двери створок-дуг нет.
 export function doorLeaves(project, opening, walls) {
+  if (isGlazedAssembly(opening)) return doorLeaves(project, glazedOpeningParts(opening)[0], walls);
   const type = opening.type || 'single';
   if (type === 'double') {
     const half = opening.width / 2;

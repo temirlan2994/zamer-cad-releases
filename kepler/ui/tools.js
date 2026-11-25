@@ -17,6 +17,7 @@ import { groupHandleId } from '../core/group-handles.js';
 import { lsHandleKey } from '../core/landscape-handles.js';
 import { isRoofPlan } from './plan-roofs.js';
 import { cancelEditingGesture } from './edit-guard.js';
+import { isGlazedAssembly } from '../core/glazed-openings.js';
 
 export function selectObject(selection) {
   // Касание: выбор откладывается до тапа (ui/input.js), чтобы панорама пальцем
@@ -184,7 +185,7 @@ export function rotatePlacementPreview() {
       rect.x = cx - rect.w / 2;
       rect.y = cy - rect.h / 2;
     }
-  } else if (tool.kind === 'place-opening' && tool.openKind === 'door') {
+  } else if (tool.kind === 'place-opening' && (tool.openKind === 'door' || isGlazedAssembly(tool.preset))) {
     // Пробел — только петли слева/справа; сторона открывания идёт за курсором.
     tool.hingeStart = tool.hingeStart === false;
     if (state.ghostDoor) state.ghostDoor.hingeStart = tool.hingeStart;

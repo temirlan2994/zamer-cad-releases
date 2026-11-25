@@ -171,7 +171,7 @@ it('на телефоне выбор закрывает каталог, каса
     await page.tap('.opening-chip[data-preset="pano-2400"]');
     await page.locator('.library').waitFor({ state: 'hidden' });
     assert.equal(await page.inputValue('#presetW'), '2400');
-    assert.equal(await page.getAttribute('#canvasHint', 'data-touch'), 'Коснитесь наружной стены для окна');
+    assert.equal(await page.getAttribute('#canvasHint', 'data-touch'), 'Коснитесь стены или перегородки для окна');
     const count = await page.evaluate(() => {
       const project = window.__kepler.state.project;
       project.openings = project.openings.filter((o) => o.kind === 'door');

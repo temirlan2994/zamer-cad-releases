@@ -100,7 +100,8 @@ function buildLevelExport(project, level) {
   const openings = levelWindowOpenings(project, walls).map((opening) => {
     const placed = openingRect(project, opening, walls);
     return {
-      id: opening.cornerWing === 'return' ? `${opening.id}-return` : opening.id,
+      id: opening.assemblyPart ? `${opening.id}-${opening.assemblyPart}` : opening.cornerWing === 'return' ? `${opening.id}-return` : opening.id,
+      ...(opening.assemblyPart ? { assembly_id: opening.id } : {}),
       ...(opening.cornerWing ? { assembly_id: opening.id, wing: opening.cornerWing, joint: opening.corner.joint } : {}),
       kind: opening.kind,
       room: opening.roomId,
@@ -118,6 +119,7 @@ function buildLevelExport(project, level) {
       sill: openingSill(opening, level),
       swingIn: opening.swingIn,
       hingeStart: opening.hingeStart,
+      ...(opening.assemblyPart ? { assembly_part: opening.assemblyPart, assembly_type: opening.assemblyType } : {}),
       ...(opening.presetId ? { preset_id: opening.presetId } : {}),
       ...(opening.kind === 'door' && opening.entryRole ? { entry_role: opening.entryRole } : {}),
     };

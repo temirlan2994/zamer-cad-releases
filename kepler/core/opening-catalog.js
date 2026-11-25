@@ -5,6 +5,7 @@
 
 import { DOOR_TYPES, WINDOW_TYPES } from './walls.js';
 import { normalizeCatalogText } from './catalog.js';
+import { isGlazedAssembly } from './glazed-openings.js';
 
 export const OPENING_CATEGORIES = {
   door: [
@@ -16,6 +17,7 @@ export const OPENING_CATEGORIES = {
   ],
   window: [
     { id: 'opening', title: 'Открывающиеся' },
+    { id: 'with-door', title: 'С дверью' },
     { id: 'fixed', title: 'Глухие и широкие' },
     { id: 'wide', title: 'Широкие' },
     { id: 'panoramic', title: 'Витражи и порталы' },
@@ -31,6 +33,11 @@ const W = (cat, id, title, type, width, height, sill, keywords = '') => ({
 });
 
 export const OPENING_PRESETS = [
+  W('with-door', 'glazed-swing-2400', 'Витраж с распашной дверью', 'glazed-swing', 2400, 2300, 0, 'дверь двери распашная распашные стеклянная терраса выход панорамный'),
+  W('with-door', 'glazed-double-1800', 'Две распашные стеклянные двери', 'glazed-double', 1800, 2300, 0, 'дверь распашная стеклянная балкон выход'),
+  W('with-door', 'glazed-sliding-3000', 'Витраж с раздвижными дверями', 'glazed-sliding', 3000, 2400, 0, 'дверь двери раздвижная раздвижные стеклянная терраса портал'),
+  W('with-door', 'balcony-swing-2200', 'Окно и распашная балконная дверь', 'balcony-swing', 2200, 2300, 0, 'балконный блок окно дверь двери распашная распашные'),
+  W('with-door', 'balcony-sliding-3000', 'Окно и раздвижная балконная дверь', 'balcony-sliding', 3000, 2300, 0, 'балконный блок окно дверь двери раздвижная раздвижные'),
   D('interior', 'door-600', 'Дверь 600', 'single', 600, 2000, 'санузел ванная туалет кладовая'),
   D('interior', 'door-700', 'Дверь 700', 'single', 700, 2000, 'санузел ванная кухня'),
   D('interior', 'door-800', 'Дверь 800', 'single', 800, 2100, 'комната спальня межкомнатная'),
@@ -96,6 +103,7 @@ export function presetToOpening(preset, levelHeight = 3000) {
   const out = {
     ...(preset.kind === 'door' || preset.id === 'corner-glazing' ? { presetId: preset.id } : {}),
     type: preset.type, width: preset.width, height: preset.height,
+    ...(isGlazedAssembly(preset) ? { assembly: { ...preset.assembly } } : {}),
     sill: preset.kind === 'door' ? 0 : preset.sill,
     ...(preset.kind === 'door' && preset.cat === 'entrance' ? { entryRole: 'main' } : {}),
   };

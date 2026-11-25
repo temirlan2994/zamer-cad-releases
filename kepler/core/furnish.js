@@ -12,6 +12,7 @@ import { FURNITURE, furnitureDef, roomType, DEFAULT_PARTITION } from './catalog.
 import { nestedOuterRect } from './rooms.js';
 import { roomContainsPoint } from './room-shape.js';
 import { cornerWindowProjections } from './corner-windows.js';
+import { glazedOpeningProjections } from './glazed-openings.js';
 import { doorSwingRect, openingOwnerId, openingRect } from './walls.js';
 import { compTypeFor, withDefaultComp } from './composite.js';
 import { createItem } from './model.js';
@@ -136,7 +137,7 @@ export function buildRoomContext(project, room, walls) {
 
   const doorZones = [];
   const doorCells = [];
-  for (const opening of project.openings) {
+  for (const opening of glazedOpeningProjections(project.openings)) {
     if (opening.kind !== 'door') continue;
     const swing = doorSwingRect(project, opening, walls);
     const placed = openingRect(project, opening, walls);
@@ -148,7 +149,7 @@ export function buildRoomContext(project, room, walls) {
   }
 
   const windowZones = [];
-  for (const opening of cornerWindowProjections(project, project.openings, walls)) {
+  for (const opening of glazedOpeningProjections(cornerWindowProjections(project, project.openings, walls))) {
     if (opening.kind !== 'window') continue;
     if ((opening.host ? openingOwnerId(project, opening, walls) : opening.roomId) !== room.id) continue;
     const placed = openingRect(project, opening, walls);

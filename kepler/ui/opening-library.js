@@ -11,6 +11,7 @@ import { renderToolOptions } from './props.js';
 import { requestDraw } from './view.js';
 import { openingPlacementHint, setHint } from './tools.js';
 import { state } from './state.js';
+import { glazedOpeningParts, isGlazedAssembly } from '../core/glazed-openings.js';
 
 const openCat = { door: OPENING_CATEGORIES.door[0].id, window: OPENING_CATEGORIES.window[0].id };
 let syncedKey = null;
@@ -19,6 +20,7 @@ const shortLabels = {
   interior: 'Для комнат', double: 'Две створки', sliding: 'Сдвижные',
   passage: 'Без двери', opening: 'Открываются', fixed: 'Глухие',
   wide: 'Широкие', panoramic: 'В пол', special: 'Фрамуги',
+  'with-door': 'С дверью',
 };
 const levelHeight = () => activeLevel(state.project)?.height || 3000;
 const toolKind = () => (state.tool?.kind === 'place-opening' ? state.tool.openKind : null);
@@ -40,6 +42,7 @@ export function chooseOpeningPreset(preset) {
   delete t.preset.entryRole;
   delete t.preset.returnWidth;
   delete t.preset.cornerJoint;
+  delete t.preset.assembly;
   Object.assign(t.preset, presetToOpening(preset, levelHeight()));
   if (preset.kind === 'window') Object.assign(t.preset, {
     heightMode: preset.heightMode === 'level' ? 'level' : 'custom',
@@ -157,7 +160,34 @@ export function drawOpeningPreview(canvas, preset, colors) {
   ctx.clearRect(0, 0, W, H);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  if (preset.id === 'corner-glazing') {
+  if (isGlazedAssembly(preset)) {
+    const s = Math.min((W - 30) / preset.width, (H - 16) / preset.height);
+    const x0 = (W - preset.width * s) / 2;
+    const bottom = H - 8;
+    ctx.strokeStyle = colors.wall;
+    ctx.lineWidth = 2;
+    for (const part of glazedOpeningParts({ ...preset, offset: 0 })) {
+      const x = x0 + (preset.width / 2 + part.offset - part.width / 2) * s;
+      const y = bottom - (part.sill + part.height) * s;
+      const w = part.width * s; const h = part.height * s;
+      ctx.fillStyle = 'rgba(76,151,170,.20)';
+      ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+      if (part.kind === 'door') {
+        ctx.beginPath();
+        if (part.type === 'sliding') {
+          ctx.moveTo(x + w * .2, y + h / 2); ctx.lineTo(x + w * .8, y + h / 2);
+          ctx.lineTo(x + w * .8 - 5, y + h / 2 - 4);
+          ctx.moveTo(x + w * .8, y + h / 2); ctx.lineTo(x + w * .8 - 5, y + h / 2 + 4);
+        } else {
+          ctx.moveTo(x, y); ctx.lineTo(x + w, y + h / 2); ctx.lineTo(x, y + h);
+        }
+        ctx.stroke();
+        if (part.type !== 'single') { ctx.beginPath(); ctx.moveTo(x + w / 2, y); ctx.lineTo(x + w / 2, y + h); ctx.stroke(); }
+      }
+    }
+    ctx.strokeStyle = colors.stroke;
+    ctx.beginPath(); ctx.moveTo(8, bottom); ctx.lineTo(W - 8, bottom); ctx.stroke();
+  } else if (preset.id === 'corner-glazing') {
     ctx.lineWidth = 3;
     ctx.strokeStyle = colors.stroke;
     for (const [x, top, bottom] of [[W * 0.13, H * 0.22, H * 0.72], [W * 0.83, H * 0.17, H * 0.67]]) {

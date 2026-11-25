@@ -19,6 +19,7 @@ import { cutLandscapeGround, landscapeFaces } from './mesh3d-landscape.js';
 import { objectOutline } from './landscape.js';
 import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
 import { levelWindowOpenings } from './spanning-windows.js';
+import { isGlazing } from './glazed-openings.js';
 import { wallZRange } from './wall-z-range.js';
 import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js';
 import { difference } from './geom/clip.js';
@@ -193,6 +194,11 @@ function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
   if (type === 'awning' || type === 'clerestory') {
     const z = z0 + height * 0.55;
     addBox(a0 + frame, a1 - frame, z - frame / 2, z + frame / 2);
+  }
+  if (opening.glazed && opening.kind === 'door') {
+    const handle = type === 'double' ? (a0 + a1) / 2 - 110 : a1 - 120;
+    const bottom = z0 + Math.min(950, height * .45);
+    addBox(handle - 15, handle + 15, bottom, Math.min(z1 - frame, bottom + 250));
   }
   return faces;
 }
@@ -403,7 +409,7 @@ function levelWallsV2(lp, walls, z0, height, levelId, apertures) {
   }
   if (!recs.length || height < 0.5) return faces;
   for (const q of voids) {
-    if (q.kind !== 'window') continue;
+    if (!isGlazing(q.opening)) continue;
     const orient = q.wall.orient;
     const a0 = orient === 'h' ? q.r.x : q.r.y;
     const a1 = a0 + (orient === 'h' ? q.r.w : q.r.h);
@@ -607,7 +613,7 @@ function levelWalls(lp, z0, height, levelId, preparedWalls = null, apertures = n
       if (a0 > cursor) addPiece(cursor, a0, z0, z0 + height);
       if (h.bottom > 0) addPiece(a0, a1, z0, z0 + h.bottom);
       if (h.top < height) addPiece(a0, a1, z0 + h.top, z0 + height);
-      if (h.kind === 'window') {
+      if (isGlazing(h.opening)) {
         const opening = h.opening;
         const ref = run.members?.[0] ? wallRef(run.members[0], levelId, 'glass') : null;
         if (opening) faces.push(...windowAssemblyFaces(b, orient, a0, a1,

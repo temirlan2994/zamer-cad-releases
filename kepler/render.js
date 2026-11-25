@@ -4,6 +4,7 @@
 
 import { cornerWindowHandles, cornerWindowProjections } from './core/corner-windows.js';
 import { levelWindowOpenings } from './core/spanning-windows.js';
+import { glazedOpeningParts, isGlazedAssembly } from './core/glazed-openings.js';
 import {
   deriveWalls, doorLeaves, doorSymbol, openingRect, wallOutline, wallRects,
   wallsEngine,
@@ -958,6 +959,11 @@ export function createRenderer(canvas) {
         : [state.ghostOpening.rect];
       ctx.fillStyle = 'rgba(29,180,168,0.5)';
       for (const r of rects) if (r) ctx.fillRect(r.x, r.y, r.w, r.h);
+      if (isGlazedAssembly(preview)) {
+        ctx.save(); ctx.globalAlpha = .65;
+        for (const part of glazedOpeningParts(preview)) drawOpening(ctx, state, part, walls, tokens, px);
+        ctx.restore();
+      }
     }
     // Превью двери под курсором: створка с направлением открывания.
     if (state.ghostDoor) {

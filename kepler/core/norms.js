@@ -15,6 +15,7 @@ import { furnitureIssues } from './clearance.js';
 import { insolationReport } from './insolation.js';
 import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
 import { levelWindowOpenings } from './spanning-windows.js';
+import { isGlazing } from './glazed-openings.js';
 import { openingHeight } from './opening-preset.js';
 import { roomContainsPoint, roomRects } from './room-shape.js';
 import { roomNetAreaM2 } from './rooms.js';
@@ -70,10 +71,10 @@ function bathroomMinWidth(project, room) {
 }
 
 const windowGlass = (project, roomId, walls, openings) => {
-  const hosted = openings.some((o) => o.kind === 'window' && o.host);
+  const hosted = openings.some((o) => isGlazing(o) && o.host);
   const w = hosted ? (walls || deriveWalls(project)) : null;
   return openings
-    .filter((o) => o.kind === 'window' && (o.host ? openingOwnerId(project, o, w) : o.roomId) === roomId)
+    .filter((o) => isGlazing(o) && (o.host ? openingOwnerId(project, o, w) : o.roomId) === roomId)
     .reduce((s, o) => s + (o.width * openingHeight(o, project.levels?.find((l) => l.id === project.activeLevel))) / 1e6, 0);
 };
 

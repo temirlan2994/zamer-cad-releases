@@ -25,6 +25,8 @@ import { roomShapeArea } from '../core/room-shape.js';
 import { canAttachRoom, planAdjacentRoom } from '../core/adjacent-room.js';
 import { clearWindowSpan, levelWindowOpenings, nextWindowSpan, setWindowSpan, windowSpanTop } from '../core/spanning-windows.js';
 import { CORNER_PRESET, cornerWindowGeometry } from '../core/corner-windows.js';
+import { glazedOpeningMinWidth, isGlazedAssembly } from '../core/glazed-openings.js';
+import { bindGlazedOpeningFields, glazedElevationMarkup, glazedOpeningFields } from './glazed-opening-props.js';
 import { wallZRange } from '../core/wall-z-range.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { setWallDefaults } from '../core/wall-thickness.js';
@@ -724,7 +726,7 @@ function elevationSVG(opening) {
   const dim = (x1, y1, x2, y2, label, tx, ty, rot) => `
     <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="elev-dim"/>
     <text x="${tx}" y="${ty}" class="elev-txt" ${rot ? `transform="rotate(${rot} ${tx} ${ty})"` : ''}>${label}</text>`;
-  const glass = isDoor
+  const glass = isGlazedAssembly(opening) ? glazedElevationMarkup(opening, ox, oy, sw) : isDoor
     ? `<rect x="${ox + sw * 1.5}" y="${oy + sw * 1.5}" width="${width - sw * 3}" height="${height - sw * 3}" class="elev-door"/>
        <circle cx="${ox + width - sw * 5}" cy="${oy + height / 2}" r="${sw * 1.5}" class="elev-dim"/>`
     : `<rect x="${ox}" y="${oy}" width="${width}" height="${height}" class="elev-glass"/>
@@ -749,6 +751,7 @@ function renderPlaceOpeningProps(panel, compact = false) {
   const tool = state.tool;
   const isDoor = tool.openKind === 'door';
   const preset = tool.preset;
+  const assembly = isGlazedAssembly(preset);
   if (preset.presetId === CORNER_PRESET) { renderCornerWindowProps(panel, preset, { preset: true, compact }); return; }
   const level = activeLevel(state.project);
   const sampleSource = { kind: tool.openKind, ...preset };
@@ -772,9 +775,10 @@ function renderPlaceOpeningProps(panel, compact = false) {
         <label class="prop-field"><span>Высота, мм</span>
           <input id="presetH" type="number" step="50" min="300" value="${sample.height}" ${!isDoor && preset.heightMode === 'level' ? 'disabled' : ''}></label>
       </div>
-      ${isDoor ? '' : `<label class="check-row"><input id="presetHeightLinked" type="checkbox" ${preset.heightMode === 'level' ? 'checked' : ''}>
+      ${glazedOpeningFields(preset, 'preset')}
+      ${isDoor || assembly ? '' : `<label class="check-row"><input id="presetHeightLinked" type="checkbox" ${preset.heightMode === 'level' ? 'checked' : ''}>
         <span>Общие отступы этажа</span></label>`}
-      ${isDoor ? '' : `<label class="prop-field"><span>Снизу от пола, мм</span>
+      ${isDoor || assembly ? '' : `<label class="prop-field"><span>Снизу от пола, мм</span>
         <input id="presetSill" type="number" step="50" min="0" value="${sample.sill}" ${preset.heightMode === 'level' ? 'disabled' : ''}></label>`}
     </div>`;
   // Библиотека проёмов подсвечивает карточку по новым параметрам.
@@ -788,7 +792,8 @@ function renderPlaceOpeningProps(panel, compact = false) {
   panel.querySelector('#presetType').addEventListener('change', (e) => {
     save(presetWithType(tool.openKind, preset, e.target.value, activeLevel(state.project).height));
   });
-  panel.querySelector('#presetW').addEventListener('change', (e) => save({ width: Math.max(300, Number(e.target.value) || preset.width) }));
+  panel.querySelector('#presetW').addEventListener('change', (e) => save({ width: Math.max(glazedOpeningMinWidth(preset), Number(e.target.value) || preset.width) }));
+  bindGlazedOpeningFields(panel, preset, 'preset', save);
   panel.querySelector('#presetH').addEventListener('change', (e) => save({
     height: Math.max(300, Number(e.target.value) || preset.height), heightMode: 'custom',
   }));
@@ -983,8 +988,9 @@ function renderOpeningProps(panel, opening) {
   if (!opening) { renderProjectProps(panel); return; }
   const room = roomById(state.project, opening.roomId);
   const isDoor = opening.kind === 'door';
+  const assembly = isGlazedAssembly(opening);
   const level = activeLevel(state.project);
-  const hasUpperFloor = !isDoor && state.project.levels.some((candidate) => candidate.elevation > level.elevation);
+  const hasUpperFloor = !isDoor && !assembly && state.project.levels.some((candidate) => candidate.elevation > level.elevation);
   const spanOption = hasUpperFloor && nextWindowSpan(state.project, level.id, opening);
   const upper = spanOption && state.project.levels.find((l) => l.id === spanOption.targetLevelId);
   const spanTop = opening.span && windowSpanTop(state.project, level.id, opening);
@@ -1004,7 +1010,7 @@ function renderOpeningProps(panel, opening) {
   }
 
   panel.innerHTML = `
-    <h2>${isDoor ? 'Дверь' : 'Окно'}</h2>
+    <h2>${assembly ? 'Окно с дверью' : isDoor ? 'Дверь' : 'Окно'}</h2>
     <p class="subtitle">${opening.host ? 'Ручная стена' : room ? `Стена «${escapeHtml(room.name)}»` : 'Стена'}</p>
     <div class="elev-wrap">${elevationSVG({ ...opening, height: effectiveHeight, sill: effectiveSill })}</div>
     <div class="prop-block">
@@ -1027,7 +1033,8 @@ function renderOpeningProps(panel, opening) {
         <label class="prop-field"><span>Высота, мм</span>
           <input id="openH" type="number" step="50" min="300" value="${effectiveHeight}" ${!isDoor && (opening.heightMode === 'level' || spanTop) ? 'disabled' : ''}></label>
       </div>
-      ${isDoor ? '' : `<label class="check-row"><input id="openHeightLinked" type="checkbox" ${opening.heightMode === 'level' ? 'checked' : ''}>
+      ${glazedOpeningFields(opening, 'open')}
+      ${isDoor || assembly ? '' : `<label class="check-row"><input id="openHeightLinked" type="checkbox" ${opening.heightMode === 'level' ? 'checked' : ''}>
         <span>${spanTop ? 'Общий отступ от пола' : 'Общие отступы этажа'}</span></label>
         <div class="prop-row"><span>Рама</span><strong>Алюминий · антрацит</strong></div>`}
       ${isDoor ? `<label class="prop-field"><span>Роль наружной двери</span><select id="entryRole">
@@ -1037,7 +1044,7 @@ function renderOpeningProps(panel, opening) {
         <option value="terrace" ${opening.entryRole === 'terrace' ? 'selected' : ''}>Выход на террасу</option>
         <option value="none" ${opening.entryRole === 'none' ? 'selected' : ''}>Без автокрыльца</option>
       </select></label>` : ''}
-      ${isDoor ? '' : `<label class="prop-field"><span>Снизу от пола, мм</span>
+      ${isDoor || assembly ? '' : `<label class="prop-field"><span>Снизу от пола, мм</span>
         <input id="openSill" type="number" step="50" min="0" value="${effectiveSill}" ${opening.heightMode === 'level' ? 'disabled' : ''}></label>`}
     </div>
     <h3>Положение на стене</h3>
@@ -1056,6 +1063,14 @@ function renderOpeningProps(panel, opening) {
     const before = structuredClone(opening);
     mutate(() => {
       fn();
+      if (isGlazedAssembly(opening)) {
+        const at = fitOpeningOffset(state.project, opening, walls, openingPos(opening), { others: levelWindowOpenings(state.project, walls) });
+        if (at === null) {
+          for (const key of Object.keys(opening)) delete opening[key];
+          Object.assign(opening, before);
+          toast('Для такого блока нет свободного места на стене', true);
+        } else setOpeningPos(opening, at);
+      }
       if (before.span && spanTop && opening.span && !nextWindowSpan(state.project, level.id, opening)) {
         for (const key of Object.keys(opening)) delete opening[key];
         Object.assign(opening, before);
@@ -1078,8 +1093,9 @@ function renderOpeningProps(panel, opening) {
     commitOpening(() => setWindowSpan(state.project, level.id, opening, Math.max(spanOption.minTop, spanOption.maxTop - gap)));
   });
   const fit = (pos) => fitOpeningOffset(state.project, opening, walls, pos, { others: levelWindowOpenings(state.project, walls) });
+  bindGlazedOpeningFields(panel, opening, 'open', (next) => commitOpening(() => Object.assign(opening, next)));
   panel.querySelector('#openW').addEventListener('change', (e) => {
-    const width = Math.max(300, Number(e.target.value) || opening.width);
+    const width = Math.max(glazedOpeningMinWidth(opening), Number(e.target.value) || opening.width);
     commitOpening(() => {
       const oldWidth = opening.width;
       opening.width = width;
@@ -1092,10 +1108,14 @@ function renderOpeningProps(panel, opening) {
     const type = e.target.value;
     commitOpening(() => {
       opening.type = type;
+      if (!isGlazedAssembly(opening)) delete opening.assembly;
       if (!isDoor) {
         // Высокие окна следуют единой отметке этажа, обычные — индивидуальны.
         const top = activeLevel(state.project).height - 400;
-        if (HIGH_WINDOW_TYPES.has(type)) {
+        if (isGlazedAssembly(opening)) {
+          Object.assign(opening, presetWithType('window', opening, type, level.height));
+          delete opening.span;
+        } else if (HIGH_WINDOW_TYPES.has(type)) {
           opening.heightMode = 'level';
           opening.sill = openingSill(opening, level);
           opening.height = openingHeight(opening, level);

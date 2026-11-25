@@ -37,6 +37,7 @@ export function touchText(text, ctx = {}) {
   if (!text || !TOUCH_WORTH.test(text)) return text;
   if (text.startsWith('Кликайте по стенам — можно ставить несколько дверей')) return 'Коснитесь стены для двери';
   if (text.startsWith('Кликайте по наружным стенам — можно ставить несколько окон')) return 'Коснитесь наружной стены для окна';
+  if (text.startsWith('Кликайте по стенам и перегородкам — можно ставить несколько окон')) return 'Коснитесь стены или перегородки для окна';
   let t = String(text)
     .replace(/Ctrl\+Shift\+Z/g, '⟳')
     .replace(/Ctrl\+Z/g, '⟲')

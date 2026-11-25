@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "a97ffdcc1c3f6c21",
+  "version": "5d6a14f84ae8187e",
   "assets": [
     "./",
     "./analysis-panels.css",
@@ -46,6 +46,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/geom/clip.js",
     "./core/geom/index.js",
     "./core/geom/poly.js",
+    "./core/glazed-openings.js",
     "./core/grid-axes.js",
     "./core/grid-pins-model.js",
     "./core/grid-pins.js",
@@ -198,6 +199,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/firebase.js",
     "./ui/furniture-touch.js",
     "./ui/gaps.js",
+    "./ui/glazed-opening-props.js",
     "./ui/grid-locks.js",
     "./ui/grid-pin-ui.js",
     "./ui/grids.js",

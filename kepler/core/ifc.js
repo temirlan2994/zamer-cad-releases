@@ -327,7 +327,7 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
       const cy = -(r.y + r.h / 2);
       // Проём чуть толще стены — режет насквозь.
       const cut = rectProfile(cx, cy, horiz ? r.w : r.w + 20, horiz ? r.h + 20 : r.h);
-      const voidId = o.cornerWing === 'return' ? `${o.id}-return` : o.spanPart === 'upper' ? `${o.id}-${level.id}` : o.id;
+      const voidId = o.assemblyPart ? `${o.id}-${o.assemblyPart}` : o.cornerWing === 'return' ? `${o.id}-return` : o.spanPart === 'upper' ? `${o.id}-${level.id}` : o.id;
       const opening = add(`IFCOPENINGELEMENT(${guid(`opening-${voidId}`)},${owner},${stepString(o.kind === 'door' ? 'Проём двери' : 'Проём окна')},$,$,${placement},${shape(solid(cut, bottom, height))},$,.OPENING.)`);
       add(`IFCRELVOIDSELEMENT(${guid(`void-${voidId}`)},${owner},$,$,${wallRef.get(placed.wall)},${opening})`);
       // Полотно двери / стекло окна — тонкая плита посередине стены.
@@ -339,7 +339,7 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
       if (o.kind === 'door') {
         const op = { double: '.DOUBLE_DOOR_SINGLE_SWING.', sliding: '.SLIDING_TO_LEFT.', none: '.NOTDEFINED.' }[o.type]
           || (o.hingeStart ? '.SINGLE_SWING_LEFT.' : '.SINGLE_SWING_RIGHT.');
-        filler = add(`IFCDOOR(${guid(`door-${o.id}`)},${owner},${stepString('Дверь')},$,$,${placement},${shape(solid(panel, bottom, height))},$,${real(height)},${real(o.width)},.DOOR.,${op},$)`);
+        filler = add(`IFCDOOR(${guid(`door-${voidId}`)},${owner},${stepString(o.glazed ? 'Стеклянная дверь' : 'Дверь')},$,$,${placement},${shape(solid(panel, bottom, height))},$,${real(height)},${real(o.width)},.DOOR.,${op},$)`);
         counts.doors += 1;
       } else {
         const glassHeight = o.spanPart ? o.spanTop - bottom : height;

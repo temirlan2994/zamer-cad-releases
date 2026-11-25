@@ -1,0 +1,101 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createProject, createRoom, createOpening, serializeProject, deserializeProject } from '../core/model.js';
+import { glazedOpeningParts, glazedAssemblySpec } from '../core/glazed-openings.js';
+import { applyOpeningPreset } from '../core/opening-preset.js';
+import { OPENING_PRESETS, presetToOpening } from '../core/opening-catalog.js';
+import { deriveWalls, doorLeaves, doorLink } from '../core/walls.js';
+import { levelWindowOpenings } from '../core/spanning-windows.js';
+import { analyzeConnectivity } from '../core/rooms.js';
+import { buildHouseMesh, levelWallSolids } from '../core/mesh3d.js';
+import { buildIfc } from '../core/ifc.js';
+import { buildStructuredExport } from '../core/export.js';
+import { projectToLayoutInput } from '../core/layout-contract.js';
+import { buildRoomContext } from '../core/furnish.js';
+import { windowsOf } from '../core/insolation.js';
+
+function fixture(type = 'balcony-swing', width = 2200) {
+  const p = createProject();
+  const room = createRoom('living', 0, 0, 6000, 4000);
+  const opening = createOpening('window', room.id, 0, 3000, width);
+  Object.assign(opening, { type, height: 2300, sill: 0, heightMode: 'custom', assembly: {} });
+  p.rooms.push(room); p.openings.push(opening);
+  return { p, room, opening };
+}
+
+test('балконный блок: дверь от пола, окно с подоконником, простенок и один исходный объект', () => {
+  const { p, opening } = fixture();
+  const before = JSON.stringify(opening);
+  const parts = levelWindowOpenings(p, deriveWalls(p));
+  assert.equal(p.openings.length, 1);
+  assert.deepEqual(parts.map(({ kind, type, width, sill, height, offset }) => ({ kind, type, width, sill, height, offset })), [
+    { kind: 'door', type: 'single', width: 900, sill: 0, height: 2300, offset: 2350 },
+    { kind: 'window', type: 'fixed', width: 1200, sill: 900, height: 1400, offset: 3500 },
+  ]);
+  assert.equal(JSON.stringify(opening), before, 'проекции не меняют исходный блок');
+  opening.assembly = { doorSide: 'end', doorWidth: 800, windowSill: 1100 };
+  const [door, window] = glazedOpeningParts(opening);
+  assert.equal(door.offset, 3700);
+  assert.equal(window.offset, 2550);
+  assert.equal(window.sill, 1100);
+  assert.equal(window.height, 1200);
+});
+
+test('остекление: распашная створка, две створки и раздвижной портал действительно соединяют пространства', () => {
+  for (const [type, width, count] of [['glazed-swing', 2400, 1], ['glazed-double', 1800, 2], ['glazed-sliding', 3000, 0]]) {
+    const { p, room, opening } = fixture(type, width);
+    const walls = deriveWalls(p);
+    assert.deepEqual(doorLink(p, opening, walls), [room.id, 'outside']);
+    assert.equal(doorLeaves(p, opening, walls).length, count);
+    assert.ok(analyzeConnectivity(p, walls).reachable.has(room.id));
+    assert.ok(buildRoomContext(p, room, walls).doorCells.length, 'расстановка оставляет проход к двери');
+    assert.ok(windowsOf(p).length, 'стеклянные двери участвуют в освещении');
+  }
+});
+
+test('3D: под окном остаётся стена, дверная часть вырезается до пола, обе части остеклены', () => {
+  const { p, opening } = fixture();
+  const walls = deriveWalls(p);
+  const { voids } = levelWallSolids(p, walls, 3000);
+  assert.deepEqual(voids.map(({ bottom, top }) => [bottom, top]), [[0, 2300], [900, 2300]]);
+  const glass = buildHouseMesh(p, { roof: false, site: false }).filter((face) => face.kind === 'glass' && face.openingId === opening.id);
+  assert.equal(glass.length, 2);
+  assert.deepEqual(glass.map((face) => Math.min(...face.pts.map((p) => p.z))).sort((a, b) => a - b), [0, 900]);
+});
+
+test('ручная стена: обе проекции следуют общей точке привязки', () => {
+  const { opening } = fixture();
+  opening.roomId = null; delete opening.offset; delete opening.side;
+  opening.host = { wallId: 'manual-wall', t: 4000 };
+  const [door, window] = glazedOpeningParts(opening);
+  assert.deepEqual(door.host, { wallId: 'manual-wall', t: 3350 });
+  assert.deepEqual(window.host, { wallId: 'manual-wall', t: 4500 });
+  assert.deepEqual(opening.host, { wallId: 'manual-wall', t: 4000 });
+});
+
+test('пресеты и файл сохраняют единый блок и его настройки', () => {
+  for (const preset of OPENING_PRESETS.filter((p) => p.cat === 'with-door')) {
+    const { p, opening } = fixture();
+    applyOpeningPreset(opening, presetToOpening(preset));
+    opening.assembly = { doorWidth: 800, doorSide: 'end', windowSill: 1000 };
+    const restored = deserializeProject(serializeProject(p)).openings[0];
+    assert.equal(restored.type, preset.type);
+    assert.deepEqual(restored.assembly, opening.assembly);
+    assert.equal(restored.heightMode, 'custom');
+    assert.ok(glazedAssemblySpec(restored));
+  }
+});
+
+test('экспорт и решатель получают дверь и окно с разными id внутри общего блока', () => {
+  const { p, opening } = fixture();
+  const { text, counts } = buildIfc(p);
+  assert.equal(counts.doors, 1); assert.equal(counts.windows, 1);
+  const guids = [...text.matchAll(/=IFC(?:OPENINGELEMENT|DOOR|WINDOW)\('([^']+)'/g)].map((m) => m[1]);
+  assert.equal(guids.length, 4); assert.equal(new Set(guids).size, 4);
+  const exported = buildStructuredExport(p).levels[0].openings;
+  assert.equal(new Set(exported.map((o) => o.id)).size, 2);
+  assert.ok(exported.every((o) => o.assembly_id === opening.id));
+  const contract = projectToLayoutInput(p);
+  assert.equal(new Set(contract.openings.map((o) => o.id)).size, 2);
+  assert.ok(contract.openings.some((o) => o.kind === 'hinged_door'));
+});

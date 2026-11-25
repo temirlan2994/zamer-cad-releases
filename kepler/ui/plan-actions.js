@@ -1,6 +1,7 @@
 // Действия режима «План»: комнаты, проёмы, мебель, удаление, группы.
 
 import { CORNER_PRESET, cornerWindowGeometry } from '../core/corner-windows.js';
+import { isGlazedAssembly } from '../core/glazed-openings.js';
 import { levelWindowOpenings } from '../core/spanning-windows.js';
 import { wallZRange } from '../core/wall-z-range.js';
 import { applyOpeningPreset, openingHeight, openingSill } from '../core/opening-preset.js';
@@ -243,7 +244,7 @@ export function computeOpeningParams(at, { project = state.project, walls = stat
     snapOpeningOffset(project, opening, walls, along - base, snap), { others });
   if (free === null) return { error: `На этой стене нет места: проём пересёкся бы с соседними (нужен зазор ≥ ${OPENING_GAP} мм)` };
   opening.offset = free;
-  if (openKind === 'door') {
+  if (openKind === 'door' || isGlazedAssembly(opening)) {
     // Сторона открывания — та, где мышь относительно линии стены.
     const perpRoomCenter = wall.orient === 'h' ? room.y + room.h / 2 : room.x + room.w / 2;
     const mousePerp = wall.orient === 'h' ? at.y : at.x;
@@ -273,7 +274,7 @@ function computeHostOpening(at, wall, openKind, project, walls, snap, others) {
     snapOpeningOffset(project, opening, walls, opening.host.t, snap), { others });
   if (free === null) return { error: `На этой стене нет места: проём пересёкся бы с соседними (нужен зазор ≥ ${OPENING_GAP} мм)` };
   opening.host.t = free;
-  if (openKind === 'door') {
+  if (openKind === 'door' || isGlazedAssembly(opening)) {
     // Открывание — в сторону курсора: «внутрь» — слева от оси a→b.
     const mid = wall.orient === 'h' ? wall.band.y + wall.band.h / 2 : wall.band.x + wall.band.w / 2;
     const mouseSign = Math.sign((wall.orient === 'h' ? at.y : at.x) - mid) || wall.outward;
@@ -292,7 +293,7 @@ export function placeOpeningAt(at) {
   // Инструмент остаётся активным: можно ставить следующий проём подряд.
   // Esc — выход; проём правится кликом по нему после выхода.
   state.ghostOpening = null; state.ghostOpeningFull = null; state.ghostDoor = null;
-  toast(`${opening.kind === 'door' ? 'Дверь' : 'Окно'} поставлена · кликайте дальше или Esc`);
+  toast(`${isGlazedAssembly(opening) ? 'Оконно-дверной блок установлен' : opening.kind === 'door' ? 'Дверь поставлена' : 'Окно поставлено'} · кликайте дальше или Esc`);
   requestDraw();
 }
 
@@ -977,7 +978,7 @@ export function mirrorSelection() {
 export function flipSelectedOpening(part) {
   const opening = state.selection?.type === 'opening'
     ? state.project.openings.find((candidate) => candidate.id === state.selection.id) : null;
-  if (!opening || opening.kind !== 'door') return;
+  if (!opening || (opening.kind !== 'door' && !isGlazedAssembly(opening))) return;
   mutate(() => {
     if (part === 'hinge') opening.hingeStart = !opening.hingeStart;
     else opening.swingIn = !opening.swingIn;

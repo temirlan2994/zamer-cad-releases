@@ -190,6 +190,7 @@ export function roomSunlightAnalysisKey(project, options = {}) {
   const windowShape = (opening) => opening.kind === 'window' ? [
     opening.id, opening.roomId || '', opening.side ?? '', opening.offset ?? '', opening.width,
     opening.height, opening.heightMode || '', opening.sill, opening.orphan || false, opening.host || null, opening.span || null,
+    opening.type, opening.assembly || null,
   ] : null;
   const wallShape = (wall) => [
     wall.id, wall.axis || null, wall.justify || '', wall.thickness, wall.typeId || '', wall.wallType || '',

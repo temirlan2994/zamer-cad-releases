@@ -18,6 +18,7 @@ import { activeGrids } from './plan-grids.js';
 import { wallPins } from '../core/grid-pins.js';
 import { visibleRoofById } from './plan-roofs.js';
 import { allMasses } from '../core/masses.js';
+import { glazedAssemblySpec } from '../core/glazed-openings.js';
 
 const button = (action, icon, text, key = '', extra = '') => `
   <button type="button" data-selection-action="${action}" ${extra} title="${escapeHtml(text)}${key ? ` (${key})` : ''}">
@@ -142,9 +143,10 @@ function contentForSelection(sel) {
     const opening = state.project.openings.find((candidate) => candidate.id === sel.id);
     if (!opening) return null;
     const door = opening.kind === 'door';
-    const canFlip = door && ['single', 'double', undefined].includes(opening.type);
+    const assembly = glazedAssemblySpec(opening);
+    const canFlip = (door && ['single', 'double', undefined].includes(opening.type)) || (assembly && assembly.doorType !== 'sliding');
     return {
-      label: door ? 'Дверь' : 'Окно',
+      label: assembly ? 'Окно с дверью' : door ? 'Дверь' : 'Окно',
       html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}
         ${canFlip ? button('flip-hinge', '⇆', 'Петли') + button('flip-swing', '↷', 'Открывание') : ''}
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,

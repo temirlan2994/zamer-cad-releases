@@ -15,6 +15,7 @@
 // Точка расчёта — середина окна снаружи на уровне подоконника.
 
 import { levelWindowOpenings } from './spanning-windows.js';
+import { isGlazing } from './glazed-openings.js';
 import { isOpenRoom } from './catalog.js';
 import { rectCornersWorld, toWorld } from './building.js';
 import { castsShadow } from './landscape-shadow.js';
@@ -440,7 +441,7 @@ export function windowsOf(project, options = {}) {
       wallsByLevel?.set(level.id, walls);
     }
     for (const o of levelWindowOpenings(lp, walls)) {
-      if (o.kind !== 'window') continue;
+      if (!isGlazing(o)) continue;
       const placed = openingRect(lp, o, walls);
       if (!placed) continue;
       let facade; let roomId = o.roomId;

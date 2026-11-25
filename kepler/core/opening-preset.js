@@ -2,6 +2,7 @@
 // инструменте): тип, ширина, высота, подоконник. Чистый модуль без DOM.
 
 import { DOOR_WIDTH, WINDOW_WIDTH } from './catalog.js';
+import { isGlazedAssembly } from './glazed-openings.js';
 import {
   DEFAULT_TALL_WINDOW_HEIGHT, levelTallWindowOffsets,
 } from './model.js';
@@ -15,6 +16,7 @@ export function levelTallWindowHeight(level) {
 // Фактическая отметка низа. У связанного витража сохранённый sill служит
 // только совместимостью со старыми файлами: весь этаж следует одному отступу.
 export function openingSill(opening, level) {
+  if (isGlazedAssembly(opening)) return 0;
   if (opening?.kind === 'door') return 0;
   if (opening?.kind === 'window' && opening.heightMode === 'level') {
     return levelTallWindowOffsets(level).bottom;
@@ -49,6 +51,10 @@ export function applyOpeningPreset(opening, preset) {
   if (opening.kind === 'door' && preset.entryRole) opening.entryRole = preset.entryRole;
   else if (opening.kind === 'door') delete opening.entryRole;
   opening.type = preset.type;
+  if (isGlazedAssembly(preset)) {
+    opening.assembly = { ...preset.assembly };
+    delete opening.span;
+  } else delete opening.assembly;
   opening.width = preset.width;
   opening.height = preset.height;
   if (opening.kind === 'window') {
@@ -67,7 +73,13 @@ export function presetWithType(kind, preset, type, levelHeight = 3000) {
   const next = { ...preset, type };
   if (kind === 'window') {
     const top = levelHeight - 400;
-    if (HIGH_WINDOW_TYPES.has(type)) {
+    if (isGlazedAssembly(next)) {
+      next.sill = 0;
+      next.height = Math.min(2300, top);
+      next.heightMode = 'custom';
+      next.width = Math.max(type.endsWith('sliding') ? 1800 : type.startsWith('balcony-') ? 1600 : 900, next.width);
+      next.assembly = {};
+    } else if (HIGH_WINDOW_TYPES.has(type)) {
       next.sill = type === 'french' ? 50 : 100;
       next.height = Math.min(DEFAULT_TALL_WINDOW_HEIGHT, top - next.sill);
       next.heightMode = 'level';

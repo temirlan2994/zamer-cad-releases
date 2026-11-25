@@ -1,4 +1,5 @@
 import { cornerWindowHandles } from '../core/corner-windows.js';
+import { glazedOpeningMinWidth, isGlazedAssembly } from '../core/glazed-openings.js';
 import { atriumClick, atriumHover } from './atrium-ui.js';
 // Ввод мышью на канвасе: выбор, перетаскивания, рамка, колесо, drag-and-drop.
 
@@ -11,7 +12,7 @@ import { determineParent, snapRoomPosition, validateRoomPlacement } from '../cor
 import { nearestPointOnPolyline } from '../core/site.js';
 import { pointInBuilding, setBuildingOrigin } from '../core/site-check.js';
 import {
-  openingFrame, openingPosAt, openingRect, setOpeningPos, wallRects,
+  openingFrame, openingPos, openingPosAt, openingRect, setOpeningPos, wallRects,
 } from '../core/walls.js';
 import { dragManualWallEnd } from '../core/wall-manual.js';
 import {
@@ -1126,6 +1127,12 @@ export function bindCanvasInput() {
       selectObject({ type: 'opening', id: opening.id });
       if (opening.corner) return;
       drag = { kind: 'opening', id: opening.id, before: snapshot(), moved: false };
+      const stored = state.project.openings.find((o) => o.id === opening.id);
+      if (isGlazedAssembly(stored)) {
+        const placed = openingRect(state.project, stored, state.walls);
+        if (placed) drag.grabOffset = openingPosAt(state.project, stored, state.walls,
+          placed.wall.orient === 'h' ? plan.x : plan.y) - openingPos(stored);
+      }
       return;
     }
 
@@ -1619,7 +1626,7 @@ export function bindCanvasInput() {
       const placedNow = openingRect(state.project, opening, state.walls);
       if (!placedNow) return;
       drag.moved = true;
-      const desired = openingPosAt(state.project, opening, state.walls, placedNow.wall.orient === 'h' ? plan.x : plan.y);
+      const desired = openingPosAt(state.project, opening, state.walls, placedNow.wall.orient === 'h' ? plan.x : plan.y) - (drag.grabOffset || 0);
       // Сначала шаг сетки, потом поиск свободного места: округление не должно
       // загонять проём на соседний (зазор ≥ OPENING_GAP).
       state.openingFree = event.shiftKey; // Shift — без шага и без привязки к центру
@@ -1718,7 +1725,7 @@ export function bindCanvasInput() {
       const fixed = drag.end === 'start' ? endEdge : startEdge;
       const movingEdge = base + Math.round((along - base) / 50) * 50; // шаг 50 мм
       let width = Math.abs(fixed - movingEdge);
-      width = Math.max(300, Math.round(width / 50) * 50);
+      width = Math.max(glazedOpeningMinWidth(opening), Math.round(width / 50) * 50);
       const center = drag.end === 'start' ? fixed - width / 2 : fixed + width / 2;
       const probe = { ...opening, width };
       const clamped = fitOpeningOffset(state.project, probe, state.walls, (center - base) * frame.dir);
