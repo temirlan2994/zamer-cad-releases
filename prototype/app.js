@@ -1,4 +1,4 @@
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, selectionFilterForProject, shouldDelayTapZoom, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=233";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, resolvePolarSnap, selectionFilterForProject, shouldDelayTapZoom, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=234";
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildBlockPreview } from "./core/block-preview.js";
@@ -723,7 +723,7 @@ const cp1251Chars =
   "АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ" +
   "абвгдежзийклмнопрстуфхцчшщъыьэюя";
 const cp1251ByteByChar = new Map([...cp1251Chars].map((char, index) => [char, index + 0x80]));
-const trackingHoverDelayMs = 1000;
+const trackingHoverDelayMs = 300;
 const trackingMaxPoints = 3;
 const trackingAngles = [0, Math.PI / 4, Math.PI / 2, (Math.PI * 3) / 4];
 const groupedDrawTools = new Set(["line", "polyline", "circle", "arc", "rectangle"]);
@@ -893,6 +893,8 @@ const spenRuntime = {
   point: null,
   lastHover: -Infinity,
   barrelDown: false,
+  hoverExitAt: -Infinity,
+  hoverExitTimer: null,
 };
 
 const state = {
@@ -942,6 +944,8 @@ const state = {
   dimensionSnapChoice: null,
   dimensionAttach: null,
   polarSnapGuide: null,
+  polarSnapLock: null,
+  lastCursorPreview: null,
   dimensionPickCycle: null,
   selectionPickCycle: null,
   snapTracking: {
@@ -1053,6 +1057,7 @@ function activateSpenMode() {
 
 function activateSpenFromPointer(event) {
   if (event.pointerType !== "pen") return false;
+  window.clearTimeout(spenRuntime.hoverExitTimer);
   activateSpenMode();
   spenRuntime.hovering = true;
   spenRuntime.point = getPointer(event);
@@ -3701,7 +3706,7 @@ function commitQuickMeasurePoint() {
     const result = quickMeasureFromPlan(measure.mode);
     if (result) measure.measurement = result;
     else measure.error = measure.mode === "radius" ? "Под крестиком нет круга или дуги" : "Под крестиком нет замкнутой области";
-  } else if (quickMeasureClosesContour(measure.mode, measure.points, rawCursorWorld())) {
+  } else if (quickMeasureClosesContour(measure.mode, measure.points, cursorWorld())) {
     finishQuickMeasureContour();
     return;
   } else {
@@ -3732,8 +3737,49 @@ function lineAxisAngle(axis, start, end) {
   return undefined;
 }
 
+function cursorPreviewContext() {
+  const draft = state.drawing;
+  return [persistence.projectId, spenSettings.mode, spenModeEnabled(), spenSettings.hoverCursor,
+    state.tool, state.dimensionTool, state.circleMode, state.angleMode,
+    draft, draft?.phase, draft?.arcPhase, draft?.start?.x, draft?.start?.y, draft?.metricConstraint,
+    state.planZone, state.planZone?.points.length, state.quickMeasure, state.quickMeasure?.points.length,
+    state.moveCommand, state.moveCommand?.base?.x, state.moveCommand?.base?.y, state.offsetCommand,
+    state.lineEdit, state.lineEdit?.mirrorStart, state.lineEdit?.firstPick, state.lineEdit?.amount,
+    state.selectedEndpoint, state.selectedFigureGrip, state.dimensionAttach, surveyPointPicker, state.additionalDimensionDraft,
+    state.blockPlacement, state.entities.length, state.undo.length, state.redo.length,
+    state.view.scale, state.view.panX, state.view.panY, state.polarStep, state.snapsMuted, [...state.snaps].join(",")];
+}
+
+function sameCursorPreviewContext(context) {
+  const current = cursorPreviewContext();
+  return context?.length === current.length && context.every((value, index) => value === current[index]);
+}
+
+function displayedSnapForPress(event, screen) {
+  const preview = state.lastCursorPreview;
+  if (!preview || !sameCursorPreviewContext(preview.context)) return null;
+  const pen = event.pointerType === "pen" && spenModeEnabled();
+  if (pen !== preview.pen) return null;
+  if (pen && ((!spenCursorActive() && performance.now() - spenRuntime.hoverExitAt > 300) || pointDistance(screen, preview.screen) > 24)) return null;
+  return preview;
+}
+
+function pointerPlacesCursorPoint(pointer) {
+  if (!pointer) return false;
+  if (["survey-point", "dimension-attach", "move-command", "offset-command", "endpoint-place"].includes(pointer.mode)) return true;
+  if (pointer.mode === "line-edit") return lineEditPlacesPoint();
+  return pointer.mode === "pan" && !state.leaderInput && (state.tool !== "select" || state.quickMeasure || state.blockPlacement);
+}
+
 function cursorSnapResolved() {
+  const confirmed = state.pointer?.confirmedSnap;
+  if (confirmed && sameCursorPreviewContext(confirmed.context)) {
+    state.snapTracking.active = confirmed.tracking;
+    state.polarSnapGuide = confirmed.polar;
+    return confirmed.resolved;
+  }
   const raw = rawCursorWorld();
+  if (surveyPointPicker) return resolveDimensionPointSnap(raw, { start: null });
   if (state.quickMeasure) return quickMeasureSnap(raw);
   if (state.dimensionAttach) {
     const snap = dimensionAttachCandidate(raw);
@@ -7409,6 +7455,7 @@ function setSelectedEndpointPosition(point) {
 }
 
 function endpointCursorPoint(geometry) {
+  if (state.pointer?.confirmedSnap) return cursorWorld();
   if (isDraftLine(geometry.entity) && distanceWorld(rawCursorWorld(), geometry.moving) <= linePointEpsilon) return geometry.moving;
   return cursorWorld();
 }
@@ -8737,6 +8784,9 @@ function resetSnapTracking() {
   state.snapTracking.active = null;
   state.snapTracking.compoundLock = null;
   state.polarSnapGuide = null;
+  state.polarSnapLock = null;
+  state.lastCursorPreview = null;
+  if (state.pointer) state.pointer.confirmedSnap = null;
   state.dimensionSnapChoice = null;
 }
 
@@ -8745,8 +8795,14 @@ function drawCursorSnap(c) {
   const chooseAxis = state.dimensionTool === "linear" && dimensionStage === "offset";
   const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.selectedFigureGrip && !state.dimensionAttach &&
     !surveyPointPicker && !lineEditPlacesPoint() && !state.blockPlacement && !state.quickMeasure;
-  const resolved = surveyPointPicker ? resolveDimensionPointSnap(rawCursorWorld(), { start: null })
-    : selectOnly || state.leaderInput ? null : cursorSnapResolved();
+  const resolved = selectOnly || state.leaderInput ? null : cursorSnapResolved();
+  if (spenCursorActive() || !spenModeEnabled()) {
+    state.lastCursorPreview = resolved?.snap && !state.snapsMuted ? {
+      resolved: { ...resolved, point: { ...resolved.point }, snap: { ...resolved.snap } },
+      screen: { ...inputCursorScreen() }, pen: spenCursorActive(), context: cursorPreviewContext(),
+      tracking: state.snapTracking.active, polar: state.polarSnapGuide,
+    } : null;
+  }
   const chooseSnap = state.tool === "dimension" && !surveyPointPicker && resolved?.snapCount > 1;
   dimensionAxisControl.hidden = !chooseAxis;
   dimensionNextSnap.hidden = !chooseSnap;
@@ -9490,10 +9546,14 @@ function resolveSnapWorld(point, { polarStart = state.drawing?.start || state.mo
     includeNearestSegment: isLineSnapContext(),
     start: state.drawing?.arcEnd && midpoint(state.drawing.start, state.drawing.arcEnd),
   });
-  if (objectSnap) return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
+  if (objectSnap) {
+    state.polarSnapLock = null;
+    return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
+  }
   if (canSnapToPrePointTrackingGuides() || canUseSnapTracking()) {
     const snap = nearestSnapTrackingPoint(point, trackingThreshold);
     if (snap) {
+      state.polarSnapLock = null;
       state.snapTracking.active = snap;
       return { point: { x: snap.x, y: snap.y }, snap };
     }
@@ -9506,12 +9566,13 @@ function resolveGridAndPolarSnap(point, start, useGrid = true) {
   const grid = useGrid && snapEnabled("grid");
   const fallback = grid ? gridPoint(point) : point;
   if (start && snapEnabled("polar")) {
-    const polar = snapPolar(fallback, start);
+    const polar = snapPolar(fallback, start, { remember: true });
     if (polar.snapped) {
       state.polarSnapGuide = { point: start, angle: polar.angle, degrees: polar.degrees };
       return snappedPoint(polar.point, "polar");
     }
   }
+  state.polarSnapLock = null;
   return grid ? snappedPoint(fallback, "grid") : { point, snap: null };
 }
 
@@ -9566,7 +9627,10 @@ function resolveDimensionPointSnap(point, { start = state.drawing?.start } = {})
   if (choice && !useChoice) state.dimensionSnapChoice = null;
   const snapIndex = useChoice && choice.index < distinct.length ? choice.index : 0;
   const snap = distinct[snapIndex];
-  if (snap) return { point: { x: snap.x, y: snap.y }, snap, snapCount: distinct.length, snapIndex };
+  if (snap) {
+    state.polarSnapLock = null;
+    return { point: { x: snap.x, y: snap.y }, snap, snapCount: distinct.length, snapIndex };
+  }
   return resolveGridAndPolarSnap(point, leaderToolActive() ? null : start);
 }
 
@@ -9578,10 +9642,12 @@ function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } =
   const grid = useGrid && snapEnabled("grid");
   const objectSnap = nearestObjectSnap(point, { includeNearestSegment: false, start, includeExtension: false });
   if (objectSnap) {
+    state.polarSnapLock = null;
     state.snapTracking.compoundLock = null;
     return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
   }
   if (ortho) {
+    state.polarSnapLock = null;
     const constrained = constrainLinePoint(start, point);
     if (!constrained) return { point, snap: null };
     if (grid) {
@@ -9595,7 +9661,10 @@ function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } =
     return snappedPoint(constrained, "ortho");
   }
   const compound = nearestCompoundTrackingSnap(point, start);
-  if (compound) return { point: { x: compound.x, y: compound.y }, snap: compound };
+  if (compound) {
+    state.polarSnapLock = null;
+    return { point: { x: compound.x, y: compound.y }, snap: compound };
+  }
   let tracking = null;
   if (canSnapToTrackingGuides()) {
     const threshold = objectSnapThreshold();
@@ -9605,6 +9674,7 @@ function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } =
   const lineSnap = nearestObjectSnap(point, { includeNearestSegment: true, start, includeExtension: true, suppressPolarExtension: true });
   const assisted = preferredSnapCandidate(point, [tracking, lineSnap].filter(Boolean), state.view.scale);
   if (assisted) {
+    state.polarSnapLock = null;
     if (assisted === tracking) state.snapTracking.active = tracking;
     return { point: { x: assisted.x, y: assisted.y }, snap: assisted };
   }
@@ -9746,7 +9816,7 @@ function commitDimensionAttach() {
     cancelDimensionAttach();
     return;
   }
-  const snap = dimensionAttachCandidate(rawCursorWorld());
+  const snap = cursorSnapResolved().snap;
   const ref = dimensionRefFromSnap(snap);
   if (!ref) {
     statusChip.textContent = state.snapsMuted ? "Включите привязки для выбора опоры" : "Наведите на конец, угол, середину или центр объекта";
@@ -9889,27 +9959,12 @@ function blockCorners(entity) {
   ];
 }
 
-function snapPolar(point, start) {
-  const dx = point.x - start.x;
-  const dy = point.y - start.y;
-  const length = Math.hypot(dx, dy);
-  if (length < 1) return { point, snapped: false };
-  const step = (state.polarStep * Math.PI) / 180;
-  const threshold = Math.min(step / 4, Math.PI / 72);
-  const angle = Math.atan2(dy, dx);
-  const snappedAngle = Math.round(angle / step) * step;
-  const delta = Math.abs(Math.atan2(Math.sin(angle - snappedAngle), Math.cos(angle - snappedAngle)));
-  if (delta > threshold) return { point, snapped: false };
-  const degrees = Math.round(normalizeDegrees(-radToDeg(snappedAngle))) % 360;
-  return {
-    snapped: true,
-    angle: snappedAngle,
-    degrees,
-    point: {
-    x: start.x + Math.cos(snappedAngle) * length,
-    y: start.y + Math.sin(snappedAngle) * length,
-    },
-  };
+function snapPolar(point, start, { remember = false } = {}) {
+  const lock = state.polarSnapLock;
+  const lockedAngle = lock?.step === state.polarStep && lock.x === start.x && lock.y === start.y ? lock.angle : null;
+  const result = resolvePolarSnap(point, start, state.polarStep, lockedAngle);
+  if (remember) state.polarSnapLock = result.snapped ? { x: start.x, y: start.y, step: state.polarStep, angle: result.angle } : null;
+  return result;
 }
 
 function isGroupedDrawTool(tool) {
@@ -12068,12 +12123,26 @@ function updateSpenBarrel(event) {
   spenRuntime.barrelDown = barrel;
 }
 
-function clearSpenHover() {
+function clearSpenHover({ preservePreview = false } = {}) {
+  window.clearTimeout(spenRuntime.hoverExitTimer);
   spenRuntime.hovering = false;
   spenRuntime.nativeHover = false;
   spenRuntime.point = null;
   spenRuntime.barrelDown = false;
-  resetSnapTracking();
+  if (preservePreview) {
+    // HOVER_EXIT also precedes tip contact on Android. Keep the displayed
+    // snap for this short handover, so contact does not discard its guides.
+    spenRuntime.hoverExitAt = performance.now();
+    spenRuntime.hoverExitTimer = window.setTimeout(() => {
+      if (!spenRuntime.hovering && spenRuntime.contactId === null) {
+        resetSnapTracking();
+        draw();
+      }
+    }, 300);
+  } else {
+    spenRuntime.hoverExitAt = -Infinity;
+    resetSnapTracking();
+  }
   draw();
 }
 
@@ -12088,11 +12157,12 @@ function updateSpenHover(event) {
 window.addEventListener("zamer-spen-hover", (event) => {
   const detail = event.detail;
   if (detail?.hovering === false) {
-    clearSpenHover();
+    clearSpenHover({ preservePreview: true });
     return;
   }
   const client = nativeSpenClientPoint(detail, { width: window.innerWidth, height: window.innerHeight });
   if (!client || detail.hovering !== true) return;
+  window.clearTimeout(spenRuntime.hoverExitTimer);
   activateSpenMode();
   spenRuntime.nativeHover = true;
   spenRuntime.hovering = true;
@@ -12124,7 +12194,7 @@ canvas.addEventListener("pointermove", (event) => {
   if (event.pointerType === "pen") updateSpenHover(event);
 });
 canvas.addEventListener("pointerleave", (event) => {
-  if (event.pointerType === "pen" && !spenRuntime.nativeHover) clearSpenHover();
+  if (event.pointerType === "pen" && !spenRuntime.nativeHover) clearSpenHover({ preservePreview: true });
 });
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -12137,6 +12207,7 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   const screen = getPointer(event);
+  const displayedSnap = displayedSnapForPress(event, screen);
   if (event.pointerType === "pen") {
     activateSpenFromPointer(event);
     if (spenModeEnabled() && state.activePointers.size > 0) return;
@@ -12174,7 +12245,12 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   state.gestureSuppressTap = false;
-  if (!tapZoom) startCanvasPointerAction(event, screen);
+  if (!tapZoom) {
+    startCanvasPointerAction(event, screen);
+    if (displayedSnap && pointerPlacesCursorPoint(state.pointer) && sameCursorPreviewContext(displayedSnap.context)) {
+      state.pointer.confirmedSnap = displayedSnap;
+    }
+  }
 });
 
 function startCanvasPointerAction(event, screen) {
@@ -12484,6 +12560,9 @@ canvas.addEventListener("pointermove", (event) => {
     return;
   }
   const screen = getPointer(event);
+  if (state.pointer?.id === event.pointerId && pointDistance(screen, state.pointer.startScreen) > TAP_MOVE_TOLERANCE) {
+    state.pointer.confirmedSnap = null;
+  }
   if (tapZoom?.event.pointerId === event.pointerId && updateTapZoom(event, screen)) return;
   if (state.pinch || state.gestureSuppressTap || !state.pointer || state.pointer.id !== event.pointerId) return;
   const isDragging = Boolean(event.buttons & 1) || event.pointerType === "touch";
@@ -12635,6 +12714,9 @@ function finishCanvasPointer(event, canceled = false) {
 }
 
 function finishCanvasPointerEvent(event, canceled = false) {
+  if (state.pointer?.id === event.pointerId && pointDistance(getPointer(event), state.pointer.startScreen) > TAP_MOVE_TOLERANCE) {
+    state.pointer.confirmedSnap = null;
+  }
   if (event.pointerType === "pen") {
     if (canceled) clearSpenHover();
     else {
@@ -15825,7 +15907,8 @@ function planZoneName(type = state.tool) {
 }
 
 function planContourClosesAtCursor(points) {
-  return points.length >= 3 && snapEnabled("end") && distanceWorld(rawCursorWorld(), points[0]) * state.view.scale <= screenUiPx(14);
+  const point = state.pointer?.confirmedSnap?.resolved.point || rawCursorWorld();
+  return points.length >= 3 && snapEnabled("end") && distanceWorld(point, points[0]) * state.view.scale <= screenUiPx(14);
 }
 
 function planZoneSnapStart() {
@@ -16603,7 +16686,7 @@ function setSurveyPointPicker(label, callback) {
 }
 
 function commitSurveyPoint() {
-  const point = resolveDimensionPointSnap(rawCursorWorld(), { start: null }).point;
+  const point = cursorSnapResolved().point;
   if (!isLinePoint(point)) {
     statusChip.textContent = "Точка замера вне допустимой области";
     draw();

@@ -111,6 +111,25 @@ export function polarRayGuides(start, stepDegrees) {
   });
 }
 
+export function resolvePolarSnap(point, start, stepDegrees, lockedAngle = null) {
+  const free = { point, snapped: false };
+  if (![point?.x, point?.y, start?.x, start?.y, stepDegrees].every(Number.isFinite) || stepDegrees <= 0 || stepDegrees > 180) return free;
+  const dx = point.x - start.x;
+  const dy = point.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1) return free;
+  const step = stepDegrees * Math.PI / 180;
+  const angle = Math.atan2(dy, dx);
+  const delta = target => Math.abs(Math.atan2(Math.sin(angle - target), Math.cos(angle - target)));
+  const capture = Math.min(stepDegrees * 0.4, 4) * Math.PI / 180;
+  const release = Math.min(stepDegrees * 0.6, 6) * Math.PI / 180;
+  let target = Math.round(angle / step) * step;
+  if (Number.isFinite(lockedAngle) && delta(lockedAngle) <= release) target = lockedAngle;
+  else if (delta(target) > capture) return free;
+  return { snapped: true, angle: target, degrees: (Math.round(-target * 180 / Math.PI) % 360 + 360) % 360,
+    point: { x: start.x + Math.cos(target) * length, y: start.y + Math.sin(target) * length } };
+}
+
 export function guideDirectionsParallel(first, second, toleranceRadians = Math.PI / 180) {
   if (![first?.ux, first?.uy, second?.ux, second?.uy, toleranceRadians].every(Number.isFinite) || toleranceRadians < 0) return false;
   return Math.abs(first.ux * second.uy - first.uy * second.ux) <= Math.sin(toleranceRadians);
