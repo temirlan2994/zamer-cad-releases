@@ -95,6 +95,18 @@ input {
   display: none;
 }
 
+.brand-logo img {
+  display: block;
+  height: auto;
+  max-width: 100%;
+  width: 100%;
+}
+.brand-logo .brand-logo-dark { display: none; }
+.app-shell[data-theme="dark"] .brand-logo .brand-logo-light { display: none; }
+.app-shell[data-theme="dark"] .brand-logo .brand-logo-dark { display: block; }
+.auth-brand { margin-block: 4px 10px; width: 220px; }
+.home-brand { margin-bottom: 9px; width: 164px; }
+
 .auth-screen {
   align-items: center;
   background:
@@ -213,6 +225,7 @@ input {
 .project-home-head {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: space-between;
   margin-bottom: 17px;
@@ -221,7 +234,7 @@ input {
 .project-home-title { min-width: 0; }
 
 .project-home h1 {
-  font-size: clamp(1.65rem, 8vw, 2.1rem);
+  font-size: 1.25rem;
   font-weight: 760;
   letter-spacing: -.055em;
   line-height: 1.08;
