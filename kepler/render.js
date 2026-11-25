@@ -1170,7 +1170,7 @@ export function createRenderer(canvas) {
       ctx.fillText(state._calLabelAt.text, p.x, p.y - 14);
     }
     // Привязки черчения линий: лучи, выравнивание, значки, «длина · угол».
-    if (!print && state.drawSnap) drawSnapOverlay(ctx, state, w2s, tokens, width);
+    if (!print && state.drawSnap) drawSnapOverlay(ctx, state, state.drawSnap.space === 'plan' ? p2s : w2s, tokens, width);
     if (!print && state.objGuides) drawObjectGuides(ctx, state.objGuides, w2s, tokens, width);
     // Ручки топосъёмки: круги вращения снаружи углов + квадраты (масштаб).
     if (site?.underlay && state.selection?.type === 'site' && state.selection.kind === 'underlay' && !site.underlay.locked) {

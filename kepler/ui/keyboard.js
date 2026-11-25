@@ -184,7 +184,7 @@ export function bindKeyboard() {
     if (handleDynamicKey(event, dynPrev, (p) => {
       if (state.tool?.kind === 'wall') wallToolClick(p, null, { exact: true });
       else if (state.draft) addDraftPoint(p, null, { exact: true }); else addLandscapeDraftExact(p);
-    })) return;
+    }, { space: state.tool?.kind === 'wall' ? 'plan' : 'world' })) return;
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
       event.preventDefault();
       if (event.shiftKey) redo(); else undo();

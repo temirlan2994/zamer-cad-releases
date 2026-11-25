@@ -1705,7 +1705,7 @@ export function bindCanvasInput() {
         });
       }
       let snapRes = snapAt(plan, event, {
-        prev: fixed, points: [...massSnapPoints(), ...gridSnapPoints()], extraShapes: shapes, grid: gridStep(),
+        prev: fixed, points: [...massSnapPoints(), ...gridSnapPoints()], extraShapes: shapes, grid: gridStep(), space: 'plan',
       });
       // Магнит торца к оси и к центру/середине соседней стены, как у инструмента «Стена».
       const magnet = wallPointMagnet(plan, event, { prev: fixed, excludeId: wall.id });
