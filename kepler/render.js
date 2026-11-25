@@ -3431,6 +3431,11 @@ function drawGroupFrame(ctx, state, box, groupId, p2s, tokens, scale) {
   const topY = Math.min(...sc.map((p) => p.y));
   const midX = sc.reduce((sum, p) => sum + p.x, 0) / sc.length;
   drawTextPill(ctx, label, midX, topY - 12, tokens, tokens.accent);
+  if (state.modeName === 'plan' && mode !== 'rotate') {
+    const labelWidth = ctx.measureText(label).width + 10;
+    drawTempDims(ctx, state, groupItems(state.project, state.selection), p2s, tokens,
+      { x: midX - labelWidth / 2, y: topY - 24, w: labelWidth, h: 16 });
+  }
   if (mode === 'rotate') {
     for (const r of groupRotators(box, 20, scale)) {
       const p = p2s(r.x, r.y);
@@ -3504,7 +3509,7 @@ function drawDim(ctx, p, q, n, off, label) {
 // — в state._tempDimsUI для ui/temp-dims.js. avoid — рамка подписи габарита.
 function drawTempDims(ctx, state, item, p2s, tokens, avoid) {
   const dims = tempDimensions(state.project, item);
-  const ui = { itemId: item.id, dims: [] };
+  const ui = { ...(Array.isArray(item) ? { itemIds: item.map((member) => member.id) } : { itemId: item.id }), dims: [] };
   state._tempDimsUI = ui;
   if (!dims.length) return;
   const minHit = state.coarsePointer ? 36 : 20;

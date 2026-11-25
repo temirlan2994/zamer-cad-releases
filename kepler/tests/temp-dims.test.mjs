@@ -94,3 +94,45 @@ test('недопустимый ввод: упор в мебель, выход и
   assert.equal(planTempDimMove(p, table, 'up', 3300).ok, false); // 1600 + 1600 = 3200 свободно
   assert.equal(planTempDimMove(p, table, 'up', -10).ok, false);
 });
+
+function bedroomGroup() {
+  const p = createProject();
+  p.rooms.push(createRoom('bedroom', 0, 0, 6000, 5000));
+  const bed = createItem('bed-double', 3000, 2500, 1600, 2000);
+  const left = createItem('nightstand', 1800, 3250, 500, 500);
+  const right = createItem('nightstand', 4200, 3250, 500, 500);
+  const items = [bed, left, right];
+  p.items.push(...items);
+  return { p, items };
+}
+
+test('кровать с тумбами: расстояния от общей рамки, участники группы не препятствия', () => {
+  const { p, items } = bedroomGroup();
+  const d = byDir(tempDimensions(p, items));
+  assert.deepEqual(Object.fromEntries(Object.entries(d).map(([dir, dim]) => [dir, dim.value])), {
+    left: 1550, right: 1550, up: 1500, down: 1500,
+  });
+  assert.ok(Object.values(d).every((dim) => dim.targetKind === 'wall'));
+  const cabinet = createItem('wardrobe', 5200, 3000, 600, 800);
+  p.items.push(cabinet);
+  const withCabinet = byDir(tempDimensions(p, items));
+  assert.equal(withCabinet.right.value, 450);
+  assert.equal(withCabinet.right.targetId, cabinet.id);
+});
+
+test('отступ группы перемещает общий центр и учитывает свободное место целиком', () => {
+  const { p, items } = bedroomGroup();
+  const before = JSON.stringify(items);
+  assert.deepEqual(planTempDimMove(p, items, 'left', 500), { ok: true, x: 1950, y: 2500 });
+  assert.equal(planTempDimMove(p, items, 'left', 3100).ok, true);
+  assert.equal(planTempDimMove(p, items, 'left', 3101).ok, false);
+  assert.equal(JSON.stringify(items), before, 'планирование не меняет предметы');
+});
+
+test('группа из разных комнат и пустая группа не дают общего размера комнаты', () => {
+  const { p, items } = bedroomGroup();
+  p.rooms.push(createRoom('bedroom', 7000, 0, 4000, 5000));
+  items[2].x = 9000;
+  assert.deepEqual(tempDimensions(p, items), []);
+  assert.deepEqual(tempDimensions(p, []), []);
+});

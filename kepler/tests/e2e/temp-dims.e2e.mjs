@@ -148,3 +148,81 @@ describe('временные размеры мебели (телефон)', () =
     assert.deepEqual(app.errors, []);
   });
 });
+
+describe('временные размеры кровати с тумбами', () => {
+  let app;
+  let ids;
+  before(async () => {
+    app = await startApp({ width: 1400, height: 900 });
+    await openNew(app.page);
+    ids = await app.page.evaluate(async () => {
+      const { createRoom, createItem } = await import('./core/model.js');
+      const { mutate } = await import('./ui/store.js');
+      const { snapSettings } = await import('./ui/draw-snap-ui.js');
+      const { state } = window.__kepler;
+      const items = [
+        createItem('bed-double', 3000, 2500, 1600, 2000),
+        createItem('nightstand', 1800, 3250, 500, 500),
+        createItem('nightstand', 4200, 3250, 500, 500),
+      ];
+      for (const item of items) item.group = 'bed-set';
+      mutate(() => {
+        state.project.rooms.push(createRoom('bedroom', 0, 0, 6000, 5000));
+        state.project.items.push(...items);
+      });
+      snapSettings().guides = false;
+      window.__kepler.fitView();
+      return items.map((item) => item.id);
+    });
+    await zoomToItems(app.page, 0.12, ids);
+  });
+  after(async () => { await app?.close(); });
+  const positions = () => app.page.evaluate((ids) => ids.map((id) => {
+    const item = window.__kepler.state.project.items.find((item) => item.id === id);
+    return { x: item.x, y: item.y };
+  }), ids);
+
+  it('клик по кровати выбирает комплект и показывает четыре расстояния до стен', async () => {
+    const { page } = app;
+    const at = await planToClient(page, 3000, 2500);
+    await page.mouse.click(at.x, at.y);
+    await page.waitForFunction(() => window.__kepler.state._tempDimsUI?.itemIds?.length === 3);
+    const d = await dims(page);
+    assert.deepEqual(Object.fromEntries(Object.entries(d).map(([dir, dim]) => [dir, dim.value])), {
+      left: 1550, right: 1550, up: 1500, down: 1500,
+    });
+  });
+
+  it('при переносе кровати размеры обновляются вместе с рамкой группы', async () => {
+    const { page } = app;
+    const a = await planToClient(page, 3000, 2500);
+    const b = await planToClient(page, 3400, 2700);
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move(b.x, b.y, { steps: 5 });
+    const during = await dims(page);
+    await page.mouse.up();
+    const moved = await positions();
+    assert.deepEqual(moved[0], { x: 3400, y: 2700 });
+    assert.equal(during.left.value, 1950);
+    assert.equal(during.right.value, 1150);
+    assert.equal(during.up.value, 1700);
+    assert.deepEqual(moved.slice(1), [{ x: 2200, y: 3450 }, { x: 4600, y: 3450 }]);
+  });
+
+  it('ввод расстояния сдвигает весь комплект, отмена возвращает все предметы', async () => {
+    const { page } = app;
+    const before = await positions();
+    const d = await dims(page);
+    const box = await canvasBox(page);
+    await page.mouse.click(box.x + d.up.x, box.y + d.up.y);
+    assert.equal(await page.isVisible('#dimInput'), true);
+    await page.fill('#dimInputField', '800');
+    await page.press('#dimInputField', 'Enter');
+    await page.waitForFunction(() => window.__kepler.state._tempDimsUI?.dims.some((dim) => dim.dir === 'up' && Math.round(dim.value) === 800));
+    assert.deepEqual(await positions(), before.map((p) => ({ x: p.x, y: p.y - 900 })));
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(await positions(), before);
+    assert.deepEqual(app.errors, []);
+  });
+});

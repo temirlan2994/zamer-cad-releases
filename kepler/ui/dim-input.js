@@ -18,7 +18,9 @@ import { planToScreen, screenToPlan } from './view.js';
 export function openDimInput(dim) {
   const overlay = el('dimInput');
   const input = el('dimInputField');
-  if (dim.type === 'item-temp') state.dimEdit = { type: 'item-temp', itemId: dim.itemId, dir: dim.dir };
+  if (dim.type === 'item-temp') state.dimEdit = {
+    type: 'item-temp', ...(dim.itemIds ? { itemIds: [...dim.itemIds] } : { itemId: dim.itemId }), dir: dim.dir,
+  };
   else if (dim.type === 'wall') state.dimEdit = { type: 'wall', wallKey: dim.wallKey, wallFrom: dim.wallFrom, roomId: dim.roomId };
   else state.dimEdit = { type: 'opening', openingId: state.selection.id, kind: dim.kind };
   input.value = Math.round(dim.gap);
