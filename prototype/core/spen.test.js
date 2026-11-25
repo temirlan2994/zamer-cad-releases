@@ -26,10 +26,14 @@ test("native pen hover maps physical WebView coordinates to the current CSS view
   assert.equal(nativeSpenClientPoint({ x: 1, y: 1, width: 0, height: 0 }, { width: 360, height: 780 }), null);
 });
 
-test("palm rejection is limited to an active and recently hovering pen", () => {
+test("palm rejection allows a fingertip to pan beside a hovering pen and rejects broad palm contact", () => {
   const settings = normalizeSpenSettings();
-  assert.equal(shouldRejectSpenPalmTouch(settings, { active: true, hovering: true, lastHover: 0 }, 5000), true);
-  assert.equal(shouldRejectSpenPalmTouch(settings, { active: true, hovering: false, lastHover: 4500 }, 5000), true);
-  assert.equal(shouldRejectSpenPalmTouch(settings, { active: true, hovering: false, lastHover: 3000 }, 5000), false);
-  assert.equal(shouldRejectSpenPalmTouch({ ...settings, palmRejection: false }, { active: true, hovering: true }, 5000), false);
+  const finger = { width: 9, height: 12 };
+  const palm = { width: 52, height: 65 };
+  assert.equal(shouldRejectSpenPalmTouch(settings, { active: true, hovering: true }, 5000, finger), false);
+  assert.equal(shouldRejectSpenPalmTouch(settings, { active: true, hovering: true }, 5000), false);
+  assert.equal(shouldRejectSpenPalmTouch(settings, { active: true, hovering: true }, 5000, palm), true);
+  assert.equal(shouldRejectSpenPalmTouch(settings, { active: true, hovering: false, lastHover: 4500 }, 5000, palm), true);
+  assert.equal(shouldRejectSpenPalmTouch(settings, { active: true, hovering: false, lastHover: 3000 }, 5000, palm), false);
+  assert.equal(shouldRejectSpenPalmTouch({ ...settings, palmRejection: false }, { active: true, hovering: true }, 5000, palm), false);
 });
