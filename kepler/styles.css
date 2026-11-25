@@ -1277,6 +1277,8 @@ body.v3-open .level-dock { z-index: 46; }
   pointer-events: none;
 }
 .statusbar #scaleInfo { flex: none; min-width: 7ch; text-align: right; }
+/* Подсказка внутри строки состояния должна быть выше нижней палитры. */
+.statusbar:has(.snap-btn:hover, .snap-btn:focus-visible) { z-index: 90; }
 /* --- Панель свойств --- */
 .props-tabs {
   position: sticky;
