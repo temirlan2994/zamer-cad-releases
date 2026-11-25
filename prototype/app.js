@@ -3739,7 +3739,8 @@ function lineAxisAngle(axis, start, end) {
 
 function cursorPreviewContext() {
   const draft = state.drawing;
-  return [persistence.projectId, state.tool, state.dimensionTool, state.circleMode, state.angleMode,
+  return [persistence.projectId, spenSettings.mode, spenModeEnabled(), spenSettings.hoverCursor,
+    state.tool, state.dimensionTool, state.circleMode, state.angleMode,
     draft, draft?.phase, draft?.arcPhase, draft?.start?.x, draft?.start?.y, draft?.metricConstraint,
     state.planZone, state.planZone?.points.length, state.quickMeasure, state.quickMeasure?.points.length,
     state.moveCommand, state.moveCommand?.base?.x, state.moveCommand?.base?.y, state.offsetCommand,
