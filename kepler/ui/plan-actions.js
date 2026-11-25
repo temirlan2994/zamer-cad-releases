@@ -217,7 +217,6 @@ export function computeOpeningParams(at, { project = state.project, walls = stat
   const side = wall.sides[roomId];
   const room = roomById(project, roomId);
   if (!room) return null;
-  if (openKind === 'window' && (wall.kind === 'shared' || room.parentId)) return { error: 'Окно можно разместить только на наружной стене' };
   const edge = sideEdge(room, side);
   const base = edge.orient === 'h' ? room.x : room.y;
   const along = wall.orient === 'h' ? at.x : at.y;

@@ -146,7 +146,7 @@ export function openingPlacementHint(tool) {
   if (tool.preset?.presetId === 'corner-glazing') return 'Нажмите на наружную стену у нужного угла, чтобы поставить оба крыла витража';
   return tool.openKind === 'door'
     ? 'Кликайте по стенам — можно ставить несколько дверей · Пробел — петли / направление · Esc — выход'
-    : 'Кликайте по наружным стенам — можно ставить несколько окон · Esc — выход';
+    : 'Кликайте по стенам и перегородкам — можно ставить несколько окон · Esc — выход';
 }
 
 export function startPlaceOpening(openKind, presetWall = null) {

@@ -94,15 +94,13 @@ function contentForSelection(sel) {
           ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
       };
     }
-    const room = roomById(state.project, wall.rooms[0]);
     const canSplit = wall.kind === 'own' || wall.kind === 'shared'; // общая — в обеих комнатах
-    const canWindow = wall.kind !== 'shared' && !room?.parentId;
     return {
       label: 'Стена',
       html: `${button('split-wall', '⌜', 'Разделить', '', canSplit ? '' : 'disabled')}
         ${button('hide-wall', wall.hidden ? '▣' : '◫', wall.hidden ? 'Показать стену' : 'Скрыть стену')}
         ${button('add-door', '◱', 'Дверь')}
-        ${button('add-window', '▦', 'Окно', '', canWindow ? '' : 'disabled')}
+        ${button('add-window', '▦', 'Окно')}
         ${gridPinButton(wall)}`,
     };
   }
