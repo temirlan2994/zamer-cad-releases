@@ -860,7 +860,7 @@ export function createRenderer(canvas) {
     // Предпросмотр ворот/калитки целиком, с привязкой к стороне участка.
     if (state.entryGhost) {
       ctx.save(); ctx.globalAlpha = 0.6;
-      drawSiteEntry(ctx, { kind: state.tool?.entryKind || 'gate', opening: state.tool?.opening, wicket: state.tool?.wicket, ...state.entryGhost }, tokens.accent2, tokens, px);
+      drawSiteEntry(ctx, { ...state.tool, kind: state.tool?.entryKind || 'gate', ...state.entryGhost }, tokens.accent2, tokens, px);
       ctx.restore();
     }
     if (state.draft?.points?.length) drawDraft(ctx, state.draft, tokens, px);
@@ -1496,6 +1496,24 @@ function paintHatch(ctx, polygon, fill, stroke, px) {
 }
 
 // --- Участок: линии поверх (граница, красная линия, зона, въезд, черновик) ---
+
+export function drawEntryPreview(canvas, entry) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const style = getComputedStyle(canvas);
+  const color = style.getPropertyValue('--desk-accent').trim() || '#21654e';
+  const paper = style.getPropertyValue('--chip-paper').trim() || '#f6f9fb';
+  const w = canvas.width; const h = canvas.height;
+  const width = entry.width || 4000;
+  const maxHeight = entry.opening === 'sliding' ? width * .45 : entry.kind === 'wicket' ? width : width / 2;
+  const scale = Math.min((w - 44) / width, (h - 24) / (maxHeight + 120));
+  ctx.clearRect(0, 0, w, h); ctx.save();
+  ctx.translate(w / 2, h - 16); ctx.scale(scale, -scale);
+  ctx.fillStyle = '#a8b1bd';
+  for (const x of [-width / 2 - 650, width / 2]) ctx.fillRect(x, -80, 650, 160);
+  drawSiteEntry(ctx, { ...entry, x: 0, y: 0, dir: 90, wicket: false }, color, { canvas: paper }, (px) => px / scale);
+  ctx.restore();
+}
 
 function drawSiteEntry(ctx, entry, color, tokens, px) {
   const parts = entryParts(entry); const span = entrySpan(entry);

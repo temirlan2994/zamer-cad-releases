@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import { clickWorld, openNew, settleView, startApp, worldToClient } from './helpers.mjs';
 
 const entries = (page) => page.evaluate(() => structuredClone(window.__kepler.state.project.site.entries));
-async function chooseEntry(page, choice, { mobile = false, wicket = false } = {}) {
+async function chooseEntry(page, choice, { mobile = false, wicket = false, size = choice === 'wicket' ? '1000-1800' : '4000-1800' } = {}) {
   if (mobile) {
     if (!await page.locator('#mobileDraw').isVisible()) await page.tap('#mobileBar [data-sheet="draw"]');
     await page.tap('#mobileDraw [data-draw="entry"]');
   } else await page.click('[data-site-tool="entry"]');
-  await page.locator(`#siteEntryMenu input[value="${choice}"]`).check();
+  await page.click(`#siteEntryMenu [data-entry-cat="${choice}"]`);
   if (choice !== 'wicket') await page.locator('#entryPresetWicket').setChecked(wicket);
   if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/entry-menu-${mobile ? 'phone' : 'desktop'}-${choice}.png` });
-  await page.click('#entryMenuPlace');
+  await page.click(`#siteEntryMenu [data-entry-preset="${choice}-${size}"]`);
 }
 async function setup(page, mobile = false) {
   await openNew(page);
@@ -47,10 +47,11 @@ describe('ворота и калитки участка', () => {
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('#siteEntryMenu[open]').count(), 0);
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'entry');
-    await chooseEntry(page, 'sliding', { wicket: true });
+    await chooseEntry(page, 'sliding', { wicket: true, size: '5000-2000' });
     await clickWorld(page, 16000, 18000);
     assert.equal((await entries(page)).length, 2);
     assert.deepEqual((await entries(page)).map((e) => [e.opening, e.wicket]), [['swing', false], ['sliding', true]]);
+    assert.deepEqual([(await entries(page))[1].width, (await entries(page))[1].height], [5000, 2000]);
     await chooseEntry(page, 'wicket');
     assert.equal(await page.locator('#siteEntryMenu[open]').count(), 0);
     await clickWorld(page, 6000, 0);
@@ -67,15 +68,15 @@ describe('ворота и калитки участка', () => {
     await clickWorld(page, 16000, 18000);
     await page.check('#entryWicket');
     await page.selectOption('#entryWicketSide', 'left');
-    await page.fill('#entryWicketWidth', '1.2'); await page.locator('#entryWicketWidth').press('Tab');
+    await page.fill('#entryWicketWidth', '1200'); await page.locator('#entryWicketWidth').press('Tab');
     let list = await entries(page);
     assert.equal(list[0].wicket, false);
     assert.equal(list[1].wicket, true);
     assert.equal(list[1].wicketSide, 'left');
     assert.equal(list[1].wicketWidth, 1200);
-    assert.equal(list[1].width, 4000);
+    assert.equal(list[1].width, 5000);
     await page.selectOption('#entryOpening', 'swing');
-    assert.equal((await entries(page))[1].width, 4000);
+    assert.equal((await entries(page))[1].width, 5000);
     assert.equal((await entries(page))[1].wicketWidth, 1200);
     await page.selectOption('#entryOpening', 'sliding');
     await page.uncheck('#entryWicket');
@@ -83,6 +84,22 @@ describe('ворота и калитки участка', () => {
     assert.equal(list[1].wicket, false);
     assert.equal(list[1].wicketWidth, 1200);
     await page.check('#entryWicket');
+  });
+
+  it('размеры установленных ворот правятся в миллиметрах, как у окон', async () => {
+    const { page } = app;
+    await page.fill('#entryWidth', '4500'); await page.locator('#entryWidth').press('Tab');
+    await page.fill('#entryHeight', '2100'); await page.locator('#entryHeight').press('Tab');
+    const list = await entries(page);
+    assert.deepEqual([list[1].width, list[1].height, list[1].wicketWidth], [4500, 2100, 1200]);
+    assert.equal(list[0].width, 4000);
+    assert.equal(list[2].width, 1000);
+    assert.equal(await page.locator('#entryWidth').inputValue(), '4500');
+    assert.equal(await page.locator('#entryHeight').inputValue(), '2100');
+    if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/entry-dimension-properties.png` });
+    await page.click('#undoBtn'); await page.click('#undoBtn');
+    assert.deepEqual((await entries(page)).map((e) => e.width), [4000, 5000, 1000]);
+    assert.equal((await entries(page))[1].height, 2000);
   });
 
   it('перемещение и удаление затрагивают одни ворота; Undo восстанавливает их', async () => {
@@ -116,7 +133,7 @@ describe('ворота и калитки участка', () => {
     assert.equal(hit?.type, 'site'); assert.equal(hit?.id, target.id);
     await page.mouse.click(target.at.x, target.at.y);
     assert.deepEqual(await page.evaluate(() => window.__kepler.state.selection), { type: 'site', kind: 'entry', id: target.id });
-    assert.equal(await page.locator('#entryWidth').inputValue(), '4');
+    assert.equal(await page.locator('#entryWidth').inputValue(), '4000');
     if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/site-gates-3d.png` });
     assert.deepEqual(app.errors, []);
   });

@@ -6,6 +6,13 @@ import { pointInPolygon } from './zamer/geometry.js';
 const finite = (v) => v !== null && v !== '' && Number.isFinite(Number(v));
 const clamp = (v, lo, hi, fallback) => finite(v) ? Math.max(lo, Math.min(hi, Number(v))) : fallback;
 export const entryTitle = (e) => e.kind === 'wicket' ? 'Калитка' : e.opening === 'sliding' ? 'Ворота раздвижные' : 'Ворота распашные';
+export const ENTRY_CATEGORIES = [{ id: 'swing', title: 'Распашные' }, { id: 'sliding', title: 'Раздвижные' }, { id: 'wicket', title: 'Калитки' }];
+export function entryPresets(category) {
+  if (!ENTRY_CATEGORIES.some((c) => c.id === category)) return [];
+  const wicket = category === 'wicket';
+  return (wicket ? [[800, 1800], [900, 1800], [1000, 1800], [1200, 2000]] : [[3000, 1800], [3500, 1800], [4000, 1800], [5000, 2000]])
+    .map(([width, height]) => ({ id: `${category}-${width}-${height}`, kind: wicket ? 'wicket' : 'gate', opening: category === 'sliding' ? 'sliding' : 'swing', width, height }));
+}
 export function siteEntries(site) {
   return Array.isArray(site?.entries) && site.entries.length ? site.entries : site?.entry ? [{ ...site.entry, id: site.entry.id || 'entry-legacy', kind: 'gate' }] : [];
 }

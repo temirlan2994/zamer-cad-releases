@@ -1,13 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, deserializeProject, serializeProject } from '../core/model.js';
-import { ensureSiteEntries, entryAt, entryLandscapeObjects, entryOverlaps, entryParts, normalizeSiteEntries, siteEntries, syncPrimaryEntry } from '../core/site-entries.js';
+import { ENTRY_CATEGORIES, ensureSiteEntries, entryAt, entryLandscapeObjects, entryOverlaps, entryParts, entryPresets, normalizeSiteEntries, siteEntries, syncPrimaryEntry } from '../core/site-entries.js';
 import { landscapeFaces } from '../core/mesh3d-landscape.js';
 import { pickFaces } from '../core/pick3d.js';
 import { buildStructuredExport } from '../core/export.js';
 
 const site = () => ({ boundary: [{ x: 0, y: 0 }, { x: 24000, y: 0 }, { x: 24000, y: 18000 }, { x: 0, y: 18000 }], entries: [] });
 const gate = (id, x = 6000) => ({ id, kind: 'gate', x, y: 0, dir: 90, width: 4000, height: 1800, wicket: false, wicketWidth: 1000, wicketSide: 'right' });
+
+test('каталог въезда содержит размерные пресеты для всех трёх категорий', () => {
+  const ids = new Set();
+  for (const cat of ENTRY_CATEGORIES) {
+    const items = entryPresets(cat.id);
+    assert.equal(items.length, 4);
+    for (const item of items) {
+      assert.ok(!ids.has(item.id)); ids.add(item.id);
+      assert.equal(item.kind, cat.id === 'wicket' ? 'wicket' : 'gate');
+      assert.equal(item.opening, cat.id === 'sliding' ? 'sliding' : 'swing');
+      assert.ok(entryAt(site(), { x: 12000, y: 0 }, item));
+    }
+  }
+});
 
 test('старый въезд становится воротами, направление dir/angle сохраняется', () => {
   for (const entry of [{ x: 6000, y: 0, dir: -90 }, { x: 6000, y: 0, angle: 90 }]) {
