@@ -32,7 +32,7 @@ import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatPr
   fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
 import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planAnnotationSnapGeometry, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, totalPlanAreaM2, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
 import { planRegionAtPoint } from "./core/plan-region.js";
-import { normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed } from "./core/spen.js";
+import { nativeSpenClientPoint, normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed } from "./core/spen.js";
 import { ANNOTATION_LINE_SPACING, ANNOTATION_SCALE_PRESETS, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./core/annotation-text.js";
 
 
@@ -881,6 +881,7 @@ const spenRuntime = {
   detected: false,
   active: false,
   hovering: false,
+  nativeHover: false,
   point: null,
   lastHover: -Infinity,
   barrelDown: false,
@@ -1004,6 +1005,7 @@ function syncSpenMode({ announce = false } = {}) {
   spenIndicator.hidden = !active;
   if (!active) {
     spenRuntime.hovering = false;
+    spenRuntime.nativeHover = false;
     spenRuntime.point = null;
     spenRuntime.barrelDown = false;
   }
@@ -1022,16 +1024,20 @@ function applySpenDeviceState(detail, options) {
   syncSpenMode({ announce: options?.announce && wasActive !== spenModeEnabled() });
 }
 
-function activateSpenFromPointer(event) {
-  if (event.pointerType !== "pen") return false;
+function activateSpenMode() {
   const wasActive = spenModeEnabled();
   spenRuntime.supported = true;
   spenRuntime.detected = true;
   spenRuntime.active = true;
+  if (wasActive !== spenModeEnabled()) syncSpenMode({ announce: true });
+}
+
+function activateSpenFromPointer(event) {
+  if (event.pointerType !== "pen") return false;
+  activateSpenMode();
   spenRuntime.hovering = true;
   spenRuntime.point = getPointer(event);
   spenRuntime.lastHover = performance.now();
-  if (wasActive !== spenModeEnabled()) syncSpenMode({ announce: true });
   return true;
 }
 
@@ -5302,7 +5308,7 @@ function drawEndpointHandle(point, active, c) {
 }
 
 function pickDimensionCurve(screen, allowCircle, allowInterior = false) {
-  for (const target of [screen, centerScreen()]) {
+  for (const target of [screen, inputCursorScreen()]) {
     const world = screenToWorld(target);
     let nearest = screenUiPx(20) / state.view.scale;
     let result = null;
@@ -6724,7 +6730,7 @@ function confirmFigureMetricInput(input, edit) {
     commitFigureGripPoint(point);
   } else if (draft === edit.key) {
     draft.lockedEnd = false;
-    commitCursorPoint(centerScreen(), point);
+    commitCursorPoint(inputCursorScreen(), point);
   }
 }
 
@@ -7037,7 +7043,7 @@ function drawActiveCircleConstruction(c) {
 
 function pickCircleTangent(screen) {
   const boundaries = boundarySegments();
-  const center = centerScreen();
+  const center = inputCursorScreen();
   const targets = pointDistance(screen, center) > 1 ? [screen, center] : [center];
   for (const target of targets) {
     const world = screenToWorld(target);
@@ -9331,9 +9337,9 @@ function placeAtViewportCenter() {
     commitSurveyPoint();
   } else if (state.lineEdit) {
     if (state.lineEdit.pending) applyLineEditPreview();
-    else pickLineEditPoint(centerScreen());
+    else pickLineEditPoint(inputCursorScreen());
   } else if (viewportIsSelecting()) {
-    applyTapSelection(pickEntity(centerScreen()));
+    applyTapSelection(pickEntity(inputCursorScreen()));
     draw();
   } else {
     commitCursorPoint();
@@ -11649,7 +11655,7 @@ function selectLineEndpoint(endpoint) {
   return true;
 }
 
-function commitCursorPoint(screen = centerScreen(), exactPoint = null) {
+function commitCursorPoint(screen = inputCursorScreen(), exactPoint = null) {
   if (state.leaderInput) return;
   if (state.quickMeasure) {
     commitQuickMeasurePoint();
@@ -11840,7 +11846,7 @@ function commitCursorPoint(screen = centerScreen(), exactPoint = null) {
       statusChip.textContent = drawingFinishedStatus(finishedTool);
     }
   } else {
-    setSelection(pickEntity(centerScreen()) || state.selectedId);
+    setSelection(pickEntity(screen) || state.selectedId);
     statusChip.textContent = state.selectedId ? "Элемент выбран курсором" : "Подведите курсор к элементу";
   }
   if (!state.drawing && state.tool === "dimension") {
@@ -12033,28 +12039,66 @@ function selectedEndPoint() {
   return { x: selected.x2, y: selected.y2 };
 }
 
-function updateSpenHover(event) {
-  if (!activateSpenFromPointer(event)) return;
+function updateSpenBarrel(event) {
   const barrel = spenBarrelButtonPressed(event);
-  if (spenSettings.sideButton && barrel && !spenRuntime.barrelDown && !(event.buttons & 1)) {
+  if (spenSettings.enabled && spenSettings.sideButton && barrel && !spenRuntime.barrelDown && !(event.buttons & 1)) {
     activatePlainSelect();
     statusChip.textContent = "S Pen · Esc / Выбор";
   }
   spenRuntime.barrelDown = barrel;
+}
+
+function clearSpenHover() {
+  spenRuntime.hovering = false;
+  spenRuntime.nativeHover = false;
+  spenRuntime.point = null;
+  spenRuntime.barrelDown = false;
+  resetSnapTracking();
   draw();
 }
+
+function updateSpenHover(event) {
+  // The native stream owns hover on Android. Ignore WebView's duplicate DOM
+  // events, which can be reported as either a mouse or pen depending on version.
+  if (spenRuntime.nativeHover || !activateSpenFromPointer(event)) return;
+  updateSpenBarrel(event);
+  draw();
+}
+
+window.addEventListener("zamer-spen-hover", (event) => {
+  const detail = event.detail;
+  if (detail?.hovering === false) {
+    clearSpenHover();
+    return;
+  }
+  const client = nativeSpenClientPoint(detail, { width: window.innerWidth, height: window.innerHeight });
+  if (!client || detail.hovering !== true) return;
+  activateSpenMode();
+  spenRuntime.nativeHover = true;
+  spenRuntime.hovering = true;
+  spenRuntime.lastHover = performance.now();
+  const rect = canvas.getBoundingClientRect();
+  const onCanvas = !document.hidden && projectHome.hidden && authScreen.hidden &&
+    document.elementFromPoint(client.x, client.y) === canvas;
+  spenRuntime.point = onCanvas ? { x: client.x - rect.left, y: client.y - rect.top } : null;
+  if (onCanvas) updateSpenBarrel({ buttons: detail.buttons || 0 });
+  else {
+    spenRuntime.barrelDown = false;
+    resetSnapTracking();
+  }
+  draw();
+});
+window.addEventListener("blur", clearSpenHover);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) clearSpenHover();
+});
 
 canvas.addEventListener("pointerover", updateSpenHover);
 canvas.addEventListener("pointermove", (event) => {
   if (event.pointerType === "pen") updateSpenHover(event);
 });
 canvas.addEventListener("pointerleave", (event) => {
-  if (event.pointerType !== "pen") return;
-  spenRuntime.hovering = false;
-  spenRuntime.point = null;
-  spenRuntime.barrelDown = false;
-  resetSnapTracking();
-  draw();
+  if (event.pointerType === "pen" && !spenRuntime.nativeHover) clearSpenHover();
 });
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -12068,7 +12112,7 @@ canvas.addEventListener("pointerdown", (event) => {
     activateSpenFromPointer(event);
     const barrel = spenBarrelButtonPressed(event);
     spenRuntime.barrelDown = barrel;
-    if (spenSettings.sideButton && barrel) {
+    if (spenSettings.enabled && spenSettings.sideButton && barrel) {
       activatePlainSelect();
       if (event.button === 0 || (event.buttons & 1)) {
         try {
@@ -12546,8 +12590,11 @@ canvas.addEventListener("contextmenu", (event) => {
 
 function finishCanvasPointer(event, canceled = false) {
   if (event.pointerType === "pen") {
-    activateSpenFromPointer(event);
-    spenRuntime.barrelDown = spenBarrelButtonPressed(event);
+    if (canceled) clearSpenHover();
+    else {
+      activateSpenFromPointer(event);
+      spenRuntime.barrelDown = spenBarrelButtonPressed(event);
+    }
   }
   const isSecondTap = tapZoom?.event.pointerId === event.pointerId;
   if (isSecondTap) {
