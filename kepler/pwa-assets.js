@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "32bf7b60d244d52c",
+  "version": "298d7e15f3f04f7a",
   "assets": [
     "./",
     "./analysis-panels.css",

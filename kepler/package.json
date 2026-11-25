@@ -1,6 +1,6 @@
 {
   "name": "kepler-plan",
-  "version": "0.4.22",
+  "version": "0.4.23",
   "private": true,
   "type": "module",
   "description": "kep•ler 3D — быстрый концепт-планировщик домов (чистый JS + canvas)",
