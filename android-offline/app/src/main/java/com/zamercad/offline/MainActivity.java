@@ -17,6 +17,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
@@ -43,8 +44,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.ArrayDeque;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -79,6 +82,13 @@ public final class MainActivity extends Activity {
     private boolean sPenDetected;
     private boolean sPenReceiverRegistered;
     private boolean sPenHovering;
+    private final ArrayDeque<IncomingFile> incomingFiles = new ArrayDeque<>();
+    private volatile IncomingFile activeIncomingFile;
+    private int incomingFileCount;
+    private boolean importUiReady;
+    private boolean incomingFileSent;
+
+    private record IncomingFile(String id, String name, Uri uri) {}
 
     private final BroadcastReceiver sPenReceiver = new BroadcastReceiver() {
         @Override
@@ -203,6 +213,81 @@ public final class MainActivity extends Activity {
         } else {
             webView.restoreState(savedInstanceState);
         }
+        handleOpenFileIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleOpenFileIntent(intent);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void handleOpenFileIntent(Intent intent) {
+        if (intent == null || (!Intent.ACTION_VIEW.equals(intent.getAction()) && !Intent.ACTION_SEND.equals(intent.getAction()))) return;
+        Uri uri;
+        try {
+            uri = Intent.ACTION_VIEW.equals(intent.getAction()) ? intent.getData()
+                : Build.VERSION.SDK_INT >= 33 ? intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class)
+                : intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (uri == null && intent.getClipData() != null && intent.getClipData().getItemCount() > 0) uri = intent.getClipData().getItemAt(0).getUri();
+        } catch (RuntimeException error) {
+            uri = null;
+        }
+        if (uri == null || (!"content".equals(uri.getScheme()) && !"file".equals(uri.getScheme()))) {
+            Toast.makeText(this, "Не удалось получить файл. Откройте его из файлового менеджера.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (incomingFileCount >= 4) {
+            Toast.makeText(this, "Сначала завершите открытие предыдущих файлов", Toast.LENGTH_LONG).show();
+            return;
+        }
+        incomingFileCount++;
+        final Uri fileUri = uri;
+        final String mimeType = intent.getType();
+        fileExecutor.execute(() -> {
+            try {
+                String name = fileUri.getLastPathSegment();
+                long size = -1;
+                try (Cursor rows = getContentResolver().query(fileUri, new String[] { OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE }, null, null, null)) {
+                    if (rows != null && rows.moveToFirst()) {
+                        int nameColumn = rows.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                        int sizeColumn = rows.getColumnIndex(OpenableColumns.SIZE);
+                        if (nameColumn >= 0 && !rows.isNull(nameColumn)) name = rows.getString(nameColumn);
+                        if (sizeColumn >= 0 && !rows.isNull(sizeColumn)) size = rows.getLong(sizeColumn);
+                    }
+                } catch (RuntimeException ignored) {
+                    // Some providers and file: URIs expose a readable stream
+                    // without supporting metadata queries. Enforce size on read.
+                }
+                name = FileOpenPolicy.importName(name, mimeType);
+                if (name == null) throw new IOException("Поддерживаются файлы DWG, DXF и ZAMER");
+                if (size == 0 || size > FileOpenPolicy.MAX_BYTES) throw new IOException("Выберите непустой чертёж размером до 32 МБ");
+                IncomingFile file = new IncomingFile(UUID.randomUUID().toString(), name, fileUri);
+                runOnUiThread(() -> {
+                    if (isDestroyed()) return;
+                    incomingFiles.add(file);
+                    dispatchIncomingFile();
+                });
+            } catch (IOException | RuntimeException error) {
+                runOnUiThread(() -> {
+                    incomingFileCount--;
+                    if (!isDestroyed()) Toast.makeText(this, error instanceof IOException ? error.getMessage() : "Не удалось прочитать файл. Попробуйте открыть его из файлового менеджера.", Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void dispatchIncomingFile() {
+        if (!importUiReady || incomingFileSent || webView == null || isDestroyed()) return;
+        if (activeIncomingFile == null) activeIncomingFile = incomingFiles.poll();
+        IncomingFile file = activeIncomingFile;
+        if (file == null) return;
+        incomingFileSent = true;
+        String url = APP_ORIGIN + APP_PATH_PREFIX + "_imports/" + file.id();
+        String detail = "{\"id\":" + JSONObject.quote(file.id()) + ",\"name\":" + JSONObject.quote(file.name()) + ",\"url\":" + JSONObject.quote(url) + "}";
+        webView.evaluateJavascript("window.zamerReceiveFile?.(" + detail + ");", null);
     }
 
     private void reportUpdateAvailability(String version) {
@@ -397,6 +482,25 @@ public final class MainActivity extends Activity {
     }
 
     private final class AndroidBridge {
+        @JavascriptInterface
+        public void readyForImports() {
+            runOnUiThread(() -> {
+                importUiReady = true;
+                dispatchIncomingFile();
+            });
+        }
+
+        @JavascriptInterface
+        public void completeFileImport(String id) {
+            runOnUiThread(() -> {
+                if (activeIncomingFile == null || !activeIncomingFile.id().equals(id)) return;
+                activeIncomingFile = null;
+                incomingFileSent = false;
+                incomingFileCount--;
+                dispatchIncomingFile();
+            });
+        }
+
         @JavascriptInterface
         public void authorizeGoogle(String id, String email, boolean interactive) {
             runOnUiThread(() -> googleDrive.request(id, email, interactive));
@@ -641,6 +745,13 @@ public final class MainActivity extends Activity {
 
     private final class LocalAssetClient extends WebViewClient {
         @Override
+        public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+            importUiReady = false;
+            incomingFileSent = false;
+            super.onPageStarted(view, url, favicon);
+        }
+
+        @Override
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view, url);
             dispatchSpenState();
@@ -673,6 +784,18 @@ public final class MainActivity extends Activity {
             String path = uri.getPath();
             if (path == null || !path.startsWith(APP_PATH_PREFIX)) return errorResponse(403, "Forbidden");
             String relativePath = path.substring(APP_PATH_PREFIX.length());
+            if (relativePath.startsWith("_imports/")) {
+                IncomingFile file = activeIncomingFile;
+                if (file == null || !relativePath.equals("_imports/" + file.id())) return errorResponse(404, "Not found");
+                try {
+                    InputStream stream = getContentResolver().openInputStream(file.uri());
+                    if (stream == null) return errorResponse(404, "Not found");
+                    return new WebResourceResponse("application/octet-stream", null, 200, "OK",
+                        Collections.singletonMap("Cache-Control", "no-store"), FileOpenPolicy.bounded(stream, FileOpenPolicy.MAX_BYTES));
+                } catch (IOException | RuntimeException error) {
+                    return errorResponse(400, "Could not read drawing");
+                }
+            }
             if (relativePath.trim().isEmpty()) relativePath = "index.html";
             if (relativePath.contains("..") || relativePath.startsWith("/")) return errorResponse(403, "Forbidden");
             try {
