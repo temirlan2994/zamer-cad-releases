@@ -51,6 +51,21 @@ test("Zamer CAD exchange preserves editable dimensions and native block referenc
   }
 });
 
+test("CAD import keeps only the visible text of MTEXT and TEXT", () => {
+  const text = (type, value) => [0, type, 8, "0", 10, 0, 20, 0, 40, 250, 1, value];
+  const { project, skipped } = importDxf(fixture([
+    ...text("MTEXT", "\\pi1152.6;Спальня"),
+    ...text("MTEXT", "{\\L13,0}"),
+    ...text("MTEXT", "\\pxqc;{\\fArial|b1|i0|c204|p34;\\C1;Кухня}\\P12,5 м\\S2^;"),
+    ...text("MTEXT", "\\A1;\\H2.5x;3\\~\\S1#2;\" \\\\ \\{x\\}"),
+    ...text("TEXT", "%%uСанузел%%u %%c50 100%%% 90%%176"),
+  ]));
+  assert.equal(skipped, 0);
+  assert.deepEqual(project.entities.map(entity => entity.text),
+    ["Спальня", "13,0", "Кухня\n12,5 м²", "3 1/2\" \\ {x}", "Санузел ⌀50 100% 90°"]);
+  assert.equal(validateZamerProject(project), project);
+});
+
 test("CAD import rejects invalid or unsupported input", () => {
   assert.throws(() => importDxf("AutoCAD Binary DXF"), /двоичном/);
   assert.throws(() => importDxf("0\nSECTION\n2\n"), /повреждён/);
