@@ -672,6 +672,7 @@ const statusChip = document.getElementById("statusChip");
 const dimensionAssist = document.getElementById("dimensionAssist");
 const cornerMetrics = document.getElementById("cornerMetrics");
 const linePointAssist = document.getElementById("linePointAssist");
+const lineLengthEntryToggle = document.getElementById("lineLengthEntryToggle");
 const polylineArcMode = document.getElementById("polylineArcMode");
 const lengthMetricName = document.getElementById("lengthMetricName");
 const topLengthName = document.getElementById("topLengthName");
@@ -921,6 +922,7 @@ const state = {
   annotationScale: 1,
   measurementSettings: normalizeMeasurementSettings(),
   tapZoomEnabled: true,
+  lineLengthEntry: apkReadJson("zamer.line.length-entry.v1", false) === true,
   selectTool: "select",
   selectionFilter: "all",
 
@@ -6688,9 +6690,8 @@ function drawSegmentMetricLabels(start, end, angleAnchor, c, viewport) {
   const to = worldToScreen(end);
   const middle = midpoint(from, to);
   const lengthAnchor = drawDraftLengthDimension(from, to, c, viewport) ?? { x: middle.x, y: middle.y - 32 };
-  const angleLabel = angleAnchor ?? { x: to.x, y: to.y + 32 };
-  updateDraftMetricLabels(lengthAnchor, angleLabel, distanceWorld(start, end), activeAngleInfo(start, end), viewport,
-    { canvasColors: state.drawing ? undefined : c });
+  updateDraftMetricLabels(lengthAnchor, angleAnchor, distanceWorld(start, end), activeAngleInfo(start, end), viewport,
+    { canvasColors: state.drawing ? undefined : c, passiveAngleColors: c });
 }
 
 function drawEditableSegment(start, end, c, options = {}) {
@@ -6869,7 +6870,7 @@ function updateFigureMetricInput(input) {
 function figureMetricPreview(key) {
   const edit = state.numericEdit?.figureMetric;
   if (!edit || edit.key !== key) return null;
-  return isLinePoint(edit.point) ? edit.point : edit.lockedBySpen ? edit.end : null;
+  return isLinePoint(edit.point) ? edit.point : edit.lockedDirection ? edit.end : null;
 }
 
 function confirmFigureMetricInput(input, edit) {
@@ -6942,7 +6943,7 @@ function draftMetricPosition(point, { halfWidth, halfHeight }, viewport, placed 
 }
 
 function updateDraftMetricLabels(lengthAnchor, angleAnchor, length, angleInfo, viewport,
-  { names, symbols = ["↔", "∠"], paired = false, canvasColors } = {}) {
+  { names, symbols = ["↔", "∠"], paired = false, canvasColors, passiveAngleColors } = {}) {
   draftMetricLabels.hidden = false;
   draftLengthInput.setAttribute("aria-label", names?.[0] ?? "Длина линии на чертеже");
   draftAngleInput.setAttribute("aria-label", names?.[1] ?? "Угол линии на чертеже");
@@ -6976,6 +6977,12 @@ function updateDraftMetricLabels(lengthAnchor, angleAnchor, length, angleInfo, v
   let placed = null;
   for (const [input, anchor] of entries) {
     const field = input.parentElement;
+    if (input === draftAngleInput && passiveAngleColors) {
+      // A drawing aid must not become a hit target for the second point.
+      field.hidden = true;
+      if (anchor) drawDraftAngleReadout(anchor, angleInfo, passiveAngleColors, viewport);
+      continue;
+    }
     const pinned = input === activeInput || pressedMetricFields.has(field);
     const lastX = field.style.getPropertyValue("--metric-x");
     const previous = lastX && !field.hidden ? { x: parseFloat(lastX), y: parseFloat(field.style.getPropertyValue("--metric-y")) } : null;
@@ -6990,6 +6997,24 @@ function updateDraftMetricLabels(lengthAnchor, angleAnchor, length, angleInfo, v
     placed = { x, y, ...size };
     if (canvasColors && document.activeElement !== input) drawCanvasMetricReadout(field, placed, canvasColors);
   }
+}
+
+function drawDraftAngleReadout({ x, y }, angleInfo, c, viewport) {
+  const text = formatProjectAngle(angleInfo.degrees, state.measurementSettings, { wrap: angleInfo.cadAngle });
+  ctx.save();
+  ctx.font = "700 12px Inter, Arial, sans-serif";
+  const halfWidth = ctx.measureText(text).width / 2;
+  if (x - halfWidth >= 4 && x + halfWidth <= viewport.width - 4 && y >= 12 && y <= viewport.height - 12) {
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = c.surface;
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = c.accent;
+    ctx.fillText(text, x, y);
+  }
+  ctx.restore();
 }
 
 function drawCanvasMetricReadout(field, { x, y, halfWidth }, c) {
@@ -7379,43 +7404,42 @@ function drawAngleArc(origin, target, angleInfo, c) {
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
   const screenLength = Math.hypot(dx, dy);
-  if (screenLength < (state.tool === "line" ? 14 : 34)) return null;
+  if (screenLength < 48) return null;
 
-  const ux = dx / screenLength;
-  const uy = dy / screenLength;
-  const followsCursor = screenLength > auxiliaryPx(150);
-  const centerOffset = followsCursor ? Math.min(screenLength * 0.42, auxiliaryPx(118)) : 0;
-  const arcOrigin = followsCursor
-    ? { x: target.x - ux * centerOffset, y: target.y - uy * centerOffset }
-    : origin;
-  const radius = Math.min(auxiliaryPx(54), Math.max(auxiliaryPx(32), screenLength * 0.32));
+  // Keep the protractor at the first point. Following the endpoint puts its
+  // readout under the pen, precisely where the next contact needs to land.
+  const arcOrigin = origin;
+  const radius = Math.min(52, Math.max(28, screenLength * 0.3));
   const startRad = angleInfo.referenceRad;
-  const endRad = angleInfo.referenceRad + angleInfo.deltaRad;
+  const sweep = angleInfo.cadAngle ? -angleInfo.degrees * Math.PI / 180 : angleInfo.deltaRad;
+  const endRad = startRad + sweep;
 
   ctx.save();
   ctx.strokeStyle = c.accent;
   ctx.fillStyle = c.accent;
   ctx.lineCap = "round";
   ctx.globalAlpha = 0.28;
-  ctx.lineWidth = auxiliaryPx(0.65);
-  ctx.setLineDash([1, 6]);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 4]);
   linePath(
     arcOrigin.x,
     arcOrigin.y,
-    arcOrigin.x + Math.cos(startRad) * (radius + auxiliaryPx(14)),
-    arcOrigin.y + Math.sin(startRad) * (radius + auxiliaryPx(14)),
+    arcOrigin.x + Math.cos(startRad) * (radius + 8),
+    arcOrigin.y + Math.sin(startRad) * (radius + 8),
   );
-  ctx.globalAlpha = 0.34;
-  ctx.lineWidth = auxiliaryPx(0.65);
-  ctx.setLineDash([1, 5]);
+  ctx.globalAlpha = 0.6;
+  ctx.setLineDash([]);
   ctx.beginPath();
-  ctx.arc(arcOrigin.x, arcOrigin.y, radius, startRad, endRad, angleInfo.deltaRad < 0);
+  ctx.arc(arcOrigin.x, arcOrigin.y, radius, startRad, endRad, sweep < 0);
   ctx.stroke();
   ctx.setLineDash([]);
 
   ctx.restore();
-  const labelRad = startRad + angleInfo.deltaRad / 2;
-  return { x: arcOrigin.x + Math.cos(labelRad) * (radius + 15), y: arcOrigin.y + Math.sin(labelRad) * (radius + 15) };
+  const labelRad = startRad + sweep / 2;
+  const labelRadius = radius * 0.56;
+  const nearAxis = Math.abs(Math.sin(sweep / 2)) < 0.12;
+  return { x: arcOrigin.x + Math.cos(labelRad) * labelRadius,
+    y: arcOrigin.y + Math.sin(labelRad) * labelRadius - (nearAxis ? 16 : 0) };
 }
 
 function projectLength(mm) {
@@ -7615,7 +7639,7 @@ function lineMetricContext() {
 function lineMetricPreview(key) {
   const edit = state.numericEdit?.lineMetric;
   if (!edit || edit.key !== key) return null;
-  return isLinePoint(edit.point) ? edit.point : edit.lockedBySpen ? edit.end : null;
+  return isLinePoint(edit.point) ? edit.point : edit.lockedDirection ? edit.end : null;
 }
 
 function clearLineMetricEdit() {
@@ -7653,6 +7677,9 @@ function updateLineMetricInput(input) {
   edit[kind] = kind === "length" && !(value > 0) ? null : value;
   input.removeAttribute("aria-invalid");
   updateLineMetricPreview(edit);
+  if (edit.lockedDirection && isLinePoint(edit.point) && distanceWorld(edit.start, edit.point) > linePointEpsilon) {
+    statusChip.textContent = "Направление зафиксировано · введите размер и нажмите ✓";
+  }
   draw();
 }
 
@@ -10739,9 +10766,11 @@ function syncLineControls() {
   const input = numericConfirmInput();
   const choosingDirection = !surveyPointPicker && draft && state.numericEdit?.lineMetric?.lockedAngle === undefined &&
     (lineMetricKinds.get(input) === "length" || draft.metricConstraint?.length !== undefined);
+  lineLengthEntryToggle.hidden = !["line", "polyline"].includes(state.tool) || Boolean(surveyPointPicker || input || drawing?.arcPhase);
+  lineLengthEntryToggle.setAttribute("aria-pressed", String(state.lineLengthEntry));
   polylineArcMode.hidden = !drawing || Boolean(surveyPointPicker) || Boolean(input);
   polylineArcMode.setAttribute("aria-pressed", String(Boolean(drawing?.arcPhase)));
-  linePointAssist.hidden = !choosingDirection && polylineArcMode.hidden;
+  linePointAssist.hidden = !choosingDirection && polylineArcMode.hidden && lineLengthEntryToggle.hidden;
   cornerMetrics.hidden = inlineEditors.hidden && drawMetrics.hidden && linePointAssist.hidden;
   lineDirection.hidden = !choosingDirection;
   if (choosingDirection && lineDirection.value !== (draft.metricDirection || "")) lineDirection.value = draft.metricDirection || "";
@@ -11988,7 +12017,13 @@ function commitCursorPoint(screen = inputCursorScreen(), exactPoint = null) {
     return;
   }
   if (state.tool === "line" || state.tool === "polyline") {
-    commitLinePoint(state.drawing?.lockedEnd ? state.drawing.end : world);
+    const point = state.drawing?.lockedEnd ? state.drawing.end : world;
+    if (state.lineLengthEntry && state.drawing && !state.drawing.arcPhase && !exactPoint &&
+        !isLayerLocked(state.drawing.layer) && isValidLine({ x1: state.drawing.start.x, y1: state.drawing.start.y, x2: point.x, y2: point.y })) {
+      beginDraftLengthInput(point);
+      return;
+    }
+    commitLinePoint(point);
     return;
   }
   if (state.tool === "circle" && state.circleMode !== "center") {
@@ -12232,15 +12267,19 @@ function selectedEndPoint() {
 }
 
 function beginSpenLengthInput() {
+  return beginDraftLengthInput();
+}
+
+function beginDraftLengthInput(exactEnd = null) {
   const draft = state.drawing;
   if (!draft || state.leaderInput || surveyPointPicker || state.quickMeasure) return false;
   const lineDraft = ["line", "polyline"].includes(state.tool) && !draft.arcPhase;
-  const end = lineMetricPreview(draft.start) ?? figureMetricPreview(draft) ?? (draft.lockedEnd ? draft.end : cursorWorld());
+  const end = exactEnd ?? lineMetricPreview(draft.start) ?? figureMetricPreview(draft) ?? (draft.lockedEnd ? draft.end : cursorWorld());
   const figure = draftFigureReference(end);
   if (!lineDraft && !figure) return false;
   const input = lineDraft || figure.type === "circle" ? lengthInput : topLengthInput;
   const current = state.numericEdit?.lineMetric || state.numericEdit?.figureMetric;
-  if (current?.lockedBySpen && current.key === (lineDraft ? draft.start : draft)) {
+  if (current?.lockedDirection && current.key === (lineDraft ? draft.start : draft)) {
     input.focus({ preventScroll: true });
     window.ZamerAndroid?.showKeyboard?.();
     return true;
@@ -12248,7 +12287,7 @@ function beginSpenLengthInput() {
   const arc = figure?.arcEnd && draftArcFromBend(draft.start, figure.arcEnd, end)?.arc;
   const length = lineDraft ? distanceWorld(draft.start, end) : figureMetrics(figure, arc).values[0];
   if (!isLinePoint(end) || !(length > linePointEpsilon)) {
-    statusChip.textContent = "Сначала укажите направление пером";
+    statusChip.textContent = "Сначала укажите направление";
     return true;
   }
   // Capture the resolved point before focus/IME changes the viewport or the
@@ -12260,7 +12299,7 @@ function beginSpenLengthInput() {
   if (!edit) return true;
   edit.end = { ...end };
   edit.point = { ...end };
-  edit.lockedBySpen = true;
+  edit.lockedDirection = true;
   if (lineDraft) {
     edit.length = length;
     edit.lockedAngle = -radToDeg(angleBetweenPoints(draft.start, end));
@@ -14798,6 +14837,14 @@ keyboardConfirmButton.addEventListener("blur", (event) => {
   }
 });
 bindPointAction(polylineArcMode, togglePolylineArcMode);
+bindPointAction(lineLengthEntryToggle, () => {
+  state.lineLengthEntry = !state.lineLengthEntry;
+  try { localStorage.setItem("zamer.line.length-entry.v1", JSON.stringify(state.lineLengthEntry)); } catch { /* Optional device preference. */ }
+  statusChip.textContent = state.lineLengthEntry
+    ? "Ввод длины · укажите две точки, затем введите размер"
+    : "Свободное черчение · укажите две точки";
+  draw();
+});
 bindPointAction(quickMirrorTool, () => {
   if (state.lineEdit?.mode === "mirror") endLineEdit("Отражение отменено");
   else startSelectionAction("mirror");
