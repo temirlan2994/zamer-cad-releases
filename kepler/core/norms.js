@@ -207,7 +207,9 @@ export function normsReport(project, options = {}) {
     }
     const levelOverlaps = on('geometry') ? roomOverlaps(lp) : [];
     const verdicts = levelOverlaps.length ? overlapVerdicts(lp, levelOverlaps) : new Map();
-    const crossed = on('geometry') ? wallsInsideRooms(lp) : [];
+    // Короткая перегородка внутри комнаты допустима. Подсказка разделения
+    // нужна, когда стена действительно разбивает блок на два помещения.
+    const crossed = on('geometry') ? wallsInsideRooms(lp).filter((wall) => wall.divides) : [];
     // Не фильтруем два общих массива заново для каждой комнаты. На плане с
     // множеством пересечений прежний цикл мог снова вырасти почти до O(n³).
     const crossedByRoom = new Map();
@@ -232,8 +234,8 @@ export function normsReport(project, options = {}) {
       for (const c of crossedByRoom.get(room.id) || []) {
         checks.push({
           kind: 'wall-divides', ok: false, wallId: c.wallId,
-          text: c.divides ? `Стена делит помещение «${room.name}»` : `Стена внутри помещения «${room.name}»`,
-          split: c.divides ? { roomId: room.id, wallId: c.wallId, label: `Разделить «${room.name}» на два` } : null,
+          text: `Стена делит помещение «${room.name}»`,
+          split: { roomId: room.id, wallId: c.wallId, label: `Разделить «${room.name}» на два` },
         });
       }
       for (const f of on('furniture') ? furnitureIssues(lp, room, walls) : []) {

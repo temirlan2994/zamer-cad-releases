@@ -10,10 +10,39 @@ import { normsReport, roomChecks } from '../core/norms.js';
 import { analyzeConnectivity } from '../core/rooms.js';
 import { buildTemplate } from '../core/templates.js';
 import { deriveWalls, sharedKey } from '../core/walls.js';
+import { addManualWall } from '../core/wall-manual.js';
 
 const all = (issues) => issues.groups.flatMap((g) => g.items);
 const group = (issues, id) => issues.groups.find((g) => g.id === id);
 const warns = (issues) => all(issues).filter((x) => x.severity === 'warn');
+
+test('ручные перегородки внутри комнаты не дают ложного замечания геометрии', () => {
+  const p = createProject();
+  const room = createRoom('kitchen-living', 0, 0, 6000, 5000);
+  p.rooms.push(room);
+  addManualWall(p, { x: 3000, y: 0 }, { x: 3000, y: 2000 });
+  const oldWall = addManualWall(p, { x: 1000, y: 3000 }, { x: 2000, y: 3500 });
+  delete oldWall.ownerRoomId; // ручная стена из старого файла
+  const norms = normsReport(p, { enabled: ['geometry'] });
+  assert.ok(!norms.problems.some((problem) => problem.kind === 'wall-divides'));
+  const issues = collectIssues(p, { enabled: ['geometry'], norms });
+  assert.equal(issues.count, 0);
+  assert.ok(!all(issues).some((issue) => issue.id.startsWith('wall-divides:')));
+});
+
+test('стена через всё помещение сохраняет подсказку разделения и действие', () => {
+  const p = createProject();
+  const room = createRoom('living', 0, 0, 6000, 5000);
+  p.rooms.push(room);
+  const wall = addManualWall(p, { x: 3000, y: 0 }, { x: 3000, y: 5000 });
+  const norms = normsReport(p, { enabled: ['geometry'] });
+  const problem = norms.problems.find((entry) => entry.kind === 'wall-divides');
+  assert.equal(problem.wallId, wall.id);
+  assert.match(problem.text, /Стена делит помещение/);
+  const issues = collectIssues(p, { enabled: ['geometry'], norms });
+  const issue = all(issues).find((entry) => entry.id.startsWith('wall-divides:'));
+  assert.ok(issue.actions.some((action) => action.kind === 'split' && action.wallId === wall.id));
+});
 
 test('умолчание рабочего плана: ВКЛ — только геометрия; семь групп', () => {
   assert.deepEqual(ISSUE_GROUPS.map((g) => g.id), ['access', 'norms', 'light', 'insolation', 'furniture', 'geometry', 'ergo']);
