@@ -1,4 +1,5 @@
 import { cornerWindowHandles } from '../core/corner-windows.js';
+import { glazedOpeningMinWidth, isGlazedAssembly, resizeGlazedOpening } from '../core/glazed-openings.js';
 import { atriumClick, atriumHover } from './atrium-ui.js';
 // Ввод мышью на канвасе: выбор, перетаскивания, рамка, колесо, drag-and-drop.
 
@@ -8,10 +9,10 @@ import { STAIR_FIELDS, applyStairPreset, applyStairStylePreset, dragStairHandle,
 import { itemsInRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { activeLevel, roomById } from '../core/model.js';
 import { determineParent, snapRoomPosition, validateRoomPlacement } from '../core/rooms.js';
-import { nearestPointOnPolyline } from '../core/site.js';
+import { ensureSiteEntries, entryById, entryOverlaps, entryTitle, syncPrimaryEntry } from '../core/site-entries.js';
 import { pointInBuilding, setBuildingOrigin } from '../core/site-check.js';
 import {
-  openingFrame, openingPosAt, openingRect, setOpeningPos, wallRects,
+  openingFrame, openingPos, openingPosAt, openingRect, setOpeningPos, wallRects,
 } from '../core/walls.js';
 import { dragManualWallEnd } from '../core/wall-manual.js';
 import {
@@ -58,7 +59,7 @@ import { switchLevel } from './levels.js';
 import { closeLibrarySheet } from './mobile.js';
 import {
   addBedsideNightstand, addFurnitureAt, autoDockAfterGesture, computeOpeningParams, eatOverlapsAfter, openingSnapOpts, placeOpeningAt,
-  placeRoomAt, reconcileOpenings, roomPlacementContext, selectGroup, toggleInMulti, toggleOpeningFlip,
+  placeRoomAt, reconcileOpenings, roomPlacementContext, selectGroup, selectPlanObjects, toggleInMulti, toggleOpeningFlip,
 } from './plan-actions.js';
 import {
   addDraftPoint, addNorthPoint, computeEntryAt, finishDraft, placeNeighborAt, updateDraftCursor,
@@ -93,7 +94,8 @@ import { state } from './state.js';
 import { registerEditGestureCancel } from './edit-guard.js';
 import { afterChange, pushHistory, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot } from './store.js';
 import { arrangeRoomsNow } from './auto-layout.js';
-import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
+import { activeSiteLayer, cancelTool, positionWallButtons, selectObject, setHint } from './tools.js';
+import { renderSelectionToolbar } from './selection-toolbar.js';
 import { addCalibratePoint, hideCalInput, positionCalInput } from './underlay.js';
 import {
   applyElevInput, hitTerrainPoint, openElevInput, positionElevInput, terrainStatus,
@@ -122,7 +124,7 @@ function sameSelectedTarget(a, b) {
     return a.key === b.key && sameFrom;
   }
   if (a.type === 'site') return a.kind === b.kind && (a.id ?? null) === (b.id ?? null);
-  if (a.type === 'multi') return sameIdSet(a.roomIds, b.roomIds) && sameIdSet(a.itemIds, b.itemIds);
+  if (a.type === 'multi') return sameIdSet(a.roomIds, b.roomIds) && sameIdSet(a.itemIds, b.itemIds) && sameIdSet(a.wallIds, b.wallIds);
   if (a.type === 'landscape') return sameIdSet(a.ids, b.ids);
   if (a.type === 'railing') return a.roomId === b.roomId && a.id === b.id;
   if (a.type === 'slab') return a.levelId === b.levelId && a.id === b.id;
@@ -216,6 +218,7 @@ function restoreWallDragRooms(wallDrag) {
 // Второй палец: всё начатое одним пальцем отменяется, начинается щипок.
 function startPinch() {
   if (drag?.before && drag.moved) restoreFrom(drag.before);
+  state.planPinching = true;
   state.marquee = null;
   state.ghost = null;
   state.guides = [];
@@ -253,21 +256,28 @@ function movePinch() {
   requestDraw();
 }
 
-// Инструмент «Въезд» активен: клик создаёт въезд (если нет) и сразу тянет
-// его по границе; существующий — просто тянется.
-function startEntryDrag(world) {
+// Пустое место — новый объект; попадание в существующий — его перемещение.
+function startEntryDrag(world, hit = null) {
   const site = state.project.site;
   if (!site.boundary || site.boundary.length < 3) { toast('Сначала начертите границу участка'); return; }
   const before = snapshot();
-  let created = false;
-  if (!site.entry) {
-    const spot = computeEntryAt(world);
-    if (!spot) { toast('Кликните ближе к границе участка'); return; }
-    site.entry = { x: spot.x, y: spot.y, dir: spot.dir };
-    created = true;
+  const list = ensureSiteEntries(site);
+  let entry = hit ? entryById(site, hit.id) : null;
+  const created = !entry;
+  if (created) {
+    const kind = state.tool?.entryKind || 'gate';
+    entry = { id: `entry-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, kind,
+      width: kind === 'wicket' ? 1000 : 4000, height: 1800, wicket: false, wicketWidth: 1000, wicketSide: 'right' };
+    const spot = computeEntryAt(world, entry);
+    if (!spot) { toast('На этой стороне недостаточно места для ворот или калитки'); return; }
+    Object.assign(entry, { x: spot.x, y: spot.y, dir: spot.dir });
+    if (entryOverlaps(site, entry)) { toast('Здесь уже есть ворота или калитка'); return; }
+    list.push(entry);
+    syncPrimaryEntry(site);
   }
-  selectObject({ type: 'site', kind: 'entry' });
-  drag = { kind: 'entry', before, moved: created }; // создание сразу коммитится
+  selectObject({ type: 'site', kind: 'entry', id: entry.id });
+  drag = { kind: 'entry', id: entry.id, before, moved: created };
+  if (created) toast(`${entryTitle(entry)} ${entry.kind === 'wicket' ? 'добавлена' : 'добавлены'} · Размеры — в свойствах`);
   if (created) requestDraw();
 }
 
@@ -278,7 +288,7 @@ function startMultiDrag(plan, sel = state.selection, wasSelected = false) {
   // Груз фиксируется при захвате: выбранные комнаты с их вложенными
   // помещениями и мебелью внутри + отдельно выбранная мебель.
   // Состав груза — как у стрелок и поворота группы (core/room-group.js).
-  const cargo = groupCargo(state.project, sel.roomIds, sel.itemIds);
+  const cargo = groupCargo(state.project, sel.roomIds, sel.itemIds, null, sel.wallIds);
   const movedRooms = new Map(cargo.rooms.map((room) => [room.id, { x: room.x, y: room.y }])); // id -> старт
   const movedItems = new Map(cargo.items.map((item) => [item.id, { x: item.x, y: item.y }])); // id -> старт
   const movedWalls = new Map(cargo.walls.map((wall) => [wall.id, structuredClone(wall.axis)]));
@@ -305,10 +315,11 @@ function groupGuideSession(d) {
   const moving = [
     ...state.project.rooms.filter((r) => roomSet.has(r.id)).map((r) => roomShape(r)),
     ...state.project.items.filter((i) => items.includes(i.id)).map((i) => itemShape(i)),
+    ...[...(d.wallStarts?.values() || [])].map((axis) => ({ pts: [axis.a, axis.b] })),
   ];
   return startGuideSession({
     space: 'plan', moving, frames: rooms.length ? [0] : null, ownAngles: [0],
-    exclude: { rooms: roomSet, items: new Set(items), walls: (w) => (w.rooms || []).some((id) => roomSet.has(id)) },
+    exclude: { rooms: roomSet, items: new Set(items), walls: (w) => d.wallStarts?.has(w.wallId) || (w.rooms || []).some((id) => roomSet.has(id)) },
   });
 }
 
@@ -331,13 +342,10 @@ function applyMarquee() {
   for (const item of state.project.items) {
     if (contains(item.x, item.y)) itemIds.push(item.id);
   }
-  const total = roomIds.length + itemIds.length;
-  if (total === 0) { selectObject(null); return; }
-  if (total === 1) {
-    selectObject(roomIds.length ? { type: 'room', id: roomIds[0] } : { type: 'item', id: itemIds[0] });
-    return;
-  }
-  selectObject({ type: 'multi', roomIds, itemIds });
+  const wallIds = (state.project.walls || [])
+    .filter((wall) => !wall.hidden && contains(wall.axis.a.x, wall.axis.a.y) && contains(wall.axis.b.x, wall.axis.b.y))
+    .map((wall) => wall.id);
+  selectPlanObjects(roomIds, itemIds, wallIds);
 }
 
 // Калибровка и «Север по 2 точкам»: привязка второй точки к лучам от первой.
@@ -367,6 +375,7 @@ setSnapRehover((mods) => {
 
 function updateHoverAndGhost(world, plan, event) {
   lastHover = { world, plan };
+  if (state.tool?.kind === 'move-furniture') { canvas.style.cursor = 'crosshair'; return; }
   if (state.tool?.kind === 'align-view') {
     // «Выровнять вид»: привязка к рёбрам/углам стен, комнат, участка, соседей.
     const p = snapAlignPoint(world, event);
@@ -548,6 +557,16 @@ export function bindCanvasInput() {
   canvas.addEventListener('selectstart', (e) => e.preventDefault()); // долгое нажатие не выделяет холст
   // Esc во время жеста «тянуть ребро» ландшафта — отмена (раньше общих клавиш).
   window.addEventListener('keydown', (e) => {
+    if (state.tool?.kind === 'move-furniture') {
+      if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        cancelTool();
+        return;
+      }
+      // Иная команда сначала отменяет предпросмотр переноса.
+      if (!['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) cancelTool();
+    }
     // Esc во время жеста на «Плане крыши» — отмена жеста.
     if (e.key === 'Escape' && drag?.kind?.startsWith('roofplan-')) {
       e.preventDefault();
@@ -667,6 +686,32 @@ export function bindCanvasInput() {
     const world = pointerWorld(event); // участок — координаты съёмки
     const plan = worldToPlan(world); // дом — его собственные оси
     canvas.setPointerCapture(event.pointerId);
+    if (state.tool?.kind === 'move-furniture') {
+      if (event.button === 2) { cancelTool(); return; }
+      if (event.button !== 0) return;
+      if (drag?.clickMove) {
+        drag.placing = true;
+        onCanvasPointerMove(event);
+        return;
+      }
+      const item = hitItem(plan);
+      if (!item || !state.tool.itemIds.includes(item.id)) return;
+      tapOrNow(event, screen, () => {
+        if (state.tool?.kind !== 'move-furniture') return;
+        if (state.tool.itemIds.length > 1) startMultiDrag(plan);
+        else drag = {
+          kind: 'item', id: item.id, start: { x: item.x, y: item.y }, plan,
+          before: snapshot(), moved: false,
+        };
+        drag.clickMove = true;
+        state.tool.stage = 'place';
+        setHint('Мебель следует за указателем · Нажмите, чтобы поставить · Esc — отмена');
+        renderSelectionToolbar();
+        canvas.style.cursor = 'grabbing';
+        requestDraw();
+      });
+      return;
+    }
     // Деление стены: клик режет по линии деления.
     if (state.splitEdit && event.button === 0 && !spaceDown) {
       if (splitLiveClick(plan, screen, event.pointerType === 'touch')) return;
@@ -756,9 +801,10 @@ export function bindCanvasInput() {
       touchPan();
       return;
     }
-    if (layer === 'entry') {
+    if (layer === 'entry' || layer === 'wicket') {
       // Касанием: новый въезд — тапом, существующий двигается после удержания.
-      if (state.project.site.entry) startEntryDrag(world);
+      const hit = hitSiteObject(world);
+      if (hit?.kind === 'entry') startEntryDrag(world, hit);
       else tapOrNow(event, screen, () => startEntryDrag(world));
       return;
     }
@@ -845,6 +891,8 @@ export function bindCanvasInput() {
     // дом хватается только целиком (за любую комнату) и едет по участку.
     if (state.modeName === 'site') {
       if (state.calibration && !el('calOverlay').hidden) hideCalInput();
+      const hit = hitSiteObject(world);
+      if (hit?.kind === 'entry') { startEntryDrag(world, hit); return; }
       if (pointInBuilding(state.project, world)) {
         selectObject({ type: 'site', kind: 'building' });
         const o = state.project.building?.origin || { x: 0, y: 0 };
@@ -889,7 +937,8 @@ export function bindCanvasInput() {
     const onRoomHandle = Boolean(hitRoomHandle(screen));
     const lockHit = onRoomHandle ? null : hitGridLock(state, screen);
     if (lockHit) { const sw = Boolean(event.shiftKey); tapOrNow(event, screen, () => toggleGridLock(lockHit, { switchMode: sw })); return; }
-    const tempDimHit = onRoomHandle ? null : hitTempDim(screen);
+    // Shift расширяет выделение, даже если подпись размера лежит над мебелью.
+    const tempDimHit = onRoomHandle || event.shiftKey ? null : hitTempDim(screen);
     if (tempDimHit) { tapOrNow(event, screen, () => openDimInput(tempDimHit)); return; }
 
     // Маркер нестандартного зазора «≠ N мм» — выделить пару и предложить стыковку.
@@ -1088,6 +1137,12 @@ export function bindCanvasInput() {
       selectObject({ type: 'opening', id: opening.id });
       if (opening.corner) return;
       drag = { kind: 'opening', id: opening.id, before: snapshot(), moved: false };
+      const stored = state.project.openings.find((o) => o.id === opening.id);
+      if (isGlazedAssembly(stored)) {
+        const placed = openingRect(state.project, stored, state.walls);
+        if (placed) drag.grabOffset = openingPosAt(state.project, stored, state.walls,
+          placed.wall.orient === 'h' ? plan.x : plan.y) - openingPos(stored);
+      }
       return;
     }
 
@@ -1099,6 +1154,11 @@ export function bindCanvasInput() {
     if (picked?.type === 'wall') {
       const wall = picked.entity;
       const manual = wall.kind === 'manual';
+      if (manual && event.shiftKey) { toggleInMulti('wall', wall.wallId); return; }
+      if (manual && state.selection?.type === 'multi' && state.selection.wallIds?.includes(wall.wallId)) {
+        startMultiDrag(plan, state.selection, true);
+        return;
+      }
       // Ручная стена выбирается по ключу: её начало (from) меняется при правке.
       selectObject({ type: 'wall', key: wall.key, from: manual ? undefined : wall.from, at: wall.orient === 'h' ? plan.x : plan.y });
       drag = {
@@ -1173,6 +1233,7 @@ export function bindCanvasInput() {
     try { onCanvasPointerDown(event); } finally { state.touchDeferSelect = false; }
     const pending = state.touchDeferred;
     state.touchDeferred = null;
+    if (drag?.clickMove) return;
     // Первое касание другого объекта — только выбор. Даже долгое удержание не
     // должно сразу сдвигать его; если палец пошёл в сторону, это панорама.
     // Ручки уже выбранного объекта сохраняют прежнее непосредственное действие.
@@ -1203,7 +1264,7 @@ export function bindCanvasInput() {
     }
     drag = hold;
   });
-  canvas.addEventListener('pointermove', (event) => {
+  const onCanvasPointerMove = (event) => {
     const screen = pointerScreen(event);
     if (event.pointerType === 'touch' && touches.has(event.pointerId)) touches.set(event.pointerId, screen);
     if (drag?.kind === 'pinch') { movePinch(); return; }
@@ -1575,7 +1636,7 @@ export function bindCanvasInput() {
       const placedNow = openingRect(state.project, opening, state.walls);
       if (!placedNow) return;
       drag.moved = true;
-      const desired = openingPosAt(state.project, opening, state.walls, placedNow.wall.orient === 'h' ? plan.x : plan.y);
+      const desired = openingPosAt(state.project, opening, state.walls, placedNow.wall.orient === 'h' ? plan.x : plan.y) - (drag.grabOffset || 0);
       // Сначала шаг сетки, потом поиск свободного места: округление не должно
       // загонять проём на соседний (зазор ≥ OPENING_GAP).
       state.openingFree = event.shiftKey; // Shift — без шага и без привязки к центру
@@ -1674,12 +1735,13 @@ export function bindCanvasInput() {
       const fixed = drag.end === 'start' ? endEdge : startEdge;
       const movingEdge = base + Math.round((along - base) / 50) * 50; // шаг 50 мм
       let width = Math.abs(fixed - movingEdge);
-      width = Math.max(300, Math.round(width / 50) * 50);
+      width = Math.max(glazedOpeningMinWidth(opening), Math.round(width / 50) * 50);
       const center = drag.end === 'start' ? fixed - width / 2 : fixed + width / 2;
-      const probe = { ...opening, width };
+      const resized = isGlazedAssembly(opening) ? resizeGlazedOpening(opening, { width }) : { width };
+      const probe = { ...opening, ...resized };
       const clamped = fitOpeningOffset(state.project, probe, state.walls, (center - base) * frame.dir);
       if (clamped !== null) {
-        opening.width = width;
+        Object.assign(opening, resized);
         setOpeningPos(opening, clamped);
       }
       requestDraw();
@@ -1704,7 +1766,7 @@ export function bindCanvasInput() {
         });
       }
       let snapRes = snapAt(plan, event, {
-        prev: fixed, points: [...massSnapPoints(), ...gridSnapPoints()], extraShapes: shapes, grid: gridStep(),
+        prev: fixed, points: [...massSnapPoints(), ...gridSnapPoints()], extraShapes: shapes, grid: gridStep(), space: 'plan',
       });
       // Магнит торца к оси и к центру/середине соседней стены, как у инструмента «Стена».
       const magnet = wallPointMagnet(plan, event, { prev: fixed, excludeId: wall.id });
@@ -1853,15 +1915,13 @@ export function bindCanvasInput() {
     if (drag.kind === 'entry') {
       const site = state.project.site;
       if (!site.boundary) return;
-      drag.moved = true;
-      const near = nearestPointOnPolyline(site.boundary, world, true);
-      if (near) {
-        const candidates = [near.angle + 90, near.angle - 90];
-        let dir = candidates[0];
-        const rad = (candidates[0] * Math.PI) / 180;
-        const probe = { x: near.x + Math.cos(rad) * 500, y: near.y + Math.sin(rad) * 500 };
-        if (!pointInPolygon(probe, site.boundary)) dir = candidates[1];
-        site.entry = { x: near.x, y: near.y, dir };
+      const entry = entryById(site, drag.id);
+      if (!entry) return;
+      const near = computeEntryAt(world, entry);
+      if (near && !entryOverlaps(site, { ...entry, ...near }, entry.id)) {
+        drag.moved = true;
+        Object.assign(entry, { x: near.x, y: near.y, dir: near.dir });
+        syncPrimaryEntry(site);
         requestDraw();
       }
       return;
@@ -1897,11 +1957,16 @@ export function bindCanvasInput() {
       u.y = drag.start.y + (world.y - drag.world.y);
       requestDraw();
     }
-  });
+  };
+  canvas.addEventListener('pointermove', onCanvasPointerMove);
   canvas.addEventListener('pointerup', (event) => {
     touches.delete(event.pointerId);
     if (drag?.kind === 'pinch') {
-      if (touches.size < 2) { drag = null; requestDraw(); }
+      if (touches.size < 2) {
+        drag = null;
+        state.planPinching = false;
+        requestDraw();
+      }
       return;
     }
     canvas.parentElement?.classList.remove('move-armed');
@@ -1924,8 +1989,10 @@ export function bindCanvasInput() {
       if (!drag) { requestDraw(); return; }
     }
     if (!drag) return;
+    if (drag.clickMove && !drag.placing) return;
     const finished = drag;
     drag = null;
+    if (finished.clickMove) cancelTool();
     cancelLiveDerived(finished);
     state.guides = [];
     state.gridSnapTag = null;
@@ -2079,9 +2146,12 @@ export function bindCanvasInput() {
         // Граница изменилась — въезд заново садится на неё и ориентируется
         // перпендикулярно отрезку границы (стрелка внутрь участка).
         const site = state.project.site;
-        if (site.boundary && site.entry) {
-          const spot = computeEntryAt(site.entry);
-          if (spot) { site.entry.x = spot.x; site.entry.y = spot.y; site.entry.dir = spot.dir; }
+        if (site.boundary) {
+          for (const entry of ensureSiteEntries(site)) {
+            const spot = computeEntryAt(entry, entry);
+            if (spot) Object.assign(entry, { x: spot.x, y: spot.y, dir: spot.dir });
+          }
+          syncPrimaryEntry(site);
         }
       }
       refreshDerived();
@@ -2095,6 +2165,13 @@ export function bindCanvasInput() {
   canvas.addEventListener('pointercancel', (event) => {
     touches.delete(event.pointerId);
     cancelActiveGesture();
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (state.tool?.kind === 'move-furniture' && event.target !== canvas &&
+      !event.target.closest?.('[data-selection-action="cancel-move"]')) cancelTool();
+  }, true);
+  window.addEventListener('blur', () => {
+    if (state.tool?.kind === 'move-furniture') cancelTool();
   });
   canvas.addEventListener('dblclick', (event) => {
     if (isRoofPlan()) { roofPlanDblClick(pointerScreen(event), worldToPlan(pointerWorld(event))); return; }
@@ -2142,7 +2219,9 @@ export function bindCanvasInput() {
 // незавершённый жест тем же способом, что системный pointercancel, прежде
 // чем показать блокирующее окно другого устройства.
 export function cancelActiveGesture() {
+  const furnitureSelection = drag?.clickMove ? state.selection : null;
   touches.clear();
+  state.planPinching = false;
   canvas.parentElement?.classList.remove('move-armed');
   if (drag?.kind === 'touch-hold') clearTimeout(drag.timer);
   cancelLiveDerived(drag);
@@ -2160,6 +2239,8 @@ export function cancelActiveGesture() {
   state.slabLabel = null;
   state.slabEdge = null;
   state.slabEdgeHover = null;
+  if (state.tool?.kind === 'move-furniture') cancelTool();
+  if (furnitureSelection) selectObject(furnitureSelection);
   requestDraw();
 }
 

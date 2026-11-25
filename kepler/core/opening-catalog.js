@@ -5,6 +5,7 @@
 
 import { DOOR_TYPES, WINDOW_TYPES } from './walls.js';
 import { normalizeCatalogText } from './catalog.js';
+import { isGlazedAssembly } from './glazed-openings.js';
 
 export const OPENING_CATEGORIES = {
   door: [
@@ -16,6 +17,7 @@ export const OPENING_CATEGORIES = {
   ],
   window: [
     { id: 'opening', title: 'Открывающиеся' },
+    { id: 'with-door', title: 'С дверью' },
     { id: 'fixed', title: 'Глухие и широкие' },
     { id: 'wide', title: 'Широкие' },
     { id: 'panoramic', title: 'Витражи и порталы' },
@@ -29,8 +31,21 @@ const W = (cat, id, title, type, width, height, sill, keywords = '') => ({
   heightMode: ['panoramic', 'lift-slide', 'french'].includes(type) ? 'level' : 'custom',
   frameMaterial: 'aluminum', frameColor: 'anthracite',
 });
+const G = (id, title, type, width, keywords) => ({
+  ...W('with-door', id, title, type, width, 2300, 0, keywords),
+  assembly: {
+    doorWidth: width, doorHeight: 2300, leftWindow: false, rightWindow: false,
+    leftWidth: 1200, rightWidth: 1200,
+    leftHeight: type.startsWith('balcony-') ? 1400 : 2300,
+    rightHeight: type.startsWith('balcony-') ? 1400 : 2300,
+    windowSill: type.startsWith('balcony-') ? 900 : 0,
+  },
+});
 
 export const OPENING_PRESETS = [
+  G('glazed-swing', 'Распашная', 'glazed-swing', 900, 'дверь двери распашные стеклянная витраж терраса выход'),
+  G('glazed-sliding', 'Раздвижная', 'glazed-sliding', 1800, 'дверь двери раздвижные стеклянная витраж терраса портал'),
+  G('balcony-door', 'Балконная дверь', 'balcony-swing', 900, 'балконный блок окно дверь распашная'),
   D('interior', 'door-600', 'Дверь 600', 'single', 600, 2000, 'санузел ванная туалет кладовая'),
   D('interior', 'door-700', 'Дверь 700', 'single', 700, 2000, 'санузел ванная кухня'),
   D('interior', 'door-800', 'Дверь 800', 'single', 800, 2100, 'комната спальня межкомнатная'),
@@ -96,11 +111,17 @@ export function presetToOpening(preset, levelHeight = 3000) {
   const out = {
     ...(preset.kind === 'door' || preset.id === 'corner-glazing' ? { presetId: preset.id } : {}),
     type: preset.type, width: preset.width, height: preset.height,
+    ...(isGlazedAssembly(preset) ? { assembly: { ...preset.assembly } } : {}),
     sill: preset.kind === 'door' ? 0 : preset.sill,
     ...(preset.kind === 'door' && preset.cat === 'entrance' ? { entryRole: 'main' } : {}),
   };
   const top = Math.max(600, levelHeight - 400);
   if (out.sill + out.height > top) out.height = Math.max(300, top - out.sill);
+  if (out.assembly) {
+    out.assembly.doorHeight = Math.min(out.height, out.assembly.doorHeight || out.height);
+    for (const side of ['left', 'right']) out.assembly[`${side}Height`] = Math.max(300,
+      Math.min(out.assembly[`${side}Height`], out.height - out.assembly.windowSill));
+  }
   return out;
 }
 

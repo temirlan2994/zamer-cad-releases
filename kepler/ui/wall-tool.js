@@ -7,12 +7,13 @@
 import { addManualWall, snapWallPoint, wallAxisVerdict } from '../core/wall-manual.js';
 import { createLoopRoom, findLoopAt, splitRoomByWall } from '../core/bound-rooms.js';
 import { wallClassThickness, wallRects } from '../core/walls.js';
+import { composeView } from '../core/building.js';
 import { toast } from './dom.js';
 import { gridStep } from './snap.js';
 import { massSnapPoints } from './plan-masses.js';
 import { activeGrids, gridExtentOf, gridPointTol, gridSnapPoints } from './plan-grids.js';
 import { wallCenterGuides, wallCenterSnapOpts } from './block-gesture.js';
-import { clearDrawSnap, snapAt } from './draw-snap-ui.js';
+import { clearDrawSnap, snapAt, snapSettings } from './draw-snap-ui.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
 import { cancelTool, selectObject, setHint, setTool } from './tools.js';
@@ -61,6 +62,15 @@ export function wallPointMagnet(plan, event, { prev = null, excludeId = null } =
   if (!(res.gridX || res.gridY || res.centerX || res.centerY)) return null;
   const reach = Math.max(12 / state.view.scale, gridPointTol());
   if (Math.hypot(res.point.x - plan.x, res.point.y - plan.y) > reach) return null;
+  // Магнит к осям дома не должен уводить стену с экранного направления орто.
+  if (prev && (snapSettings().ortho || event?.ctrlKey)) {
+    const angle = composeView(state.view, state.project.building).rotation || 0;
+    const dx = res.point.x - prev.x; const dy = res.point.y - prev.y;
+    const sx = dx * Math.cos(angle) - dy * Math.sin(angle);
+    const sy = dx * Math.sin(angle) + dy * Math.cos(angle);
+    if (Math.min(Math.abs(sx), Math.abs(sy)) > 1e-6) return null;
+  }
+  state.drawSnap = { ...res, prev, space: 'plan' };
   return { res, guides: [...wallGridGuides(res), ...wallCenterGuides(res)] };
 }
 
@@ -82,7 +92,7 @@ function snapped(plan, event) {
   }
   for (const wall of state.project.walls || []) shapes.push({ points: [wall.axis.a, wall.axis.b], closed: false });
   return snapAt(plan, event, {
-    prev: t.start, points: [...massSnapPoints(), ...gridSnapPoints()], extraShapes: shapes, grid: gridStep(),
+    prev: t.start, points: [...massSnapPoints(), ...gridSnapPoints()], extraShapes: shapes, grid: gridStep(), space: 'plan',
   });
 }
 

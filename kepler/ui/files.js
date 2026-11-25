@@ -145,15 +145,15 @@ export function openProjectFile(file) {
   reader.onload = async () => {
     try {
       if (request !== fileRequest || state.project !== previous) return;
-      let text = String(reader.result);
-      const raw = JSON.parse(text);
+      const raw = JSON.parse(String(reader.result));
+      let projectData = raw;
       let historyError = null;
       if (raw?.projectHistory || raw?.fileHistoryId) {
         try {
-          text = JSON.stringify(await importProjectHistory(raw, getStorageScope()));
+          projectData = await importProjectHistory(raw, getStorageScope());
         } catch (error) {
           const { projectHistory: _history, fileHistoryId: _id, ...project } = raw;
-          text = JSON.stringify(project);
+          projectData = project;
           historyError = error;
         }
       }
@@ -162,7 +162,7 @@ export function openProjectFile(file) {
       const beforePid = state.pid;
       const previousText = before ? serializeProject(state.project, { pretty: false }) : null;
       flushAutosave({ cloudImmediate: true });
-      restoreFrom(text);
+      restoreFrom(projectData);
       // Оси из файла — по порядку (автонумерация; ручные марки сохраняются).
       if (planGridPref().auto && state.project.grids?.length) state.project.grids = autoNumberGrids(state.project.grids);
       state.pid = null;

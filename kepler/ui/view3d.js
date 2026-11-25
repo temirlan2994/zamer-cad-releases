@@ -183,6 +183,9 @@ function mixHex(a, b, t) {
 
 function faceColor(face) {
   if (face.kind === 'overlay') return face.color;
+  if (face.siteEntryId && state.selection?.type === 'site' && state.selection.kind === 'entry' && state.selection.id === face.siteEntryId) {
+    return mixHex(face.color, '#66d39a', 0.58);
+  }
   if (face.landscapeId && state.selection?.type === 'landscape' && state.selection.ids?.includes(face.landscapeId)) {
     return mixHex(face.color, '#66d39a', 0.58);
   }
@@ -1214,7 +1217,7 @@ function updateHover(e) {
 
 // Выбор кликом/тапом: стена, помещение, проём, предмет (пусто — снять
 // выбор). Объект другого этажа делает его активным.
-const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing', 'slab', 'mass', 'roof', 'landscape']);
+const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing', 'slab', 'mass', 'roof', 'landscape', 'site']);
 
 function clickSelect(hit) {
   if (!wallsEditable()) return;
@@ -1229,6 +1232,7 @@ function clickSelect(hit) {
       if (hit.type === 'mass') selectObject({ type: 'mass', id: hit.id });
       else if (hit.type === 'roof') selectObject({ type: 'roof', id: hit.id });
       else if (hit.type === 'landscape') selectObject({ type: 'landscape', ids: [hit.id] });
+      else if (hit.type === 'site') selectObject({ type: 'site', kind: 'entry', id: hit.id });
       else if (hit.type === 'wall') selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
       else if (hit.type === 'slab') selectObject({ type: 'slab', levelId: hit.levelId, id: hit.id });
       else if (hit.type === 'railing') selectObject({ type: 'railing', roomId: hit.roomId, id: hit.id });

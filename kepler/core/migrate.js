@@ -105,7 +105,7 @@ export function schemaVersion(schema) {
 }
 
 // Приводит данные любой поддерживаемой версии к текущей.
-export function migrateProject(data) {
+export function migrateProject(data, { copy = true } = {}) {
   const version = schemaVersion(data?.schema);
   if (version == null || version < 1) {
     throw new Error('Это не файл проекта kep•ler 3D');
@@ -114,7 +114,7 @@ export function migrateProject(data) {
     throw new Error(`Файл создан более новой версией kep•ler 3D (формат ${version}, `
       + `здесь поддерживается до ${SCHEMA_VERSION}). Обновите приложение.`);
   }
-  let out = JSON.parse(JSON.stringify(data));
+  let out = copy ? JSON.parse(JSON.stringify(data)) : data;
   for (let v = version; v < SCHEMA_VERSION; v += 1) {
     const step = MIGRATIONS[v];
     if (!step) throw new Error(`Нет миграции формата ${v} → ${v + 1}`);

@@ -7,6 +7,7 @@ import { itemsEditable, planHitStack } from '../core/hit-stack.js';
 import { itemRect } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
 import { distanceToPolyline, polylineMidpoints } from '../core/site.js';
+import { entrySpan, siteEntries } from '../core/site-entries.js';
 import { openingRect, wallContains, wallDistance } from '../core/walls.js';
 import { roomContainsPoint } from '../core/room-shape.js';
 import { RAILING_INSET, roomRailings } from '../core/railings.js';
@@ -283,8 +284,15 @@ export function hitSiteObject(world) {
   const site = state.project.site;
   if (!site) return null;
   const tol = 9 / state.view.scale;
-  if (site.entry && Math.hypot(site.entry.x - world.x, site.entry.y - world.y) < tol + 900) {
-    return { type: 'site', kind: 'entry' };
+  for (const e of [...siteEntries(site)].reverse()) {
+    const rad = (e.dir ?? e.angle ?? 0) * Math.PI / 180;
+    const dx = world.x - e.x; const dy = world.y - e.y;
+    const along = dx * Math.sin(rad) - dy * Math.cos(rad);
+    const across = dx * Math.cos(rad) + dy * Math.sin(rad);
+    const span = entrySpan(e);
+    if (along >= span.from - tol - 120 && along <= span.to + tol + 120 && Math.abs(across) < tol + 250) {
+      return { type: 'site', kind: 'entry', id: e.id };
+    }
   }
   for (const n of site.neighbors || []) {
     // В собственных (повёрнутых) осях соседнего дома.

@@ -51,6 +51,7 @@ describe('ландшафт: выноски и ведомость растени�
     const [c] = await callouts(page);
     assert.ok(c, 'выноска создана');
     assert.equal(c.meta.text, 'Яблоня');
+    assert.equal(c.meta.targetId, tree.id, 'выноска связана с деревом');
     assert.deepEqual(c.points[0], { x: tree.x, y: tree.y }, 'указывает в центр дерева');
     assert.equal(await undoLen(page), undo0 + 1);
     const sel = await page.evaluate(() => window.__kepler.state.selection);
@@ -166,6 +167,79 @@ describe('ландшафт: выноски и ведомость растени�
     await page.keyboard.press('Control+z');
     await page.keyboard.press('Control+z');
     assert.equal(await page.evaluate(() => window.__kepler.state.project.site.landscape.plants), undefined);
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('удаление дерева убирает его изменённую выноску, отмена возвращает оба объекта', async () => {
+    const { page } = app;
+    // Проверяем связь после сохранения и открытия проекта, с изменённым
+    // текстом и перенесённым указателем из предыдущих проверок.
+    await page.evaluate(async () => {
+      const { serializeProject } = await import('./core/model.js');
+      const { restoreFrom } = await import('./ui/store.js');
+      restoreFrom(serializeProject(window.__kepler.state.project));
+    });
+    const before = await objects(page);
+    const tree = before.find((o) => o.kind === 'tree-fruit');
+    const attached = before.find((o) => o.kind === 'callout' && o.meta.targetId === tree.id);
+    const independent = before.find((o) => o.kind === 'callout' && !o.meta.targetId);
+    assert.ok(attached && independent);
+    await page.evaluate((id) => window.__kepler.select({ type: 'landscape', ids: [id] }), tree.id);
+    await blur(page);
+    const undo0 = await undoLen(page);
+    await page.keyboard.press('Delete');
+    let remaining = await objects(page);
+    assert.ok(!remaining.some((o) => o.id === tree.id || o.id === attached.id));
+    assert.ok(remaining.some((o) => o.id === independent.id), 'самостоятельная выноска сохраняется');
+    assert.equal(await undoLen(page), undo0 + 1);
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(await objects(page), before);
+    await page.keyboard.press('Control+y');
+    remaining = await objects(page);
+    assert.ok(!remaining.some((o) => o.id === tree.id || o.id === attached.id));
+    await page.keyboard.press('Control+z');
+  });
+
+  it('копия дерева и подписи получает собственную связь', async () => {
+    const { page } = app;
+    const before = await objects(page);
+    const tree = before.find((o) => o.kind === 'tree-fruit');
+    const attached = before.find((o) => o.kind === 'callout' && o.meta.targetId === tree.id);
+    await page.evaluate((ids) => window.__kepler.select({ type: 'landscape', ids }), [tree.id, attached.id]);
+    await blur(page);
+    await page.keyboard.press('Control+d');
+    const originalIds = new Set(before.map((o) => o.id));
+    const copies = (await objects(page)).filter((o) => !originalIds.has(o.id));
+    const copiedTree = copies.find((o) => o.kind === 'tree-fruit');
+    const copiedNote = copies.find((o) => o.kind === 'callout');
+    assert.equal(copiedNote.meta.targetId, copiedTree.id);
+    await page.evaluate((id) => window.__kepler.select({ type: 'landscape', ids: [id] }), copiedTree.id);
+    await page.keyboard.press('Delete');
+    const remaining = await objects(page);
+    assert.ok(!remaining.some((o) => o.id === copiedTree.id || o.id === copiedNote.id));
+    assert.ok(remaining.some((o) => o.id === tree.id) && remaining.some((o) => o.id === attached.id));
+  });
+
+  it('старая автоматическая выноска без id тоже удаляется с объектом', async () => {
+    const { page } = app;
+    const ids = await page.evaluate(async () => {
+      const { createLandscapeObject } = await import('./core/landscape.js');
+      const { mutate } = await import('./ui/store.js');
+      const { labelLandscapeSelection } = await import('./ui/landscape.js');
+      const { state } = window.__kepler;
+      const tree = createLandscapeObject('tree-pine', 18000, 7000);
+      mutate(() => state.project.site.landscape.objects.push(tree));
+      window.__kepler.select({ type: 'landscape', ids: [tree.id] });
+      const [note] = labelLandscapeSelection();
+      mutate(() => { delete note.meta.targetId; });
+      window.__kepler.select({ type: 'landscape', ids: [tree.id] });
+      return [tree.id, note.id];
+    });
+    await blur(page);
+    await page.keyboard.press('Delete');
+    assert.ok(!(await objects(page)).some((o) => ids.includes(o.id)));
+    await page.keyboard.press('Control+z');
+    assert.equal((await objects(page)).filter((o) => ids.includes(o.id)).length, 2);
     assert.deepEqual(app.errors, []);
   });
 });

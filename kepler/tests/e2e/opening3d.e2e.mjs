@@ -338,6 +338,41 @@ describe('3D: создание окон и дверей, межэтажная п
     assert.equal(await page.evaluate(() => window.__kepler.state.project.openings[0].height), 2000);
   });
 
+  it('балконная дверь ставится в 3D без боковых окон и сразу открывает их настройки', async () => {
+    const { page } = app;
+    await page.evaluate(async () => {
+      const { mutate } = await import('./ui/store.js');
+      const { switchLevel } = await import('./ui/levels.js');
+      const { cancelTool, selectObject } = await import('./ui/tools.js');
+      cancelTool(); selectObject(null);
+      mutate(() => { window.__kepler.state.project.levels.find((l) => l.id === 'L2').openings = []; });
+      switchLevel('L2', { planView: false });
+    });
+    await clickToolbarTool(page, 'windowToolBtn');
+    await page.click('#openingCats [data-cat="with-door"]');
+    await page.click('#openingItems [data-preset="balcony-door"]');
+    const at = await wallPoint(page);
+    assert.ok(at);
+    await page.mouse.move(at.x, at.y, { steps: 5 });
+    const ghost = (await d3(page)).openingTool;
+    assert.equal(ghost.valid, true);
+    assert.deepEqual([ghost.opening.width, ghost.opening.height, ghost.opening.sill], [900, 2300, 0]);
+    await page.mouse.click(at.x, at.y);
+    const [door] = await upperOpenings(page);
+    assert.ok(door);
+    assert.deepEqual(await page.evaluate(() => {
+      const s = window.__kepler.state;
+      return [s.tool, s.selection?.id];
+    }), [null, door.id]);
+    assert.equal(await page.locator('#openWindowLeft').isChecked(), false);
+    assert.equal(await page.locator('#openWindowRight').isChecked(), false);
+    await page.check('#openWindowRight');
+    const [withWindow] = await upperOpenings(page);
+    assert.equal(withWindow.assembly.rightWindow, true);
+    assert.equal(withWindow.assembly.doorWidth, 900);
+    assert.equal(withWindow.assembly.doorHeight, 2300);
+  });
+
   it('без ошибок в консоли', () => {
     assert.deepEqual(app.errors, []);
   });

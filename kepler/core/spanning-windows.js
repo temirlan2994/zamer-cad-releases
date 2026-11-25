@@ -1,6 +1,7 @@
 // Двухэтажный витраж хранится на нижнем этаже как один проём. Для верхнего
 // этажа по геометрии находим вторую стену. Высоты — мм от пола нижнего этажа.
 import { cornerWindowProjections } from './corner-windows.js';
+import { glazedOpeningProjections } from './glazed-openings.js';
 import { activeLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
 import { openingSill } from './opening-preset.js';
 import { fitOpeningOffset } from './opening-spacing.js';
@@ -129,8 +130,8 @@ export function windowSpanTop(project, levelId, opening) {
 export function levelWindowOpenings(project, walls = null) {
   const current = project.levels?.length ? activeLevel(project) : null;
   const stored = current?.openings || project.openings || [];
-  const originals = !walls && stored.some((o) => o.corner)
-    ? cornerWindowProjections(project, stored, deriveWalls(project)) : cornerWindowProjections(project, stored, walls);
+  const originals = glazedOpeningProjections(!walls && stored.some((o) => o.corner)
+    ? cornerWindowProjections(project, stored, deriveWalls(project)) : cornerWindowProjections(project, stored, walls));
   if (!current || project.levels.length < 2) return originals;
   const levels = sortedLevels(project);
   const below = levels[levels.indexOf(current) - 1];

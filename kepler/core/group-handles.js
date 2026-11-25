@@ -18,7 +18,7 @@ export const GROUP_ITEM_MIN = 100; // минимальная сторона пр
 
 // Группа мебели: множественный выбор без комнат, не меньше двух предметов.
 export function isItemGroup(selection) {
-  return selection?.type === 'multi' && !(selection.roomIds || []).length && (selection.itemIds || []).length >= 2;
+  return selection?.type === 'multi' && !(selection.roomIds || []).length && !(selection.wallIds || []).length && (selection.itemIds || []).length >= 2;
 }
 
 // Ключ режима ручек группы (state.itemHandle.id) — по составу выбора.

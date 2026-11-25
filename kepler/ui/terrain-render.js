@@ -29,17 +29,6 @@ export function terrainColors(canvasColor) {
   return lum(canvasColor) < 0.4 ? DARK : LIGHT;
 }
 
-// Слой под объектами токенов не получает: тему берём у документа, но только
-// для холста на странице (листы печати рисуются на отдельном холсте — светлые).
-function underColors(ctx) {
-  try {
-    if (!ctx.canvas?.isConnected || typeof getComputedStyle === 'undefined') return LIGHT;
-    return terrainColors(getComputedStyle(document.documentElement).getPropertyValue('--canvas'));
-  } catch {
-    return LIGHT;
-  }
-}
-
 // Гипсометрическая шкала: низ — зелёный, середина — жёлтый, верх — коричневый.
 const HYPSO = [[0x6f, 0xb2, 0x6a], [0xe6, 0xd8, 0x7a], [0xb0, 0x73, 0x3e]];
 function hypso(t) {
@@ -51,7 +40,7 @@ function hypso(t) {
 }
 
 // Слой под объектами участка (мировые координаты, transform уже задан).
-export function drawTerrainUnder(ctx, state, site, px) {
+export function drawTerrainUnder(ctx, state, site, px, canvasColor) {
   const terrain = site?.terrain;
   if (!terrain?.points?.length) return;
   const model = terrainModel(terrain);
@@ -61,7 +50,7 @@ export function drawTerrainUnder(ctx, state, site, px) {
   if (show.shade && inSite) drawShade(ctx, model, px);
   if (show.contours) {
     ctx.save();
-    ctx.strokeStyle = underColors(ctx).contour;
+    ctx.strokeStyle = terrainColors(canvasColor).contour;
     ctx.lineJoin = 'round';
     for (const level of contours(model, terrain.contourStep)) {
       ctx.globalAlpha = (inSite ? 1 : 0.45) * (level.major ? 0.85 : 0.5);

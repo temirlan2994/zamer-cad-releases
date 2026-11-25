@@ -15,6 +15,7 @@ import { furnitureIssues } from './clearance.js';
 import { insolationReport } from './insolation.js';
 import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
 import { levelWindowOpenings } from './spanning-windows.js';
+import { isGlazing } from './glazed-openings.js';
 import { openingHeight } from './opening-preset.js';
 import { roomContainsPoint, roomRects } from './room-shape.js';
 import { roomNetAreaM2 } from './rooms.js';
@@ -70,10 +71,10 @@ function bathroomMinWidth(project, room) {
 }
 
 const windowGlass = (project, roomId, walls, openings) => {
-  const hosted = openings.some((o) => o.kind === 'window' && o.host);
+  const hosted = openings.some((o) => isGlazing(o) && o.host);
   const w = hosted ? (walls || deriveWalls(project)) : null;
   return openings
-    .filter((o) => o.kind === 'window' && (o.host ? openingOwnerId(project, o, w) : o.roomId) === roomId)
+    .filter((o) => isGlazing(o) && (o.host ? openingOwnerId(project, o, w) : o.roomId) === roomId)
     .reduce((s, o) => s + (o.width * openingHeight(o, project.levels?.find((l) => l.id === project.activeLevel))) / 1e6, 0);
 };
 
@@ -207,7 +208,9 @@ export function normsReport(project, options = {}) {
     }
     const levelOverlaps = on('geometry') ? roomOverlaps(lp) : [];
     const verdicts = levelOverlaps.length ? overlapVerdicts(lp, levelOverlaps) : new Map();
-    const crossed = on('geometry') ? wallsInsideRooms(lp) : [];
+    // Короткая перегородка внутри комнаты допустима. Подсказка разделения
+    // нужна, когда стена действительно разбивает блок на два помещения.
+    const crossed = on('geometry') ? wallsInsideRooms(lp).filter((wall) => wall.divides) : [];
     // Не фильтруем два общих массива заново для каждой комнаты. На плане с
     // множеством пересечений прежний цикл мог снова вырасти почти до O(n³).
     const crossedByRoom = new Map();
@@ -232,8 +235,8 @@ export function normsReport(project, options = {}) {
       for (const c of crossedByRoom.get(room.id) || []) {
         checks.push({
           kind: 'wall-divides', ok: false, wallId: c.wallId,
-          text: c.divides ? `Стена делит помещение «${room.name}»` : `Стена внутри помещения «${room.name}»`,
-          split: c.divides ? { roomId: room.id, wallId: c.wallId, label: `Разделить «${room.name}» на два` } : null,
+          text: `Стена делит помещение «${room.name}»`,
+          split: { roomId: room.id, wallId: c.wallId, label: `Разделить «${room.name}» на два` },
         });
       }
       for (const f of on('furniture') ? furnitureIssues(lp, room, walls) : []) {

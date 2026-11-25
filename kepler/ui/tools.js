@@ -16,11 +16,14 @@ import { clearDrawSnap } from './draw-snap-ui.js';
 import { groupHandleId } from '../core/group-handles.js';
 import { lsHandleKey } from '../core/landscape-handles.js';
 import { isRoofPlan } from './plan-roofs.js';
+import { cancelEditingGesture } from './edit-guard.js';
+import { isGlazedAssembly } from '../core/glazed-openings.js';
 
 export function selectObject(selection) {
   // Касание: выбор откладывается до тапа (ui/input.js), чтобы панорама пальцем
   // ничего не выделяла.
   if (state.touchDeferSelect) { state.touchDeferred = { selection }; return; }
+  if (state.tool?.kind === 'move-furniture') cancelTool();
   const split = state.splitEdit;
   if (split && (selection?.type !== 'wall' || selection.key !== split.key ||
     Math.abs((selection.from ?? split.from) - split.from) >= 1)) hideSplitInput();
@@ -56,6 +59,7 @@ export function setHint(text) {
 }
 
 export function setTool(tool, hint) {
+  if (state.tool?.kind === 'move-furniture') cancelTool();
   const profile = el('lsRouteProfile');
   if (profile) profile.hidden = true;
   // Инструмент плана этажа на «Плане крыши» — назад к плану этажа.
@@ -81,6 +85,12 @@ export function setTool(tool, hint) {
 }
 
 export function cancelTool() {
+  if (state.tool?.kind === 'move-furniture') {
+    // Убираем инструмент до отката: restoreFrom может обновить интерфейс.
+    state.tool = null;
+    cancelEditingGesture();
+    canvas.style.cursor = '';
+  }
   const profile = el('lsRouteProfile');
   if (profile) profile.hidden = true;
   const wasOpening = state.tool?.kind === 'place-opening';
@@ -113,6 +123,19 @@ export function cancelTool() {
   requestDraw();
 }
 
+export function startFurnitureMove() {
+  if (state.editLocked || state.modeName !== 'plan') return;
+  const sel = state.selection;
+  const ids = sel?.type === 'item' ? [sel.id]
+    : sel?.type === 'multi' && !sel.roomIds?.length && !sel.wallIds?.length ? sel.itemIds : [];
+  if (!ids.length || ids.some((id) => !state.project.items.some((item) => item.id === id))) return;
+  state.itemHandle = null;
+  closeLibrarySheet();
+  setTool({ kind: 'move-furniture', itemIds: [...ids], stage: 'pick' },
+    'Нажмите на мебель в точке захвата, затем нажмите в новом месте · Esc — отмена');
+  canvas.style.cursor = 'crosshair';
+}
+
 export function startPlaceRoom(type) {
   closeLibrarySheet(); // телефон: освободить план для касания
   setTool({ kind: 'place-room', type, rotation: 0 }, `Кликните на плане, чтобы разместить «${roomType(type).title}» — помещение встанет по текущему повороту вида · Пробел — повернуть · Esc — отмена`);
@@ -121,10 +144,11 @@ export function startPlaceRoom(type) {
 }
 
 export function openingPlacementHint(tool) {
+  if (isGlazedAssembly(tool.preset)) return 'Поставьте дверь на стену. Окна слева и справа включаются в свойствах.';
   if (tool.preset?.presetId === 'corner-glazing') return 'Нажмите на наружную стену у нужного угла, чтобы поставить оба крыла витража';
   return tool.openKind === 'door'
     ? 'Кликайте по стенам — можно ставить несколько дверей · Пробел — петли / направление · Esc — выход'
-    : 'Кликайте по наружным стенам — можно ставить несколько окон · Esc — выход';
+    : 'Кликайте по стенам и перегородкам — можно ставить несколько окон · Esc — выход';
 }
 
 export function startPlaceOpening(openKind, presetWall = null) {
@@ -162,7 +186,7 @@ export function rotatePlacementPreview() {
       rect.x = cx - rect.w / 2;
       rect.y = cy - rect.h / 2;
     }
-  } else if (tool.kind === 'place-opening' && tool.openKind === 'door') {
+  } else if (tool.kind === 'place-opening' && (tool.openKind === 'door' || isGlazedAssembly(tool.preset))) {
     // Пробел — только петли слева/справа; сторона открывания идёт за курсором.
     tool.hingeStart = tool.hingeStart === false;
     if (state.ghostDoor) state.ghostDoor.hingeStart = tool.hingeStart;
@@ -194,7 +218,7 @@ export function activeSiteLayer() {
   const t = state.tool;
   if (!t) return null;
   if (t.kind === 'underlay-edit') return 'underlay';
-  if (t.kind === 'entry') return 'entry';
+  if (t.kind === 'entry') return t.entryKind === 'wicket' ? 'wicket' : 'entry';
   if (t.kind === 'neighbor') return 'neighbor';
   if (t.kind === 'terrain') return 'terrain';
   if (t.kind === 'draw' || t.kind === 'edit') return t.target;

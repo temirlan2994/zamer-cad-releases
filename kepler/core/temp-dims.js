@@ -1,12 +1,13 @@
-// Временные размеры выбранного предмета мебели (как в Revit). Чистый модуль
-// без DOM: от граней предмета по осям дома (влево/вправо/вверх/вниз) — до
+// Временные размеры выбранного предмета или группы мебели. Чистый модуль
+// без DOM: от граней общей рамки по осям дома (влево/вправо/вверх/вниз) — до
 // ближайшей цели, «видимой» лучом из края: внутренней грани стены комнаты,
 // внешнего габарита вложенного помещения или другой мебели этой комнаты.
 //
 // Повёрнутый предмет берётся по описывающему габариту в осях дома
 // (itemBounds; у стола со стульями — вместе со стульями).
 
-import { itemBounds, itemShapes } from './clearance.js';
+import { itemShapes } from './clearance.js';
+import { groupBounds, groupCenter } from './group-handles.js';
 import { itemsInRoom } from './furnish.js';
 import { nestedOuterRect } from './rooms.js';
 import { roomContainsPoint, roomPolygon } from './room-shape.js';
@@ -27,7 +28,7 @@ export function itemRoom(project, item) {
 
 // Препятствия в осях дома: отрезки {orient:'h'|'v', edge, from, to, kind}.
 // Прямоугольник даёт четыре отрезка — луч найдёт ближнюю к предмету грань.
-function obstacles(project, room, item) {
+function obstacles(project, room, items) {
   const out = [];
   const poly = roomPolygon(room);
   for (let i = 0; i < poly.length; i += 1) {
@@ -49,24 +50,29 @@ function obstacles(project, room, item) {
   for (const child of project.rooms) {
     if (child.parentId === room.id) pushRect(nestedOuterRect(child, partition), 'room', child.id);
   }
+  const selected = new Set(items.map((item) => item.id));
   for (const other of itemsInRoom(project, room)) {
-    if (other.id === item.id) continue;
+    if (selected.has(other.id)) continue;
     for (const r of itemShapes(other)) pushRect(r, 'item', other.id);
   }
   return out;
 }
 
 // Размеры: [{ dir, from, to, value, targetKind, targetId }] — from на грани
-// предмета, to на цели (оси дома, мм). Нулевые (вплотную) не возвращаются,
+// предмета или группы, to на цели (оси дома, мм). Нулевые (вплотную) не возвращаются,
 // кроме opts.keepZero.
 export function tempDimensions(project, item, { maxDist = TEMP_DIM_MAX, keepZero = false } = {}) {
   if (!project || !item) return [];
-  const room = itemRoom(project, item);
-  if (!room) return [];
-  const box = itemBounds(item);
+  // Массив предметов измеряется по общей рамке. Члены выбранной группы
+  // не становятся препятствиями друг для друга.
+  const items = Array.isArray(item) ? item : [item];
+  if (!items.length) return [];
+  const room = itemRoom(project, items[0]);
+  if (!room || items.some((member) => itemRoom(project, member)?.id !== room.id)) return [];
+  const box = groupBounds(items);
   const x0 = box.x; const x1 = box.x + box.w;
   const y0 = box.y; const y1 = box.y + box.h;
-  const obs = obstacles(project, room, item);
+  const obs = obstacles(project, room, items);
   const result = [];
   for (const dir of TEMP_DIM_DIRS) {
     const horizontal = dir === 'left' || dir === 'right';
@@ -101,11 +107,12 @@ export function tempDimensions(project, item, { maxDist = TEMP_DIM_MAX, keepZero
 // Новое положение центра, при котором расстояние в сторону dim.dir станет value.
 // dim — элемент tempDimensions (нужны dir и текущее value). Размер не меняется.
 export function moveItemToDistance(item, dim, value) {
+  const center = Array.isArray(item) ? groupCenter(groupBounds(item)) : item;
   const delta = dim.value - value; // > 0 — ближе к цели
-  if (dim.dir === 'right') return { x: item.x + delta, y: item.y };
-  if (dim.dir === 'left') return { x: item.x - delta, y: item.y };
-  if (dim.dir === 'down') return { x: item.x, y: item.y + delta };
-  return { x: item.x, y: item.y - delta };
+  if (dim.dir === 'right') return { x: center.x + delta, y: center.y };
+  if (dim.dir === 'left') return { x: center.x - delta, y: center.y };
+  if (dim.dir === 'down') return { x: center.x, y: center.y + delta };
+  return { x: center.x, y: center.y - delta };
 }
 
 // Проверка ввода: предмет не должен войти в цель или упереться в препятствие

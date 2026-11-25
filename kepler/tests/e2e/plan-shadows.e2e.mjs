@@ -4,7 +4,7 @@
 // пока тянут комнату — тени нет; «Отображение» и «Освещение» — у каждого вида свои.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample } from './helpers.mjs';
+import { startApp, openSample, openNew, settleView } from './helpers.mjs';
 
 // Средняя яркость 5×5 точек холста в точке плана (мм, оси дома) — после
 // синхронной перерисовки.
@@ -150,6 +150,48 @@ describe('тени на плане', () => {
     assert.equal(await page.isChecked('input[name="viewsRooms"][value="color"]'), true);
     assert.equal(await page.isChecked('#viewsSunShadow'), true);
     await page.evaluate(() => window.__kepler.setEditorMode('plan'));
+    assert.deepEqual(app.errors, []);
+  });
+});
+
+describe('стыки стен с тенями', () => {
+  let app;
+  before(async () => {
+    app = await startApp({ planShadows: true });
+    await openNew(app.page);
+    await app.page.evaluate(async () => {
+      const { createRoom } = await import('./core/model.js');
+      const { mutate } = await import('./ui/store.js');
+      mutate(() => {
+        const p = window.__kepler.state.project;
+        p.settings.autoArrangeFurniture = false;
+        p.rooms = [createRoom('bedroom', 0, 0, 5400, 4650), createRoom('bedroom', 5500, 0, 5400, 4650)];
+        p.items = []; p.openings = [];
+      });
+      window.__kepler.fitView();
+    });
+    await settleView(app.page);
+    await app.page.evaluate(() => {
+      // Крупный масштаб: проба 5×5 пикселей целиком внутри перегородки 100 мм.
+      const st = window.__kepler.state;
+      st.view.scale = 0.15;
+      st.view.panX = document.getElementById('canvas').clientWidth / 2 - 2750 * st.view.scale;
+      st.view.panY = 150;
+    });
+  });
+  after(async () => { await app?.close(); });
+
+  it('тени не рисуют швы между наружными стенами и поперёк Т-стыка', async () => {
+    const { page } = app;
+    const points = [[5500, -125], [5450, 0], [-125, 0]];
+    await setOn(page, false);
+    const off = await Promise.all(points.map(([x, y]) => lum(page, x, y)));
+    await setOn(page, true);
+    const on = await Promise.all(points.map(([x, y]) => lum(page, x, y)));
+    if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/wall-junction-shadows.png` });
+    for (let i = 0; i < points.length; i += 1) {
+      assert.ok(Math.abs(on[i] - off[i]) <= 2, `${points[i]}: яркость стены ${off[i].toFixed(1)} → ${on[i].toFixed(1)}`);
+    }
     assert.deepEqual(app.errors, []);
   });
 });

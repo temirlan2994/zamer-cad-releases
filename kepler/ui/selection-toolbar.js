@@ -18,6 +18,7 @@ import { activeGrids } from './plan-grids.js';
 import { wallPins } from '../core/grid-pins.js';
 import { visibleRoofById } from './plan-roofs.js';
 import { allMasses } from '../core/masses.js';
+import { glazedAssemblySpec } from '../core/glazed-openings.js';
 
 const button = (action, icon, text, key = '', extra = '') => `
   <button type="button" data-selection-action="${action}" ${extra} title="${escapeHtml(text)}${key ? ` (${key})` : ''}">
@@ -94,15 +95,13 @@ function contentForSelection(sel) {
           ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
       };
     }
-    const room = roomById(state.project, wall.rooms[0]);
     const canSplit = wall.kind === 'own' || wall.kind === 'shared'; // общая — в обеих комнатах
-    const canWindow = wall.kind !== 'shared' && !room?.parentId;
     return {
       label: 'Стена',
       html: `${button('split-wall', '⌜', 'Разделить', '', canSplit ? '' : 'disabled')}
         ${button('hide-wall', wall.hidden ? '▣' : '◫', wall.hidden ? 'Показать стену' : 'Скрыть стену')}
         ${button('add-door', '◱', 'Дверь')}
-        ${button('add-window', '▦', 'Окно', '', canWindow ? '' : 'disabled')}
+        ${button('add-window', '▦', 'Окно')}
         ${gridPinButton(wall)}`,
     };
   }
@@ -144,9 +143,10 @@ function contentForSelection(sel) {
     const opening = state.project.openings.find((candidate) => candidate.id === sel.id);
     if (!opening) return null;
     const door = opening.kind === 'door';
-    const canFlip = door && ['single', 'double', undefined].includes(opening.type);
+    const assembly = glazedAssemblySpec(opening);
+    const canFlip = (door && ['single', 'double', undefined].includes(opening.type)) || (assembly && assembly.doorType !== 'sliding');
     return {
-      label: door ? 'Дверь' : 'Окно',
+      label: assembly ? assembly.leftWindow || assembly.rightWindow ? 'Дверь с окнами' : 'Дверь' : door ? 'Дверь' : 'Окно',
       html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}
         ${canFlip ? button('flip-hinge', '⇆', 'Петли') + button('flip-swing', '↷', 'Открывание') : ''}
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
@@ -159,26 +159,26 @@ function contentForSelection(sel) {
     const stair = item.kind === 'stairs' ? button('reverse-stair', '↕', 'Развернуть подъём') : '';
     return {
       label: item.kind === 'stairs' ? 'Лестница' : 'Мебель',
-      html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}
+      html: `${button('move-furniture', '✥', 'Переместить')}${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}
         ${button('rotate', '↻', 'Повернуть 90°', 'R')}${mirror}${stair}
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
   if (sel.type === 'multi') {
     const items = sel.itemIds.map((id) => state.project.items.find((candidate) => candidate.id === id)).filter(Boolean);
-    const onlyItems = items.length > 0 && sel.roomIds.length === 0;
+    const onlyItems = items.length > 0 && sel.roomIds.length === 0 && !sel.wallIds?.length;
     const groups = new Set(items.map((item) => item.group).filter(Boolean));
     const grouped = items.length >= 2 && groups.size === 1 && items.every((item) => item.group);
     const canMirror = onlyItems && items.every(itemCanMirror);
     // Группа с помещениями: копия, поворот вокруг центра группы, удаление.
-    const canMove = onlyItems || sel.roomIds.length > 0;
-    const gap = sel.roomIds.length === 2 && !sel.itemIds.length ? gapOfSelection(sel) : null;
+    const canMove = onlyItems || sel.roomIds.length > 0 || sel.wallIds?.length > 0;
+    const gap = sel.roomIds.length === 2 && !sel.itemIds.length && !sel.wallIds?.length ? gapOfSelection(sel) : null;
     if (gap) {
       return { label: `Зазор ${Math.round(gap.gap)} мм (нужно ${gap.target})`, html: gapButtons(gap) };
     }
     return {
-      label: `Выбрано: ${sel.roomIds.length + sel.itemIds.length}`,
-      html: `${canMove ? button('duplicate', '⧉', 'Копировать', 'Ctrl+D') : ''}
+      label: `Выбрано: ${sel.roomIds.length + sel.itemIds.length + (sel.wallIds?.length || 0)}`,
+      html: `${onlyItems ? button('move-furniture', '✥', 'Переместить') : ''}${canMove ? button('duplicate', '⧉', 'Копировать', 'Ctrl+D') : ''}
         ${canMove ? button('rotate', '↻', 'Повернуть 90°', 'R') : ''}
         ${onlyItems ? button('mirror', '⇋', 'Зеркально', 'M', canMirror ? '' : 'disabled') : ''}
         ${items.length >= 2 ? button(grouped ? 'ungroup' : 'group', grouped ? '⊘' : '⊞', grouped ? 'Разгруппировать' : 'Сгруппировать') : ''}
@@ -237,6 +237,12 @@ export function renderSelectionToolbar() {
   const panel = el('selectionToolbar');
   if (!panel) return;
   if (state.tool?.kind !== 'atrium') el('atriumPanel').hidden = true;
+  if (state.tool?.kind === 'move-furniture') {
+    panel.innerHTML = `<span class="selection-toolbar-label">${state.tool.stage === 'pick' ? 'Нажмите на мебель' : 'Укажите новое место'}</span>
+      ${button('cancel-move', '×', 'Отмена', 'Esc')}`;
+    panel.hidden = false;
+    return;
+  }
   const content = state.selection && !state.tool ? contentForSelection(state.selection) : null;
   if (!content) { panel.hidden = true; panel.innerHTML = ''; return; }
   panel.innerHTML = `<span class="selection-toolbar-label" title="${escapeHtml(content.label)}">${escapeHtml(content.label)}</span>
@@ -253,6 +259,11 @@ export function bindSelectionToolbar() {
     const target = event.target.closest('[data-selection-action]');
     if (!target || target.disabled) return;
     const action = target.dataset.selectionAction;
+    if (action === 'move-furniture' || action === 'cancel-move') {
+      const tools = await toolsReady;
+      if (action === 'move-furniture') tools.startFurnitureMove(); else tools.cancelTool();
+      return;
+    }
     if (state.selection?.type === 'landscape') {
       const ls = await import('./landscape.js');
       if (action === 'duplicate') ls.duplicateLandscapeSelection();

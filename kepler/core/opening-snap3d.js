@@ -6,6 +6,7 @@
 import { levelProject } from './model.js';
 import { cornerWindowProjections } from './corner-windows.js';
 import { openingHeight, openingSill } from './opening-preset.js';
+import { isGlazedAssembly } from './glazed-openings.js';
 import { windowSpanTop } from './spanning-windows.js';
 import { deriveWalls, hostOpeningRoom, openingRect } from './walls.js';
 
@@ -116,7 +117,7 @@ export function snapOpeningToLower(opening, center, targets, tolerance = 200) {
   });
   if (!best) return { opening, center, snapped: false, label: '' };
   const target = best.target;
-  const sameKind = target.kind === opening.kind;
+  const sameKind = target.kind === opening.kind && !isGlazedAssembly(opening);
   const next = sameKind ? {
     ...opening,
     width: target.width,

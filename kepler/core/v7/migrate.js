@@ -174,8 +174,8 @@ export function migrateLevel(l, settings, warnings = []) {
 }
 
 // v6-проект (объект после projectFromData / createProject) → v7.
-export function fromV6(project, { warnings = [] } = {}) {
-  const src = JSON.parse(JSON.stringify({ ...project, levels: project.levels }));
+export function fromV6(project, { warnings = [], copy = true } = {}) {
+  const src = copy ? JSON.parse(JSON.stringify({ ...project, levels: project.levels })) : project;
   const { wallsEngine: _e, ...settings } = src.settings || {};
   return {
     schema: SCHEMA7,

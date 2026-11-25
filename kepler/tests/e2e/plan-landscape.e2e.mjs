@@ -75,6 +75,56 @@ describe('ландшафт на плане этажа', () => {
     assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'plan');
   });
 
+  it('повторно использует ландшафт при сдвиге камеры и обновляет его после правки', async () => {
+    const { page } = app;
+    const originalPan = await page.evaluate(() => window.__kepler.state.view.panX);
+    let moved = false;
+    try {
+      const builds = await page.evaluate(async () => {
+        const { renderer } = await import('./ui/dom.js');
+        const { state } = window.__kepler;
+        const transfer = OffscreenCanvas.prototype.transferToImageBitmap;
+        let count = 0;
+        OffscreenCanvas.prototype.transferToImageBitmap = function () {
+          count += 1;
+          return transfer.call(this);
+        };
+        try {
+          state.drawingRevision += 1;
+          renderer.draw(state);
+          const warm = count;
+          state.view.panX -= 36;
+          renderer.draw(state);
+          return { warm, afterPan: count };
+        } finally {
+          OffscreenCanvas.prototype.transferToImageBitmap = transfer;
+        }
+      });
+      assert.deepEqual(builds, { warm: 1, afterPan: 1 });
+      const panned = await pixel(page, TREE_AT);
+      await page.evaluate(async () => {
+        window.__kepler.state.drawingRevision += 1;
+        (await import('./ui/view.js')).requestDraw();
+      });
+      const rebuilt = await pixel(page, TREE_AT);
+      assert.ok(diff(panned, rebuilt) <= 3, `фон совпадает со свежей отрисовкой ${panned} / ${rebuilt}`);
+      await page.evaluate(async () => {
+        const { mutate } = await import('./ui/store.js');
+        mutate(() => { window.__kepler.state.project.site.landscape.objects.find((o) => o.kind === 'tree-pine').y += 6000; });
+      });
+      moved = true;
+      const cleared = await pixel(page, TREE_AT);
+      assert.ok(diff(cleared, rebuilt) > 12, `старый след дерева очищается ${cleared} / ${rebuilt}`);
+    } finally {
+      await page.evaluate(async ({ moved, originalPan }) => {
+        if (moved) (await import('./ui/store.js')).undo();
+        window.__kepler.state.view.panX = originalPan;
+        (await import('./ui/view.js')).requestDraw();
+      }, { moved, originalPan });
+    }
+    assert.ok(diff(await pixel(page, TREE_AT), bare.tree) > 12, 'отмена возвращает дерево');
+  });
+
   it('«Свойства» вида (ничего не выбрано): переключатель, группы и «Только планировки»', async () => {
     const { page } = app;
     await page.click('#propsTabMain');

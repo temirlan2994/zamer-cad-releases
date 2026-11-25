@@ -95,6 +95,27 @@ describe('привязки в правом нижнем углу — компь�
     assert.equal(await page.isHidden('#snapTip-ortho'), true);
   });
 
+  it('подсказка привязки видна поверх нижней палитры', async () => {
+    const { page } = app;
+    await page.hover('#snapBar [data-snap="ortho"]');
+    const result = await page.evaluate(() => {
+      const tip = document.getElementById('snapTip-ortho');
+      const t = tip.getBoundingClientRect();
+      const r = document.querySelector('#projectRoute .project-route-bar').getBoundingClientRect();
+      const left = Math.max(t.left, r.left); const right = Math.min(t.right, r.right);
+      const top = Math.max(t.top, r.top); const bottom = Math.min(t.bottom, r.bottom);
+      // Временно разрешаем hit-test подсказки, чтобы проверить фактический
+      // порядок слоёв в зоне пересечения с палитрой.
+      tip.style.pointerEvents = 'auto';
+      try {
+        return { overlaps: left < right && top < bottom, onTop: tip.contains(document.elementFromPoint((left + right) / 2, (top + bottom) / 2)) };
+      } finally { tip.style.removeProperty('pointer-events'); }
+    });
+    assert.ok(result.overlaps, 'проверяем пересекающиеся элементы');
+    assert.ok(result.onTop, 'текст подсказки поверх палитры');
+    await page.mouse.move(5, 5);
+  });
+
   it('в правом нижнем углу: вплотную слева от масштаба, под зумом, не перекрывает этажи', async () => {
     const { page } = app;
     const [pill, levels, zoom, canvas, scale] = await Promise.all(['#snapBar', '#levelDock', '.zoom-controls', '#canvas', '#scaleInfo'].map((s) => box(page, s)));

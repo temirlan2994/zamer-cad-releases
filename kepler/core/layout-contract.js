@@ -189,7 +189,7 @@ function openingRecord(project, opening, walls, level) {
   const height = openingHeight(opening, level);
   const sill = openingSill(opening, level);
   const result = {
-    id: opening.id,
+    id: opening.assemblyPart ? `${opening.id}-${opening.assemblyPart}` : opening.id,
     kind: type,
     room_ids: unique([...openingRooms(project, opening, walls), ...(opening.spanPart ? [opening.spanTargetRoomId] : [])]),
     clear_width_mm: opening.width ?? null,

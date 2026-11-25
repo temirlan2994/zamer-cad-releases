@@ -997,7 +997,7 @@ export function deleteLandscapeSelection() {
   const own = editable(all).map((o) => o.id);
   if (!own.length) { toast('Объект закреплён — снимите замок в свойствах'); return; }
   // Короб удаляется вместе с растениями внутри.
-  const gone = withChildren(landscapeObjects(), own);
+  const gone = withCallouts(landscapeObjects(), withChildren(landscapeObjects(), own));
   mutate(() => {
     const site = state.project.site;
     site.landscape.objects = landscapeObjects().filter((o) => !gone.has(o.id));
@@ -1076,7 +1076,7 @@ export function explodeLandscapeSelection() {
   if (!targets.length) { toast('Разорвать можно дорожку (плиты, настил, брусчатку, гравий, бетон)'); return []; }
   const parts = targets.map((o) => ({ o, res: explodePath(o) })).filter((x) => x.res?.objects.length);
   if (!parts.length) { toast('Дорожка слишком короткая — нечего разрывать'); return []; }
-  const gone = new Set(parts.map((x) => x.o.id));
+  const gone = withCallouts(landscapeObjects(), new Set(parts.map((x) => x.o.id)));
   const added = parts.flatMap((x) => x.res.objects);
   mutate(() => {
     const site = state.project.site;
@@ -1173,6 +1173,28 @@ function anchorOf(o) {
   return { x: o.x, y: o.y };
 }
 
+// Старые автоматические подписи не хранили id объекта. Сопоставляем их
+// только при единственном совпадении текста и исходной точки указания.
+function withCallouts(objects, ids) {
+  const targets = objects.filter((o) => o.kind !== 'callout');
+  for (const note of objects) {
+    if (note.kind !== 'callout') continue;
+    let targetId = note.meta?.targetId;
+    if (targetId === undefined) {
+      const anchor = note.points?.[0];
+      if (!anchor) continue;
+      const matches = targets.filter((o) => {
+        const at = anchorOf(o);
+        return Math.hypot(at.x - anchor.x, at.y - anchor.y) < 1
+          && note.meta?.text === calloutTextFor(o);
+      });
+      if (matches.length === 1) targetId = matches[0].id;
+    }
+    if (ids.has(targetId)) ids.add(note.id);
+  }
+  return ids;
+}
+
 // «Подписать» (T): выноска к каждому выделенному объекту, одним шагом
 // истории; новые выноски выделяются (текст — правится в панели).
 export function labelLandscapeSelection() {
@@ -1188,7 +1210,9 @@ export function labelLandscapeSelection() {
     const dy = -Math.max(1200, Math.min(6000, box.h * 0.5 + 700));
     const ex = a.x + dx * Math.cos(t) - dy * Math.sin(t);
     const ey = a.y + dx * Math.sin(t) + dy * Math.cos(t);
-    return createLandscapeObject('callout', snap(ex), snap(ey), { points: [a], rotation: deg, meta: { text: calloutTextFor(o) } });
+    return createLandscapeObject('callout', snap(ex), snap(ey), {
+      points: [a], rotation: deg, meta: { text: calloutTextFor(o), targetId: o.id },
+    });
   });
   addLandscapeObjects(list);
   toast(list.length > 1 ? `Выносок: ${list.length} · Ctrl+Z — отменить` : 'Выноска добавлена — текст правится справа');

@@ -14,6 +14,7 @@
 // в осях дома; участок — в координатах съёмки;
 // world = origin + R(rotation) · local, Y вниз, угол по часовой.
 
+import { entryParts, siteEntries } from './site-entries.js';
 import { levelWindowOpenings } from './spanning-windows.js';
 import { exportRoofBodies } from './roof-export.js';
 import { buildDxf } from './zamer/dxf.js';
@@ -100,7 +101,8 @@ function buildLevelExport(project, level) {
   const openings = levelWindowOpenings(project, walls).map((opening) => {
     const placed = openingRect(project, opening, walls);
     return {
-      id: opening.cornerWing === 'return' ? `${opening.id}-return` : opening.id,
+      id: opening.assemblyPart ? `${opening.id}-${opening.assemblyPart}` : opening.cornerWing === 'return' ? `${opening.id}-return` : opening.id,
+      ...(opening.assemblyPart ? { assembly_id: opening.id } : {}),
       ...(opening.cornerWing ? { assembly_id: opening.id, wing: opening.cornerWing, joint: opening.corner.joint } : {}),
       kind: opening.kind,
       room: opening.roomId,
@@ -118,6 +120,7 @@ function buildLevelExport(project, level) {
       sill: openingSill(opening, level),
       swingIn: opening.swingIn,
       hingeStart: opening.hingeStart,
+      ...(opening.assemblyPart ? { assembly_part: opening.assemblyPart, assembly_type: opening.assemblyType } : {}),
       ...(opening.presetId ? { preset_id: opening.presetId } : {}),
       ...(opening.kind === 'door' && opening.entryRole ? { entry_role: opening.entryRole } : {}),
     };
@@ -318,6 +321,7 @@ function buildSiteExport(site, project) {
     setbacks: { boundary: site.setbackBoundary, neighbor: site.setbackNeighbor },
     red_line: site.redLine || null,
     entry: site.entry || null,
+    entries: siteEntries(site),
     roads: site.roads || [],
     neighbor_houses: site.neighbors || [],
     terrain,
@@ -671,12 +675,12 @@ function siteEntities(site) {
     out.push({ type: 'line', layer: 'neighbors', x1: c[1].x, y1: c[1].y, x2: c[3].x, y2: c[3].y });
     out.push({ type: 'text', layer: 'neighbors', x: nb.x - 600, y: nb.y, height: 400, text: `${((nb.height || 6000) / 1000).toFixed(1)} m`, rotation: nb.rot || 0 });
   }
-  if (site.entry) {
-    const rad = ((site.entry.dir || 0) * Math.PI) / 180;
-    const tip = { x: site.entry.x + Math.cos(rad) * 2200, y: site.entry.y + Math.sin(rad) * 2200 };
-    out.push({ type: 'line', layer: 'site', x1: site.entry.x, y1: site.entry.y, x2: tip.x, y2: tip.y });
-    for (const da of [-0.45, 0.45]) {
-      out.push({ type: 'line', layer: 'site', x1: tip.x, y1: tip.y, x2: tip.x - Math.cos(rad + da) * 500, y2: tip.y - Math.sin(rad + da) * 500 });
+  for (const entry of siteEntries(site)) {
+    const rad = ((entry.dir ?? entry.angle ?? 0) * Math.PI) / 180;
+    for (const part of entryParts(entry)) {
+      const at = (offset) => ({ x: entry.x + Math.sin(rad) * offset, y: entry.y - Math.cos(rad) * offset });
+      const a = at(part.offset - part.width / 2); const b = at(part.offset + part.width / 2);
+      out.push({ type: 'line', layer: 'site', x1: a.x, y1: a.y, x2: b.x, y2: b.y });
     }
   }
   // Стрелка севера у правого верхнего угла участка.

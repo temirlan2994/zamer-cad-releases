@@ -4,6 +4,8 @@
 
 import { cornerWindowHandles, cornerWindowProjections } from './core/corner-windows.js';
 import { levelWindowOpenings } from './core/spanning-windows.js';
+import { entryParts, entrySpan, entryTitle, siteEntries } from './core/site-entries.js';
+import { glazedOpeningParts, isGlazedAssembly } from './core/glazed-openings.js';
 import {
   deriveWalls, doorLeaves, doorSymbol, openingRect, wallOutline, wallRects,
   wallsEngine,
@@ -299,24 +301,65 @@ export function planVisibleRoomIds(rooms, visibleWalls, viewport) {
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
-  // Слой ландшафта на плане: рисуется отдельно и кладётся одной картинкой с
-  // прозрачностью — объекты не просвечивают друг через друга.
-  let lsLayer = null;
-  function drawPlanLandscape(target, objects, lsOpts) {
-    const { width: w, height: h } = target.canvas;
-    if (!lsLayer) lsLayer = document.createElement('canvas');
-    if (lsLayer.width !== w || lsLayer.height !== h) { lsLayer.width = w; lsLayer.height = h; }
-    const lctx = lsLayer.getContext('2d');
-    lctx.setTransform(1, 0, 0, 1, 0, 0);
-    lctx.clearRect(0, 0, w, h);
-    lctx.setTransform(target.getTransform());
-    drawLandscapeGround(lctx, objects, lsOpts);
-    drawLandscapeRaised(lctx, objects, lsOpts);
-    target.save();
+  let backgroundLayer = null;
+  let landscapeLayer = null;
+  let backgroundRaster = null;
+
+  function drawPlanLandscape(target, width, height, paint) {
+    landscapeLayer ||= typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
+    if (landscapeLayer.width !== width) landscapeLayer.width = width;
+    if (landscapeLayer.height !== height) landscapeLayer.height = height;
+    const layer = landscapeLayer.getContext('2d');
+    layer.setTransform(1, 0, 0, 1, 0, 0);
+    layer.clearRect(0, 0, width, height);
+    paint(layer);
     target.setTransform(1, 0, 0, 1, 0, 0);
     target.globalAlpha = PLAN_LS_ALPHA;
-    target.drawImage(lsLayer, 0, 0);
-    target.restore();
+    target.drawImage(landscapeLayer, 0, 0);
+    target.globalAlpha = 1;
+  }
+
+  function drawCachedBackground({ view, dpr, key, sources, zooming, paint, paintLandscape }) {
+    const { width, height } = canvas;
+    const scale = view.scale * dpr;
+    const rotation = view.rotation || 0;
+    const panX = view.panX * dpr;
+    const panY = view.panY * dpr;
+    const ratio = backgroundRaster ? scale / backgroundRaster.scale : 1;
+    const x = backgroundRaster ? panX - backgroundRaster.x * ratio : 0;
+    const y = backgroundRaster ? panY - backgroundRaster.y * ratio : 0;
+    const reusable = backgroundRaster?.key === key && backgroundRaster.rotation === rotation
+      && backgroundRaster.sources.length === sources.length
+      && sources.every((source, i) => source === backgroundRaster.sources[i])
+      && (zooming ? ratio >= 0.82 && ratio <= 1.25 : ratio === 1)
+      && x <= 0 && y <= 0 && x + backgroundLayer.width * ratio >= width
+      && y + backgroundLayer.height * ratio >= height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (reusable) {
+      ctx.drawImage(backgroundRaster.bitmap || backgroundLayer,
+        -x / ratio, -y / ratio, width / ratio, height / ratio, 0, 0, width, height);
+      return;
+    }
+
+    // Запас за краями позволяет сдвигать и масштабировать готовый фон.
+    const padX = Math.ceil(Math.min(width * 0.35, 200 * dpr));
+    const padY = Math.ceil(Math.min(height * 0.35, 200 * dpr));
+    const w = width + padX * 2;
+    const h = height + padY * 2;
+    backgroundLayer ||= typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
+    if (backgroundLayer.width !== w) backgroundLayer.width = w;
+    if (backgroundLayer.height !== h) backgroundLayer.height = h;
+    const background = backgroundLayer.getContext('2d');
+    paint(background, w / dpr, h / dpr, padX / dpr, padY / dpr);
+
+    if (paintLandscape) {
+      drawPlanLandscape(background, w, h, (layer) => paintLandscape(layer, padX / dpr, padY / dpr));
+    }
+
+    backgroundRaster?.bitmap?.close();
+    const bitmap = backgroundLayer.transferToImageBitmap?.();
+    backgroundRaster = { key, sources, rotation, scale, x: panX + padX, y: panY + padY, bitmap };
+    ctx.drawImage(bitmap || backgroundLayer, padX, padY, width, height, 0, 0, width, height);
   }
 
   // opts (для печати листов): width/height — размер в CSS px, dpr — плотность,
@@ -347,32 +390,15 @@ export function createRenderer(canvas) {
     // на поворот дома (core/building.js). Масштаб тот же.
     const pv = composeView(view, state.project.building);
     const p2s = (x, y) => projectPoint(pv, x, y);
-    const setView = (v) => {
+    const setView = (v, target = ctx, offsetX = 0, offsetY = 0) => {
       const c = Math.cos(v.rotation || 0);
       const s = Math.sin(v.rotation || 0);
-      ctx.setTransform(dpr * v.scale * c, dpr * v.scale * s, -dpr * v.scale * s, dpr * v.scale * c, dpr * v.panX, dpr * v.panY);
+      target.setTransform(dpr * v.scale * c, dpr * v.scale * s, -dpr * v.scale * s, dpr * v.scale * c,
+        dpr * (v.panX + offsetX), dpr * (v.panY + offsetY));
     };
     // Сетка: в «Плане» — по осям дома, в «Участке» — по осям съёмки.
     const gridView = state.modeName === 'plan' ? pv : view;
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = tokens.canvas;
-    ctx.fillRect(0, 0, width, height);
-
-    // Видимая область в координатах сетки.
-    const corners = [
-      unprojectPoint(gridView, 0, 0), unprojectPoint(gridView, width, 0),
-      unprojectPoint(gridView, 0, height), unprojectPoint(gridView, width, height),
-    ];
-    const worldBox = {
-      minX: Math.min(...corners.map((c) => c.x)),
-      maxX: Math.max(...corners.map((c) => c.x)),
-      minY: Math.min(...corners.map((c) => c.y)),
-      maxY: Math.max(...corners.map((c) => c.y)),
-    };
-
-    const px = (v) => v / scale; // толщина линии в экранных пикселях
-    // Отображение и освещение этого вида (core/view-display.js); листы — по умолчанию.
+    const px = (v) => v / scale;
     const vd = thumbnail
       ? { ...VIEW_DISPLAY_DEFAULT, rooms: 'color', shadows: true, light: 'fixed', length: 'short' }
       : print ? VIEW_DISPLAY_DEFAULT : viewDisplay(
@@ -380,39 +406,41 @@ export function createRenderer(canvas) {
         state.analyticalView?.id || viewIdOf(state.project, state.modeName),
       );
 
-    // 1. Сетка (на печати не нужна).
-    setView(gridView);
-    if (!print || planSnapshot) drawGrid(ctx, worldBox, scale, px, tokens);
-    setView(view); // дальше — участок в координатах съёмки
+    const underlay = site?.underlay;
+    const image = state.underlayImg;
+    const underlayImg = underlay && !state.underlayHidden && image?.complete && image.naturalWidth ? image : null;
+    function drawBackground(target, w, h, offsetX, offsetY) {
+      target.setTransform(dpr, 0, 0, dpr, 0, 0);
+      target.fillStyle = tokens.canvas;
+      target.fillRect(0, 0, w, h);
 
-    // 2. Подложка-топосъёмка — ПОВЕРХ сетки, чтобы её было видно.
-    if (site?.underlay && state.underlayImg && !state.underlayHidden) {
-      const u = site.underlay;
-      const uw = u.widthPx * u.mmPerPx;
-      const uh = u.heightPx * u.mmPerPx;
-      const ucx = u.x + uw / 2;
-      const ucy = u.y + uh / 2;
-      const urot = ((u.rot || 0) * Math.PI) / 180;
-      ctx.save();
-      ctx.translate(ucx, ucy);
-      ctx.rotate(urot);
-      ctx.globalAlpha = u.opacity ?? 0.7;
-      ctx.drawImage(state.underlayImg, -uw / 2, -uh / 2, uw, uh);
-      ctx.globalAlpha = 1;
-      if (state.selection?.type === 'site' && state.selection.kind === 'underlay') {
-        ctx.strokeStyle = tokens.accent;
-        ctx.lineWidth = px(1.6);
-        ctx.setLineDash([px(8), px(5)]);
-        ctx.strokeRect(-uw / 2, -uh / 2, uw, uh);
-        ctx.setLineDash([]);
+      setView(gridView, target, offsetX, offsetY);
+      if (!print || planSnapshot) {
+        const shifted = { ...gridView, panX: gridView.panX + offsetX, panY: gridView.panY + offsetY };
+        drawGrid(target, planViewportBox(shifted, w, h, 0), scale, px, tokens);
       }
-      ctx.restore();
+      setView(view, target, offsetX, offsetY);
+      // Топосъёмка поверх сетки, затем рельеф, дороги и соседние здания.
+      if (underlayImg) {
+        const uw = underlay.widthPx * underlay.mmPerPx;
+        const uh = underlay.heightPx * underlay.mmPerPx;
+        target.save();
+        target.translate(underlay.x + uw / 2, underlay.y + uh / 2);
+        target.rotate(((underlay.rot || 0) * Math.PI) / 180);
+        target.globalAlpha = underlay.opacity ?? 0.7;
+        target.drawImage(underlayImg, -uw / 2, -uh / 2, uw, uh);
+        target.globalAlpha = 1;
+        if (state.selection?.type === 'site' && state.selection.kind === 'underlay') {
+          target.strokeStyle = tokens.accent;
+          target.lineWidth = px(1.6);
+          target.setLineDash([px(8), px(5)]);
+          target.strokeRect(-uw / 2, -uh / 2, uw, uh);
+        }
+        target.restore();
+      }
+      if (site) drawTerrainUnder(target, state, site, px, tokens.canvas);
+      if (site) drawSiteUnder(target, state, site, tokens, px, { sunShadow: vd.sunShadow });
     }
-
-    // 2. Рельеф (закраска высот, горизонтали), затем участок: дороги,
-    // запретная зона, соседи, тени.
-    if (site) drawTerrainUnder(ctx, state, site, px);
-    if (site) drawSiteUnder(ctx, state, site, tokens, px, { sunShadow: vd.sunShadow });
 
     // Ландшафт (core/landscape.js, ui/render-landscape.js): в «Ландшафте» —
     // для правки, в «Участке» — для контекста. Покрытия — под домом.
@@ -442,6 +470,38 @@ export function createRenderer(canvas) {
       style: lsStyle, dark: lsDark, pal: lsPal, dpr,
     };
     const houseFootprints = landscape ? buildingSiteCheck(state.project).footprint.map((f) => f.corners) : [];
+    const showPlanLandscape = Boolean(planLs && lsObjects.length);
+    function paintLandscape(target, offsetX, offsetY) {
+      setView(view, target, offsetX, offsetY);
+      drawLandscapeGround(target, lsObjects, lsOpts);
+      drawLandscapeRaised(target, lsObjects, lsOpts);
+    }
+    if ((showPlanLandscape || underlayImg) && state.modeName === 'plan' && !print && !thumbnail) {
+      const selection = state.selection?.type === 'site' ? state.selection : null;
+      const hover = state.hover?.type === 'site-obj' ? state.hover : null;
+      // Сетка, топосъёмка, рельеф и полупрозрачный ландшафт компонуются один
+      // раз, чтобы браузер не смешивал большие изображения на каждом кадре.
+      const sunWalls = site?.sun?.enabled && vd.sunShadow ? state.walls : null;
+      const key = [
+        state.drawingRevision, canvas.width, canvas.height, dpr, lsStyle, tokens.canvas, lsOpts.noShadows, vd.sunShadow,
+        lsOpts.shadow?.x, lsOpts.shadow?.y, lsOpts.shadow?.k, document.fonts?.status,
+        underlay?.x, underlay?.y, underlay?.mmPerPx, underlay?.rot, underlay?.opacity,
+        selection?.kind, selection?.id, hover?.kind, hover?.id,
+      ].join('|');
+      drawCachedBackground({
+        view, dpr, key, sources: [state.project, state.siteBuildable, underlayImg, sunWalls, ...lsObjects], zooming: opts.zooming,
+        paint: drawBackground,
+        paintLandscape: showPlanLandscape ? paintLandscape : null,
+      });
+      state._siteOpportunityUI = null;
+      setView(view);
+    } else {
+      drawBackground(ctx, width, height, 0, 0);
+      if (showPlanLandscape) {
+        drawPlanLandscape(ctx, canvas.width, canvas.height, (layer) => paintLandscape(layer, 0, 0));
+        setView(view);
+      }
+    }
     // Участок — газоном (светлая зелень с зерном; в «Чертеже» — пунктир).
     if (landscape && site?.boundary?.length >= 3) drawLandscapeSiteBase(ctx, site.boundary, lsOpts);
     // В «Ландшафте» дом — «белое пятно с планом»: светлые полы, тёмные стены.
@@ -450,11 +510,8 @@ export function createRenderer(canvas) {
       roomFill: () => lsPal.paper,
       wall: lsPal.ink, wallBearing: lsPal.ink,
     } : vd.rooms === 'gray' ? { ...tokens, roomFill: lsDark ? grayFillDark : grayFill } : tokens;
-    state._planLandscape = 0;
-    if (planLs && lsObjects.length) {
-      drawPlanLandscape(ctx, lsObjects, lsOpts);
-      state._planLandscape = lsObjects.length;
-    } else if (lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
+    state._planLandscape = showPlanLandscape ? lsObjects.length : 0;
+    if (!showPlanLandscape && lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
     if (landscape && sunMode === 'sun') {
       // Анализ освещённости — под тенями; тени по солнцу — на земле, до дома и объектов.
       const grid = state.lsSun?.analysis ? landscapeSunGrid(state.project, lsObjects) : null;
@@ -572,7 +629,7 @@ export function createRenderer(canvas) {
           ctx.restore();
           return;
         }
-        ctx.fillStyle = wall.wallType === 'bearing' ? houseTokens.wallBearing : houseTokens.wall;
+        ctx.fillStyle = houseTokens.wall;
         if (selected) ctx.fillStyle = tokens.accent;
         else if (hovered) ctx.fillStyle = tokens.hover;
         if (wall.hidden) ctx.globalAlpha = 0.22;
@@ -599,7 +656,7 @@ export function createRenderer(canvas) {
       for (const wall of sharedWalls) paintWall(wall);
       // Фаски на переходах толщины — заполняют ступеньку треугольником.
       for (const wall of chamferWalls) {
-        ctx.fillStyle = wall.wallType === 'bearing' ? houseTokens.wallBearing : houseTokens.wall;
+        ctx.fillStyle = houseTokens.wall;
         ctx.beginPath();
         ctx.moveTo(wall.poly[0].x, wall.poly[0].y);
         for (let i = 1; i < wall.poly.length; i += 1) ctx.lineTo(wall.poly[i].x, wall.poly[i].y);
@@ -658,19 +715,8 @@ export function createRenderer(canvas) {
           ctx.stroke();
           ctx.restore();
         }
-        ctx.save();
-        ctx.strokeStyle = houseTokens.wallBearing;
-        ctx.globalAlpha = lsDark ? 0.9 : 0.76;
-        ctx.lineWidth = px(1.15);
-        ctx.lineJoin = 'miter';
-        for (const wall of walls) for (const poly of wall.polys || (wall.poly ? [wall.poly] : [])) {
-          if (poly.length < 3) continue;
-          ctx.beginPath();
-          poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-          ctx.closePath();
-          ctx.stroke();
-        }
-        ctx.restore();
+        // Обводим только объединённый контур выше: границы отдельных
+        // частей стены создавали тёмные швы и квадраты на L/T-стыках.
         for (const wall of walls) {
           const selected = state.selection?.type === 'wall' && state.selection.key === wall.key
             && (state.selection.from === undefined || Math.abs(state.selection.from - wall.from) < 1);
@@ -811,27 +857,11 @@ export function createRenderer(canvas) {
       for (const p of [a, b]) { ctx.beginPath(); ctx.arc(p.x, p.y, px(4), 0, Math.PI * 2); ctx.fill(); }
     }
 
-    // Предпросмотр въезда: стрелка скользит по границе за курсором.
+    // Предпросмотр ворот/калитки целиком, с привязкой к стороне участка.
     if (state.entryGhost) {
-      const e = state.entryGhost;
-      const rad = (e.dir * Math.PI) / 180;
-      const len = 2200;
-      const tip = { x: e.x + Math.cos(rad) * len, y: e.y + Math.sin(rad) * len };
-      ctx.globalAlpha = 0.6;
-      ctx.strokeStyle = tokens.accent2;
-      ctx.fillStyle = tokens.accent2;
-      ctx.lineWidth = px(2.4);
-      ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(tip.x, tip.y); ctx.stroke();
-      const head = 500;
-      ctx.beginPath();
-      ctx.moveTo(tip.x, tip.y);
-      ctx.lineTo(tip.x - Math.cos(rad - 0.45) * head, tip.y - Math.sin(rad - 0.45) * head);
-      ctx.lineTo(tip.x - Math.cos(rad + 0.45) * head, tip.y - Math.sin(rad + 0.45) * head);
-      ctx.closePath(); ctx.fill();
-      ctx.beginPath();
-      ctx.arc(e.x, e.y, px(5), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      ctx.save(); ctx.globalAlpha = 0.6;
+      drawSiteEntry(ctx, { kind: state.tool?.entryKind || 'gate', ...state.entryGhost }, tokens.accent2, tokens, px);
+      ctx.restore();
     }
     if (state.draft?.points?.length) drawDraft(ctx, state.draft, tokens, px);
     state._snapLabelAt = (state.draft?.snapStart && state.draft.points.length)
@@ -903,6 +933,11 @@ export function createRenderer(canvas) {
         : [state.ghostOpening.rect];
       ctx.fillStyle = 'rgba(29,180,168,0.5)';
       for (const r of rects) if (r) ctx.fillRect(r.x, r.y, r.w, r.h);
+      if (isGlazedAssembly(preview)) {
+        ctx.save(); ctx.globalAlpha = .65;
+        for (const part of glazedOpeningParts(preview)) drawOpening(ctx, state, part, walls, tokens, px);
+        ctx.restore();
+      }
     }
     // Превью двери под курсором: створка с направлением открывания.
     if (state.ghostDoor) {
@@ -978,6 +1013,11 @@ export function createRenderer(canvas) {
       for (const id of state.selection.roomIds) {
         const room = state.project.rooms.find((r) => r.id === id);
         if (room) ctx.strokeRect(room.x, room.y, room.w, room.h);
+      }
+      for (const id of state.selection.wallIds || []) {
+        const wall = state.project.walls.find((w) => w.id === id);
+        if (!wall) continue;
+        ctx.beginPath(); ctx.moveTo(wall.axis.a.x, wall.axis.a.y); ctx.lineTo(wall.axis.b.x, wall.axis.b.y); ctx.stroke();
       }
       ctx.setLineDash([]);
     }
@@ -1115,7 +1155,7 @@ export function createRenderer(canvas) {
       ctx.fillText(state._calLabelAt.text, p.x, p.y - 14);
     }
     // Привязки черчения линий: лучи, выравнивание, значки, «длина · угол».
-    if (!print && state.drawSnap) drawSnapOverlay(ctx, state, w2s, tokens, width);
+    if (!print && state.drawSnap) drawSnapOverlay(ctx, state, state.drawSnap.space === 'plan' ? p2s : w2s, tokens, width);
     if (!print && state.objGuides) drawObjectGuides(ctx, state.objGuides, w2s, tokens, width);
     // Ручки топосъёмки: круги вращения снаружи углов + квадраты (масштаб).
     if (site?.underlay && state.selection?.type === 'site' && state.selection.kind === 'underlay' && !site.underlay.locked) {
@@ -1457,6 +1497,30 @@ function paintHatch(ctx, polygon, fill, stroke, px) {
 
 // --- Участок: линии поверх (граница, красная линия, зона, въезд, черновик) ---
 
+function drawSiteEntry(ctx, entry, color, tokens, px) {
+  const parts = entryParts(entry); const span = entrySpan(entry);
+  ctx.save();
+  ctx.translate(entry.x, entry.y);
+  ctx.rotate(((entry.dir ?? entry.angle ?? 0) - 90) * Math.PI / 180);
+  ctx.strokeStyle = tokens.canvas;
+  ctx.lineWidth = px(4);
+  ctx.beginPath(); ctx.moveTo(span.from - 120, 0); ctx.lineTo(span.to + 120, 0); ctx.stroke();
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = px(2);
+  for (const p of parts) {
+    const left = p.offset - p.width / 2; const right = p.offset + p.width / 2;
+    for (const x of [left, right]) ctx.fillRect(x - 60, -90, 120, 180);
+    ctx.beginPath(); ctx.moveTo(left, 0); ctx.lineTo(right, 0); ctx.stroke();
+    const leaves = p.kind === 'gate' ? [[left, p.width / 2, 1], [right, p.width / 2, -1]] : [[left, p.width, 1]];
+    for (const [hinge, length, sign] of leaves) {
+      ctx.beginPath(); ctx.moveTo(hinge, 0); ctx.lineTo(hinge + sign * length * .7, length * .7); ctx.stroke();
+      ctx.setLineDash([px(4), px(3)]);
+      ctx.beginPath(); ctx.arc(hinge, 0, length, sign > 0 ? 0 : Math.PI / 2, sign > 0 ? Math.PI / 2 : Math.PI); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+  ctx.restore();
+}
+
 function drawSiteOver(ctx, state, site, tokens, px) {
   const selectedKind = state.selection?.type === 'site' ? state.selection.kind : null;
   const hov = state.hover?.type === 'site-obj' ? state.hover : null;
@@ -1504,32 +1568,8 @@ function drawSiteOver(ctx, state, site, tokens, px) {
     ctx.setLineDash([]);
   }
 
-  if (site.entry) {
-    const e = site.entry;
-    const rad = (e.dir * Math.PI) / 180;
-    const len = 2200;
-    const tip = { x: e.x + Math.cos(rad) * len, y: e.y + Math.sin(rad) * len };
-    ctx.strokeStyle = kindColor('entry', undefined, tokens.accent2);
-    ctx.fillStyle = ctx.strokeStyle;
-    ctx.lineWidth = px(2.4);
-    ctx.beginPath();
-    ctx.moveTo(e.x, e.y);
-    ctx.lineTo(tip.x, tip.y);
-    ctx.stroke();
-    const head = 500;
-    ctx.beginPath();
-    ctx.moveTo(tip.x, tip.y);
-    ctx.lineTo(tip.x - Math.cos(rad - 0.45) * head, tip.y - Math.sin(rad - 0.45) * head);
-    ctx.lineTo(tip.x - Math.cos(rad + 0.45) * head, tip.y - Math.sin(rad + 0.45) * head);
-    ctx.closePath();
-    ctx.fill();
-    // Разрыв в заборе.
-    ctx.strokeStyle = tokens.canvas;
-    ctx.lineWidth = px(3.2);
-    ctx.beginPath();
-    ctx.moveTo(e.x - Math.sin(rad) * 1500, e.y + Math.cos(rad) * 1500);
-    ctx.lineTo(e.x + Math.sin(rad) * 1500, e.y - Math.cos(rad) * 1500);
-    ctx.stroke();
+  for (const e of siteEntries(site)) {
+    drawSiteEntry(ctx, e, kindColor('entry', e.id, tokens.accent2), tokens, px);
   }
 
   // Дом на участке: красный пунктир — выходит за зону застройки или ближе
@@ -1588,12 +1628,12 @@ function drawSiteLabels(ctx, state, site, w2s, tokens) {
     ctx.textAlign = 'center';
     ctx.fillText(`Участок ${polygonAreaM2(site.boundary).toFixed(1)} м²`, p.x, p.y - 10);
   }
-  if (site.entry) {
-    const p = w2s(site.entry.x, site.entry.y);
+  for (const e of siteEntries(site)) {
+    const p = w2s(e.x, e.y);
     ctx.fillStyle = tokens.accent2;
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Въезд', p.x, p.y + 22);
+    ctx.fillText(`${entryTitle(e)}${e.wicket ? ' + калитка' : ''}`, p.x, p.y + 22);
   }
   for (const n of site.neighbors || []) {
     const p = w2s(n.x, n.y);
@@ -3371,6 +3411,11 @@ function drawGroupFrame(ctx, state, box, groupId, p2s, tokens, scale) {
   const topY = Math.min(...sc.map((p) => p.y));
   const midX = sc.reduce((sum, p) => sum + p.x, 0) / sc.length;
   drawTextPill(ctx, label, midX, topY - 12, tokens, tokens.accent);
+  if (state.modeName === 'plan' && mode !== 'rotate') {
+    const labelWidth = ctx.measureText(label).width + 10;
+    drawTempDims(ctx, state, groupItems(state.project, state.selection), p2s, tokens,
+      { x: midX - labelWidth / 2, y: topY - 24, w: labelWidth, h: 16 });
+  }
   if (mode === 'rotate') {
     for (const r of groupRotators(box, 20, scale)) {
       const p = p2s(r.x, r.y);
@@ -3444,7 +3489,7 @@ function drawDim(ctx, p, q, n, off, label) {
 // — в state._tempDimsUI для ui/temp-dims.js. avoid — рамка подписи габарита.
 function drawTempDims(ctx, state, item, p2s, tokens, avoid) {
   const dims = tempDimensions(state.project, item);
-  const ui = { itemId: item.id, dims: [] };
+  const ui = { ...(Array.isArray(item) ? { itemIds: item.map((member) => member.id) } : { itemId: item.id }), dims: [] };
   state._tempDimsUI = ui;
   if (!dims.length) return;
   const minHit = state.coarsePointer ? 36 : 20;

@@ -175,3 +175,41 @@ test('копия группы вниз: окно верхней стены ко�
   assert.equal(plan.removedWindows, 1);
   assert.equal(plan.openings.length, 0);
 });
+
+test('ручные стены в группе: выбранная и принадлежащая комнате стена едут один раз', () => {
+  const { project, a } = twoRooms();
+  const inside = addManualWall(project, { x: 500, y: 1000 }, { x: 3500, y: 1000 });
+  const outside = addManualWall(project, { x: 0, y: 6000 }, { x: 4000, y: 6000 });
+  const other = addManualWall(project, { x: 20000, y: 0 }, { x: 21000, y: 0 });
+  const wallIds = [inside.id, outside.id];
+  assert.equal(groupCargo(project, [a.id], [], null, wallIds).walls.length, 2);
+  assert.equal(moveRoomGroup(project, [a.id], [], 500, 250, { wallIds }).ok, true);
+  assert.deepEqual(inside.axis.a, { x: 1000, y: 1250 });
+  assert.deepEqual(outside.axis.a, { x: 500, y: 6250 });
+  assert.deepEqual(other.axis.a, { x: 20000, y: 0 });
+});
+
+test('группа только из стен перемещается, поворачивается и копируется с дверью на своей стене', () => {
+  const project = createProject();
+  const a = addManualWall(project, { x: 0, y: 0 }, { x: 3000, y: 0 });
+  const b = addManualWall(project, { x: 0, y: 1000 }, { x: 3000, y: 1000 });
+  const door = createOpening('door', null, 0, 0, 900);
+  door.host = { wallId: a.id, t: 1500 };
+  delete door.side; delete door.offset;
+  project.openings.push(door);
+  const wallIds = [a.id, b.id];
+  assert.equal(moveRoomGroup(project, [], [], 1000, 500, { wallIds }).ok, true);
+  assert.deepEqual(a.axis.a, { x: 1000, y: 500 });
+  const before = structuredClone(project.walls);
+  for (let i = 0; i < 4; i++) assert.equal(rotateRoomGroup(project, [], [], { wallIds }).ok, true);
+  assert.deepEqual(project.walls, before);
+  const source = captureRoomGroup(project, [], [], wallIds);
+  const plan = planGroupCopy(project, source);
+  assert.equal(plan.ok, true);
+  assert.equal(plan.walls.length, 2);
+  assert.equal(plan.openings.length, 1);
+  assert.equal(plan.openings[0].host.wallId, plan.walls[0].id);
+  assert.notEqual(plan.walls[0].id, a.id);
+  assert.equal(plan.openings[0].host.t, door.host.t);
+  assert.deepEqual(project.walls, before, 'копирование сохраняет исходные стены');
+});

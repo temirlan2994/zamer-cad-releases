@@ -165,6 +165,12 @@ export function cloneGroup(list, dx = 0, dy = 0) {
     return c;
   });
   for (const c of copies) if (c.parent && ids.has(c.parent)) c.parent = ids.get(c.parent);
+  for (const c of copies) {
+    if (c.kind !== 'callout' || !c.meta?.targetId) continue;
+    const target = ids.get(c.meta.targetId);
+    if (target) c.meta.targetId = target;
+    else c.meta.targetId = null; // отдельная копия подписи становится самостоятельной
+  }
   return copies;
 }
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD</title>
-    <link rel="stylesheet" href="./styles.css?v=321" />
+    <link rel="stylesheet" href="./styles.css?v=322" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -381,7 +381,7 @@
           <p id="circleTangentError" role="status" hidden></p>
         </section>
         <div class="save-indicator" id="saveIndicator" role="status" aria-atomic="true" data-state="idle">Сохранение...</div>
-        <div class="spen-indicator" id="spenIndicator" role="status" hidden><span aria-hidden="true">✎</span> S Pen</div>
+        <button class="spen-indicator" id="spenIndicator" type="button" title="Режим управления" aria-label="Режим управления" aria-haspopup="dialog" aria-controls="spenModeSheet" aria-expanded="false"><span data-line-icon="finger" aria-hidden="true"></span><small>Авто</small></button>
         <div class="draft-metric-labels metric-fields" id="draftMetricLabels" role="group" aria-label="Размеры на чертеже" hidden>
           <div class="draft-metric-pair">
             <div class="metric-field" id="draftLengthEditor" hidden>
@@ -559,21 +559,23 @@
               <input class="layer-switch" id="projectTapZoom" type="checkbox" checked />
             </label>
             <fieldset class="spen-settings-group">
-              <legend>Samsung S Pen</legend>
-              <label class="project-gesture-setting" for="projectSpenEnabled">
-                <span><strong>Автоматический режим S Pen</strong><small>Включается после извлечения или первого наведения пера</small></span>
-                <input class="layer-switch" id="projectSpenEnabled" type="checkbox" checked />
-              </label>
+              <legend>Управление</legend>
+              <div class="spen-input-modes" role="radiogroup" aria-label="Режим управления">
+                <label><input type="radio" name="spenInputMode" value="auto" checked /><span data-line-icon="rotate" aria-hidden="true"></span><strong>Авто</strong></label>
+                <label><input type="radio" name="spenInputMode" value="pen" /><span data-line-icon="edit" aria-hidden="true"></span><strong>Стилус</strong></label>
+                <label><input type="radio" name="spenInputMode" value="finger" /><span data-line-icon="finger" aria-hidden="true"></span><strong>Палец</strong></label>
+              </div>
+              <p class="spen-mode-help" id="projectSpenModeHelp"></p>
               <label class="project-gesture-setting" for="projectSpenHover">
                 <span><strong>Курсор при наведении</strong><small>Крестик, построение и привязки следуют за кончиком пера</small></span>
                 <input class="layer-switch" id="projectSpenHover" type="checkbox" checked />
               </label>
               <label class="project-gesture-setting" for="projectSpenButton">
-                <span><strong>Боковая кнопка</strong><small>Нажатие — Esc / Выбор, удержание с касанием — перемещение чертежа</small></span>
+                <span><strong>Боковая кнопка</strong><small>При построении — ввод размера с сохранением направления. В остальных случаях — Esc / Выбор</small></span>
                 <input class="layer-switch" id="projectSpenButton" type="checkbox" checked />
               </label>
               <label class="project-gesture-setting" for="projectSpenPalm">
-                <span><strong>Защита от ладони</strong><small>Игнорировать случайное касание холста пальцем рядом с пером</small></span>
+                <span><strong>Защита от ладони</strong><small>Игнорировать широкие касания ладонью рядом с пером</small></span>
                 <input class="layer-switch" id="projectSpenPalm" type="checkbox" checked />
               </label>
               <label class="project-gesture-setting" for="projectSpenCompact">
@@ -603,6 +605,13 @@
             <button type="submit" class="survey-primary">Применить</button>
           </form>
         </div>
+      </dialog>
+      <dialog class="survey-sheet spen-mode-sheet" id="spenModeSheet" aria-labelledby="spenModeTitle">
+        <header class="sheet-head">
+          <h2 id="spenModeTitle">Управление</h2>
+          <button class="icon-button" id="closeSpenMode" type="button" aria-label="Закрыть выбор управления">×</button>
+        </header>
+        <div class="survey-content" id="spenModeChoices" role="group" aria-label="Режим управления"></div>
       </dialog>
       <dialog class="survey-sheet annotation-scale-sheet" id="annotationScaleSheet" aria-labelledby="annotationScaleTitle">
         <header class="sheet-head">
@@ -700,7 +709,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=329"></script>
+    <script type="module" src="./app.js?v=335"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

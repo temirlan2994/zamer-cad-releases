@@ -1,4 +1,4 @@
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, selectionFilterForProject, shouldDelayTapZoom, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=233";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, resolvePolarSnap, selectionFilterForProject, shouldDelayTapZoom, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=234";
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildBlockPreview } from "./core/block-preview.js";
@@ -32,7 +32,7 @@ import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatPr
   fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
 import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planAnnotationSnapGeometry, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, totalPlanAreaM2, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
 import { planRegionAtPoint } from "./core/plan-region.js";
-import { normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed } from "./core/spen.js";
+import { nativeSpenClientPoint, normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed, spenModeActive } from "./core/spen.js";
 import { ANNOTATION_LINE_SPACING, ANNOTATION_SCALE_PRESETS, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./core/annotation-text.js";
 
 
@@ -40,6 +40,7 @@ import { ANNOTATION_LINE_SPACING, ANNOTATION_SCALE_PRESETS, annotationScaleFacto
 function cadIcon(name) {
   const paths = {
     cursor: '<path d="m5 3 14 9-7 2-3 7Z"/>',
+    finger: '<path d="M9 12V4a2 2 0 0 1 4 0v6l4-1a3 3 0 0 1 4 3l-1 7a3 3 0 0 1-3 2h-5a4 4 0 0 1-3-2l-5-6a2 2 0 0 1 3-2l2 2"/>',
     frame: '<rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 2"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
     back: '<path d="M19 12H5m7-7-7 7 7 7"/>',
     line: '<path d="m5 19 14-14"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/>',
@@ -689,6 +690,12 @@ const dimensionLinkCancel = document.getElementById("dimensionLinkCancel");
 const dimensionLinkButtons = [...dimensionLinks.querySelectorAll("[data-dimension-anchor]")];
 const saveIndicator = document.getElementById("saveIndicator");
 const spenIndicator = document.getElementById("spenIndicator");
+const spenModeSheet = document.getElementById("spenModeSheet");
+const spenInputModes = {
+  auto: { label: "Авто", icon: "rotate", description: "Стилус распознаётся автоматически. Поднятие пера не меняет режим." },
+  pen: { label: "Стилус", icon: "edit", description: "Перо чертит и выбирает. Палец перемещает вид, два пальца меняют масштаб." },
+  finger: { label: "Палец", icon: "finger", description: "Обычное сенсорное управление с крестиком в центре экрана." },
+};
 const layersSheet = document.getElementById("layersSheet");
 const layerActionsDialog = document.getElementById("layerActionsDialog");
 const layerActionsList = document.getElementById("layerActionsList");
@@ -716,7 +723,7 @@ const cp1251Chars =
   "АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ" +
   "абвгдежзийклмнопрстуфхцчшщъыьэюя";
 const cp1251ByteByChar = new Map([...cp1251Chars].map((char, index) => [char, index + 0x80]));
-const trackingHoverDelayMs = 1000;
+const trackingHoverDelayMs = 300;
 const trackingMaxPoints = 3;
 const trackingAngles = [0, Math.PI / 4, Math.PI / 2, (Math.PI * 3) / 4];
 const groupedDrawTools = new Set(["line", "polyline", "circle", "arc", "rectangle"]);
@@ -881,9 +888,13 @@ const spenRuntime = {
   detected: false,
   active: false,
   hovering: false,
+  nativeHover: false,
+  contactId: null,
   point: null,
   lastHover: -Infinity,
   barrelDown: false,
+  hoverExitAt: -Infinity,
+  hoverExitTimer: null,
 };
 
 const state = {
@@ -933,6 +944,8 @@ const state = {
   dimensionSnapChoice: null,
   dimensionAttach: null,
   polarSnapGuide: null,
+  polarSnapLock: null,
+  lastCursorPreview: null,
   dimensionPickCycle: null,
   selectionPickCycle: null,
   snapTracking: {
@@ -982,11 +995,11 @@ let pendingCanvasTap = null;
 let tapZoom = null;
 
 function spenModeEnabled() {
-  return spenSettings.enabled && spenRuntime.active;
+  return spenModeActive(spenSettings, spenRuntime);
 }
 
 function spenCursorActive() {
-  return spenModeEnabled() && spenSettings.hoverCursor && spenRuntime.hovering && Boolean(spenRuntime.point);
+  return spenModeEnabled() && (spenRuntime.contactId !== null || (spenSettings.hoverCursor && spenRuntime.hovering)) && Boolean(spenRuntime.point);
 }
 
 function inputCursorScreen() {
@@ -1001,14 +1014,26 @@ function syncSpenMode({ announce = false } = {}) {
   const active = spenModeEnabled();
   shell.classList.toggle("spen-mode", active);
   shell.classList.toggle("spen-compact-ui", active && spenSettings.compactUi);
-  spenIndicator.hidden = !active;
+  shell.dataset.inputMode = spenSettings.mode;
+  shell.dataset.effectiveInputMode = active ? "pen" : "finger";
+  const mode = spenInputModes[spenSettings.mode];
+  const effectiveLabel = active ? "Стилус" : "Палец";
+  const label = spenSettings.mode === "auto" ? `Авто · ${effectiveLabel}` : mode.label;
+  spenIndicator.innerHTML = `${cadIcon(active ? "edit" : "finger")}<small>${mode.label}</small>`;
+  spenIndicator.title = `Управление: ${label}`;
+  spenIndicator.setAttribute("aria-label", `Режим управления: ${label}. Изменить`);
+  spenIndicator.setAttribute("data-active", String(active));
+  for (const button of spenModeSheet.querySelectorAll("[data-input-mode]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.inputMode === spenSettings.mode));
+  }
   if (!active) {
     spenRuntime.hovering = false;
+    spenRuntime.nativeHover = false;
     spenRuntime.point = null;
     spenRuntime.barrelDown = false;
   }
   if (announce && projectHome.hidden) {
-    statusChip.textContent = active ? "S Pen активен · наведите перо на чертёж" : "Обычный сенсорный режим";
+    statusChip.textContent = active ? `${label} · перо чертит, палец перемещает вид` : `${label} · крестик в центре`;
   }
   draw();
 }
@@ -1022,16 +1047,21 @@ function applySpenDeviceState(detail, options) {
   syncSpenMode({ announce: options?.announce && wasActive !== spenModeEnabled() });
 }
 
-function activateSpenFromPointer(event) {
-  if (event.pointerType !== "pen") return false;
+function activateSpenMode() {
   const wasActive = spenModeEnabled();
   spenRuntime.supported = true;
   spenRuntime.detected = true;
   spenRuntime.active = true;
+  if (wasActive !== spenModeEnabled()) syncSpenMode({ announce: true });
+}
+
+function activateSpenFromPointer(event) {
+  if (event.pointerType !== "pen") return false;
+  window.clearTimeout(spenRuntime.hoverExitTimer);
+  activateSpenMode();
   spenRuntime.hovering = true;
   spenRuntime.point = getPointer(event);
   spenRuntime.lastHover = performance.now();
-  if (wasActive !== spenModeEnabled()) syncSpenMode({ announce: true });
   return true;
 }
 
@@ -1040,6 +1070,7 @@ window.setTimeout(() => {
   try {
     applySpenDeviceState(JSON.parse(window.ZamerAndroid?.spenState?.() || "null"));
   } catch { /* Browser and older APKs activate the mode from the first pen pointer. */ }
+  syncSpenMode();
 }, 0);
 
 function decodeMojibakeText(value) {
@@ -3675,7 +3706,7 @@ function commitQuickMeasurePoint() {
     const result = quickMeasureFromPlan(measure.mode);
     if (result) measure.measurement = result;
     else measure.error = measure.mode === "radius" ? "Под крестиком нет круга или дуги" : "Под крестиком нет замкнутой области";
-  } else if (quickMeasureClosesContour(measure.mode, measure.points, rawCursorWorld())) {
+  } else if (quickMeasureClosesContour(measure.mode, measure.points, cursorWorld())) {
     finishQuickMeasureContour();
     return;
   } else {
@@ -3706,8 +3737,49 @@ function lineAxisAngle(axis, start, end) {
   return undefined;
 }
 
+function cursorPreviewContext() {
+  const draft = state.drawing;
+  return [persistence.projectId, spenSettings.mode, spenModeEnabled(), spenSettings.hoverCursor,
+    state.tool, state.dimensionTool, state.circleMode, state.angleMode,
+    draft, draft?.phase, draft?.arcPhase, draft?.start?.x, draft?.start?.y, draft?.metricConstraint,
+    state.planZone, state.planZone?.points.length, state.quickMeasure, state.quickMeasure?.points.length,
+    state.moveCommand, state.moveCommand?.base?.x, state.moveCommand?.base?.y, state.offsetCommand,
+    state.lineEdit, state.lineEdit?.mirrorStart, state.lineEdit?.firstPick, state.lineEdit?.amount,
+    state.selectedEndpoint, state.selectedFigureGrip, state.dimensionAttach, surveyPointPicker, state.additionalDimensionDraft,
+    state.blockPlacement, state.entities.length, state.undo.length, state.redo.length,
+    state.view.scale, state.view.panX, state.view.panY, state.polarStep, state.snapsMuted, [...state.snaps].join(",")];
+}
+
+function sameCursorPreviewContext(context) {
+  const current = cursorPreviewContext();
+  return context?.length === current.length && context.every((value, index) => value === current[index]);
+}
+
+function displayedSnapForPress(event, screen) {
+  const preview = state.lastCursorPreview;
+  if (!preview || !sameCursorPreviewContext(preview.context)) return null;
+  const pen = event.pointerType === "pen" && spenModeEnabled();
+  if (pen !== preview.pen) return null;
+  if (pen && ((!spenCursorActive() && performance.now() - spenRuntime.hoverExitAt > 300) || pointDistance(screen, preview.screen) > 24)) return null;
+  return preview;
+}
+
+function pointerPlacesCursorPoint(pointer) {
+  if (!pointer) return false;
+  if (["survey-point", "dimension-attach", "move-command", "offset-command", "endpoint-place"].includes(pointer.mode)) return true;
+  if (pointer.mode === "line-edit") return lineEditPlacesPoint();
+  return pointer.mode === "pan" && !state.leaderInput && (state.tool !== "select" || state.quickMeasure || state.blockPlacement);
+}
+
 function cursorSnapResolved() {
+  const confirmed = state.pointer?.confirmedSnap;
+  if (confirmed && sameCursorPreviewContext(confirmed.context)) {
+    state.snapTracking.active = confirmed.tracking;
+    state.polarSnapGuide = confirmed.polar;
+    return confirmed.resolved;
+  }
   const raw = rawCursorWorld();
+  if (surveyPointPicker) return resolveDimensionPointSnap(raw, { start: null });
   if (state.quickMeasure) return quickMeasureSnap(raw);
   if (state.dimensionAttach) {
     const snap = dimensionAttachCandidate(raw);
@@ -4633,6 +4705,16 @@ function startSelectionDrag(type, pointerId, screen) {
   draw();
 }
 
+function startPenSelectionDrag(screen) {
+  const pointer = state.pointer;
+  if (!pointer?.penWindowCandidate || pointDistance(pointer.startScreen, screen) <= TAP_MOVE_TOLERANCE) return false;
+  startSelectionDrag("window", pointer.id, pointer.startScreen);
+  state.pointer.moved = true;
+  state.pointer.screen = screen;
+  updateSelectionDrag(screen);
+  return true;
+}
+
 function scheduleSelectionLongPress(pointer) {
   if (state.tool !== "select" || state.selectTool !== "select" || pointer.mode !== "pan" || pointer.tapCandidateId) return;
   pointer.selectionHoldTimer = window.setTimeout(() => {
@@ -5302,7 +5384,7 @@ function drawEndpointHandle(point, active, c) {
 }
 
 function pickDimensionCurve(screen, allowCircle, allowInterior = false) {
-  for (const target of [screen, centerScreen()]) {
+  for (const target of [screen, inputCursorScreen()]) {
     const world = screenToWorld(target);
     let nearest = screenUiPx(20) / state.view.scale;
     let result = null;
@@ -6702,7 +6784,8 @@ function updateFigureMetricInput(input) {
 
 function figureMetricPreview(key) {
   const edit = state.numericEdit?.figureMetric;
-  return edit?.key === key && isLinePoint(edit.point) ? edit.point : null;
+  if (!edit || edit.key !== key) return null;
+  return isLinePoint(edit.point) ? edit.point : edit.lockedBySpen ? edit.end : null;
 }
 
 function confirmFigureMetricInput(input, edit) {
@@ -6710,7 +6793,7 @@ function confirmFigureMetricInput(input, edit) {
     cancelFigureMetricInput();
     return;
   }
-  const point = figureMetricPreview(edit.key);
+  const point = isLinePoint(edit.point) ? edit.point : null;
   const draft = state.drawing;
   const grip = state.selectedFigureGrip;
   const target = grip && state.entities.find(entity => entity.id === grip.entityId);
@@ -6724,7 +6807,7 @@ function confirmFigureMetricInput(input, edit) {
     commitFigureGripPoint(point);
   } else if (draft === edit.key) {
     draft.lockedEnd = false;
-    commitCursorPoint(centerScreen(), point);
+    commitCursorPoint(inputCursorScreen(), point);
   }
 }
 
@@ -7037,7 +7120,7 @@ function drawActiveCircleConstruction(c) {
 
 function pickCircleTangent(screen) {
   const boundaries = boundarySegments();
-  const center = centerScreen();
+  const center = inputCursorScreen();
   const targets = pointDistance(screen, center) > 1 ? [screen, center] : [center];
   for (const target of targets) {
     const world = screenToWorld(target);
@@ -7383,6 +7466,7 @@ function setSelectedEndpointPosition(point) {
 }
 
 function endpointCursorPoint(geometry) {
+  if (state.pointer?.confirmedSnap) return cursorWorld();
   if (isDraftLine(geometry.entity) && distanceWorld(rawCursorWorld(), geometry.moving) <= linePointEpsilon) return geometry.moving;
   return cursorWorld();
 }
@@ -7446,7 +7530,8 @@ function lineMetricContext() {
 
 function lineMetricPreview(key) {
   const edit = state.numericEdit?.lineMetric;
-  return edit?.key === key && isLinePoint(edit.point) ? edit.point : null;
+  if (!edit || edit.key !== key) return null;
+  return isLinePoint(edit.point) ? edit.point : edit.lockedBySpen ? edit.end : null;
 }
 
 function clearLineMetricEdit() {
@@ -7491,9 +7576,9 @@ function updateLineMetricPreview(edit) {
   const draft = state.drawing;
   const originalLength = distanceWorld(edit.start, edit.end);
   const length = edit.length ?? draft?.metricConstraint?.length ?? originalLength;
-  const axis = !edit.endpoint && state.tool === "line" && (edit.length > 0 || draft?.metricConstraint?.length > 0)
+  const axis = edit.lockedAngle === undefined && !edit.endpoint && state.tool === "line" && (edit.length > 0 || draft?.metricConstraint?.length > 0)
     ? lineAxisAngle(draft?.metricDirection, edit.start, rawCursorWorld()) : undefined;
-  const angle = edit.angle ?? draft?.metricConstraint?.angle ?? axis ??
+  const angle = edit.angle ?? edit.lockedAngle ?? draft?.metricConstraint?.angle ?? axis ??
     (originalLength > linePointEpsilon ? -radToDeg(angleBetweenPoints(edit.start, edit.end)) : undefined);
   edit.point = edit.length === null || edit.angle === null ? null : linePolarPoint(edit.start, length, angle);
 }
@@ -8711,6 +8796,9 @@ function resetSnapTracking() {
   state.snapTracking.active = null;
   state.snapTracking.compoundLock = null;
   state.polarSnapGuide = null;
+  state.polarSnapLock = null;
+  state.lastCursorPreview = null;
+  if (state.pointer) state.pointer.confirmedSnap = null;
   state.dimensionSnapChoice = null;
 }
 
@@ -8719,8 +8807,14 @@ function drawCursorSnap(c) {
   const chooseAxis = state.dimensionTool === "linear" && dimensionStage === "offset";
   const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.selectedFigureGrip && !state.dimensionAttach &&
     !surveyPointPicker && !lineEditPlacesPoint() && !state.blockPlacement && !state.quickMeasure;
-  const resolved = surveyPointPicker ? resolveDimensionPointSnap(rawCursorWorld(), { start: null })
-    : selectOnly || state.leaderInput ? null : cursorSnapResolved();
+  const resolved = selectOnly || state.leaderInput ? null : cursorSnapResolved();
+  if (spenCursorActive() || !spenModeEnabled()) {
+    state.lastCursorPreview = resolved?.snap && !state.snapsMuted ? {
+      resolved: { ...resolved, point: { ...resolved.point }, snap: { ...resolved.snap } },
+      screen: { ...inputCursorScreen() }, pen: spenCursorActive(), context: cursorPreviewContext(),
+      tracking: state.snapTracking.active, polar: state.polarSnapGuide,
+    } : null;
+  }
   const chooseSnap = state.tool === "dimension" && !surveyPointPicker && resolved?.snapCount > 1;
   dimensionAxisControl.hidden = !chooseAxis;
   dimensionNextSnap.hidden = !chooseSnap;
@@ -9331,9 +9425,9 @@ function placeAtViewportCenter() {
     commitSurveyPoint();
   } else if (state.lineEdit) {
     if (state.lineEdit.pending) applyLineEditPreview();
-    else pickLineEditPoint(centerScreen());
+    else pickLineEditPoint(inputCursorScreen());
   } else if (viewportIsSelecting()) {
-    applyTapSelection(pickEntity(centerScreen()));
+    applyTapSelection(pickEntity(inputCursorScreen()));
     draw();
   } else {
     commitCursorPoint();
@@ -9464,10 +9558,14 @@ function resolveSnapWorld(point, { polarStart = state.drawing?.start || state.mo
     includeNearestSegment: isLineSnapContext(),
     start: state.drawing?.arcEnd && midpoint(state.drawing.start, state.drawing.arcEnd),
   });
-  if (objectSnap) return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
+  if (objectSnap) {
+    state.polarSnapLock = null;
+    return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
+  }
   if (canSnapToPrePointTrackingGuides() || canUseSnapTracking()) {
     const snap = nearestSnapTrackingPoint(point, trackingThreshold);
     if (snap) {
+      state.polarSnapLock = null;
       state.snapTracking.active = snap;
       return { point: { x: snap.x, y: snap.y }, snap };
     }
@@ -9480,12 +9578,13 @@ function resolveGridAndPolarSnap(point, start, useGrid = true) {
   const grid = useGrid && snapEnabled("grid");
   const fallback = grid ? gridPoint(point) : point;
   if (start && snapEnabled("polar")) {
-    const polar = snapPolar(fallback, start);
+    const polar = snapPolar(fallback, start, { remember: true });
     if (polar.snapped) {
       state.polarSnapGuide = { point: start, angle: polar.angle, degrees: polar.degrees };
       return snappedPoint(polar.point, "polar");
     }
   }
+  state.polarSnapLock = null;
   return grid ? snappedPoint(fallback, "grid") : { point, snap: null };
 }
 
@@ -9540,7 +9639,10 @@ function resolveDimensionPointSnap(point, { start = state.drawing?.start } = {})
   if (choice && !useChoice) state.dimensionSnapChoice = null;
   const snapIndex = useChoice && choice.index < distinct.length ? choice.index : 0;
   const snap = distinct[snapIndex];
-  if (snap) return { point: { x: snap.x, y: snap.y }, snap, snapCount: distinct.length, snapIndex };
+  if (snap) {
+    state.polarSnapLock = null;
+    return { point: { x: snap.x, y: snap.y }, snap, snapCount: distinct.length, snapIndex };
+  }
   return resolveGridAndPolarSnap(point, leaderToolActive() ? null : start);
 }
 
@@ -9552,10 +9654,12 @@ function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } =
   const grid = useGrid && snapEnabled("grid");
   const objectSnap = nearestObjectSnap(point, { includeNearestSegment: false, start, includeExtension: false });
   if (objectSnap) {
+    state.polarSnapLock = null;
     state.snapTracking.compoundLock = null;
     return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
   }
   if (ortho) {
+    state.polarSnapLock = null;
     const constrained = constrainLinePoint(start, point);
     if (!constrained) return { point, snap: null };
     if (grid) {
@@ -9569,7 +9673,10 @@ function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } =
     return snappedPoint(constrained, "ortho");
   }
   const compound = nearestCompoundTrackingSnap(point, start);
-  if (compound) return { point: { x: compound.x, y: compound.y }, snap: compound };
+  if (compound) {
+    state.polarSnapLock = null;
+    return { point: { x: compound.x, y: compound.y }, snap: compound };
+  }
   let tracking = null;
   if (canSnapToTrackingGuides()) {
     const threshold = objectSnapThreshold();
@@ -9579,6 +9686,7 @@ function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } =
   const lineSnap = nearestObjectSnap(point, { includeNearestSegment: true, start, includeExtension: true, suppressPolarExtension: true });
   const assisted = preferredSnapCandidate(point, [tracking, lineSnap].filter(Boolean), state.view.scale);
   if (assisted) {
+    state.polarSnapLock = null;
     if (assisted === tracking) state.snapTracking.active = tracking;
     return { point: { x: assisted.x, y: assisted.y }, snap: assisted };
   }
@@ -9720,7 +9828,7 @@ function commitDimensionAttach() {
     cancelDimensionAttach();
     return;
   }
-  const snap = dimensionAttachCandidate(rawCursorWorld());
+  const snap = cursorSnapResolved().snap;
   const ref = dimensionRefFromSnap(snap);
   if (!ref) {
     statusChip.textContent = state.snapsMuted ? "Включите привязки для выбора опоры" : "Наведите на конец, угол, середину или центр объекта";
@@ -9863,27 +9971,12 @@ function blockCorners(entity) {
   ];
 }
 
-function snapPolar(point, start) {
-  const dx = point.x - start.x;
-  const dy = point.y - start.y;
-  const length = Math.hypot(dx, dy);
-  if (length < 1) return { point, snapped: false };
-  const step = (state.polarStep * Math.PI) / 180;
-  const threshold = Math.min(step / 4, Math.PI / 72);
-  const angle = Math.atan2(dy, dx);
-  const snappedAngle = Math.round(angle / step) * step;
-  const delta = Math.abs(Math.atan2(Math.sin(angle - snappedAngle), Math.cos(angle - snappedAngle)));
-  if (delta > threshold) return { point, snapped: false };
-  const degrees = Math.round(normalizeDegrees(-radToDeg(snappedAngle))) % 360;
-  return {
-    snapped: true,
-    angle: snappedAngle,
-    degrees,
-    point: {
-    x: start.x + Math.cos(snappedAngle) * length,
-    y: start.y + Math.sin(snappedAngle) * length,
-    },
-  };
+function snapPolar(point, start, { remember = false } = {}) {
+  const lock = state.polarSnapLock;
+  const lockedAngle = lock?.step === state.polarStep && lock.x === start.x && lock.y === start.y ? lock.angle : null;
+  const result = resolvePolarSnap(point, start, state.polarStep, lockedAngle);
+  if (remember) state.polarSnapLock = result.snapped ? { x: start.x, y: start.y, step: state.polarStep, angle: result.angle } : null;
+  return result;
 }
 
 function isGroupedDrawTool(tool) {
@@ -10544,7 +10637,8 @@ function syncLineControls() {
   const edit = state.lineEdit;
   const draft = state.tool === "line" ? state.drawing : null;
   const input = numericConfirmInput();
-  const choosingDirection = !surveyPointPicker && draft && (lineMetricKinds.get(input) === "length" || draft.metricConstraint?.length !== undefined);
+  const choosingDirection = !surveyPointPicker && draft && state.numericEdit?.lineMetric?.lockedAngle === undefined &&
+    (lineMetricKinds.get(input) === "length" || draft.metricConstraint?.length !== undefined);
   polylineArcMode.hidden = !drawing || Boolean(surveyPointPicker) || Boolean(input);
   polylineArcMode.setAttribute("aria-pressed", String(Boolean(drawing?.arcPhase)));
   linePointAssist.hidden = !choosingDirection && polylineArcMode.hidden;
@@ -11541,7 +11635,7 @@ function finishFigureGrip(pointer) {
   if (!pointer.moved) {
     state.selectedFigureGrip = pointer.grip;
     hideSelectToolMenu();
-    centerViewOnWorldPoint(pointer.grip.point);
+    if (!spenCursorActive()) centerViewOnWorldPoint(pointer.grip.point);
     resetSnapTracking();
     statusChip.textContent = "Наведите крестик на новое место точки и тапните";
     return;
@@ -11611,7 +11705,7 @@ function finishLineGrip(pointer) {
     if (pointer.grip.point === "middle") {
       const base = midpoint({ x: entity.x1, y: entity.y1 }, { x: entity.x2, y: entity.y2 });
       startMoveLikeCommand(entity, "move");
-      centerViewOnWorldPoint(base);
+      if (!spenCursorActive()) centerViewOnWorldPoint(base);
       commitMoveCommandPoint(base);
     } else {
       selectLineEndpoint(pointer.grip);
@@ -11641,15 +11735,15 @@ function selectLineEndpoint(endpoint) {
   state.endpointEditBefore = entityGeometry(entity);
   state.drawing = null;
   const geometry = selectedEndpointGeometry();
-  if (geometry) centerViewOnWorldPoint(geometry.moving);
+  if (geometry && !spenCursorActive()) centerViewOnWorldPoint(geometry.moving);
   resetSnapTracking();
   updateSelectedEndpointEditors(geometry ? endpointCursorPoint(geometry) : null);
-  statusChip.textContent = "Конец линии выбран. Подведите центр к новой точке и тапните";
+  statusChip.textContent = spenCursorActive() ? "Конец линии выбран. Укажите пером новую точку" : "Конец линии выбран. Подведите центр к новой точке и тапните";
   draw();
   return true;
 }
 
-function commitCursorPoint(screen = centerScreen(), exactPoint = null) {
+function commitCursorPoint(screen = inputCursorScreen(), exactPoint = null) {
   if (state.leaderInput) return;
   if (state.quickMeasure) {
     commitQuickMeasurePoint();
@@ -11840,7 +11934,7 @@ function commitCursorPoint(screen = centerScreen(), exactPoint = null) {
       statusChip.textContent = drawingFinishedStatus(finishedTool);
     }
   } else {
-    setSelection(pickEntity(centerScreen()) || state.selectedId);
+    setSelection(pickEntity(screen) || state.selectedId);
     statusChip.textContent = state.selectedId ? "Элемент выбран курсором" : "Подведите курсор к элементу";
   }
   if (!state.drawing && state.tool === "dimension") {
@@ -12033,53 +12127,153 @@ function selectedEndPoint() {
   return { x: selected.x2, y: selected.y2 };
 }
 
-function updateSpenHover(event) {
-  if (!activateSpenFromPointer(event)) return;
+function beginSpenLengthInput() {
+  const draft = state.drawing;
+  if (!draft || state.leaderInput || surveyPointPicker || state.quickMeasure) return false;
+  const lineDraft = ["line", "polyline"].includes(state.tool) && !draft.arcPhase;
+  const end = lineMetricPreview(draft.start) ?? figureMetricPreview(draft) ?? (draft.lockedEnd ? draft.end : cursorWorld());
+  const figure = draftFigureReference(end);
+  if (!lineDraft && !figure) return false;
+  const input = lineDraft || figure.type === "circle" ? lengthInput : topLengthInput;
+  const current = state.numericEdit?.lineMetric || state.numericEdit?.figureMetric;
+  if (current?.lockedBySpen && current.key === (lineDraft ? draft.start : draft)) {
+    input.focus({ preventScroll: true });
+    window.ZamerAndroid?.showKeyboard?.();
+    return true;
+  }
+  const arc = figure?.arcEnd && draftArcFromBend(draft.start, figure.arcEnd, end)?.arc;
+  const length = lineDraft ? distanceWorld(draft.start, end) : figureMetrics(figure, arc).values[0];
+  if (!isLinePoint(end) || !(length > linePointEpsilon)) {
+    statusChip.textContent = "Сначала укажите направление пером";
+    return true;
+  }
+  // Capture the resolved point before focus/IME changes the viewport or the
+  // hover stream. The numeric preview must no longer follow the pen.
+  draft.end = { ...end };
+  drawNow();
+  beginNumericInputEdit(input);
+  const edit = state.numericEdit?.lineMetric || state.numericEdit?.figureMetric;
+  if (!edit) return true;
+  edit.end = { ...end };
+  edit.point = { ...end };
+  edit.lockedBySpen = true;
+  if (lineDraft) {
+    edit.length = length;
+    edit.lockedAngle = -radToDeg(angleBetweenPoints(draft.start, end));
+  } else edit.values.length = length;
+  input.value = edit.texts.length = formatProjectLength(length, state.measurementSettings, { suffix: false });
+  syncInlineEditorWidth(input);
+  input.focus({ preventScroll: true });
+  input.select();
+  window.ZamerAndroid?.showKeyboard?.();
+  statusChip.textContent = "Направление зафиксировано · введите размер и нажмите ✓";
+  draw();
+  return true;
+}
+
+function updateSpenBarrel(event, { allowContact = false } = {}) {
   const barrel = spenBarrelButtonPressed(event);
-  if (spenSettings.sideButton && barrel && !spenRuntime.barrelDown && !(event.buttons & 1)) {
+  const pressed = barrel && !spenRuntime.barrelDown;
+  spenRuntime.barrelDown = barrel;
+  if (!spenSettings.enabled || !spenSettings.sideButton || !barrel || (!allowContact && (event.buttons & 1))) return false;
+  if (pressed && !beginSpenLengthInput()) {
     activatePlainSelect();
     statusChip.textContent = "S Pen · Esc / Выбор";
   }
-  spenRuntime.barrelDown = barrel;
+  return true;
+}
+
+function clearSpenHover({ preservePreview = false } = {}) {
+  window.clearTimeout(spenRuntime.hoverExitTimer);
+  spenRuntime.hovering = false;
+  spenRuntime.nativeHover = false;
+  spenRuntime.point = null;
+  spenRuntime.barrelDown = false;
+  if (preservePreview) {
+    // HOVER_EXIT also precedes tip contact on Android. Keep the displayed
+    // snap for this short handover, so contact does not discard its guides.
+    spenRuntime.hoverExitAt = performance.now();
+    spenRuntime.hoverExitTimer = window.setTimeout(() => {
+      if (!spenRuntime.hovering && spenRuntime.contactId === null) {
+        resetSnapTracking();
+        draw();
+      }
+    }, 300);
+  } else {
+    spenRuntime.hoverExitAt = -Infinity;
+    resetSnapTracking();
+  }
   draw();
 }
+
+function updateSpenHover(event) {
+  // The native stream owns hover on Android. Ignore WebView's duplicate DOM
+  // events, which can be reported as either a mouse or pen depending on version.
+  if (spenRuntime.nativeHover || !activateSpenFromPointer(event)) return;
+  updateSpenBarrel(event);
+  draw();
+}
+
+window.addEventListener("zamer-spen-hover", (event) => {
+  const detail = event.detail;
+  if (detail?.hovering === false) {
+    clearSpenHover({ preservePreview: true });
+    return;
+  }
+  const client = nativeSpenClientPoint(detail, { width: window.innerWidth, height: window.innerHeight });
+  if (!client || detail.hovering !== true) return;
+  window.clearTimeout(spenRuntime.hoverExitTimer);
+  activateSpenMode();
+  spenRuntime.nativeHover = true;
+  spenRuntime.hovering = true;
+  spenRuntime.lastHover = performance.now();
+  const rect = canvas.getBoundingClientRect();
+  const onCanvas = !document.hidden && projectHome.hidden && authScreen.hidden &&
+    document.elementFromPoint(client.x, client.y) === canvas;
+  spenRuntime.point = onCanvas ? { x: client.x - rect.left, y: client.y - rect.top } : null;
+  if (onCanvas) updateSpenBarrel({ buttons: detail.buttons || 0 });
+  else {
+    spenRuntime.barrelDown = false;
+    resetSnapTracking();
+  }
+  draw();
+});
+window.addEventListener("blur", () => {
+  spenRuntime.contactId = null;
+  clearSpenHover();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    spenRuntime.contactId = null;
+    clearSpenHover();
+  }
+});
 
 canvas.addEventListener("pointerover", updateSpenHover);
 canvas.addEventListener("pointermove", (event) => {
   if (event.pointerType === "pen") updateSpenHover(event);
 });
 canvas.addEventListener("pointerleave", (event) => {
-  if (event.pointerType !== "pen") return;
-  spenRuntime.hovering = false;
-  spenRuntime.point = null;
-  spenRuntime.barrelDown = false;
-  resetSnapTracking();
-  draw();
+  if (event.pointerType === "pen" && !spenRuntime.nativeHover) clearSpenHover({ preservePreview: true });
 });
 
 canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
-  if (event.pointerType === "touch" && shouldRejectSpenPalmTouch(spenSettings, spenRuntime, performance.now())) {
+  // Finish the current pen/finger gesture before starting one from the other
+  // device. A pen and a finger must never be treated as a two-finger pinch.
+  if (spenModeEnabled() && event.pointerType === "touch" && spenRuntime.contactId !== null) return;
+  if (event.pointerType === "touch" && shouldRejectSpenPalmTouch(spenSettings, spenRuntime, performance.now(), event)) {
     statusChip.textContent = "S Pen рядом · случайное касание ладонью заблокировано";
     return;
   }
   const screen = getPointer(event);
+  const displayedSnap = displayedSnapForPress(event, screen);
   if (event.pointerType === "pen") {
     activateSpenFromPointer(event);
-    const barrel = spenBarrelButtonPressed(event);
-    spenRuntime.barrelDown = barrel;
-    if (spenSettings.sideButton && barrel) {
-      activatePlainSelect();
-      if (event.button === 0 || (event.buttons & 1)) {
-        try {
-          canvas.setPointerCapture(event.pointerId);
-        } catch { /* Interrupted S Pen streams may not support capture. */ }
-        rememberPointer(event);
-        state.pointer = { id: event.pointerId, screen, startScreen: screen, world: screenToWorld(screen), moved: false, mode: "spen-pan" };
-        statusChip.textContent = "S Pen · перемещайте чертёж";
-      } else {
-        statusChip.textContent = "S Pen · Esc / Выбор";
-      }
+    if (spenModeEnabled() && state.activePointers.size > 0) return;
+    spenRuntime.nativeHover = false;
+    spenRuntime.contactId = event.pointerId;
+    if (updateSpenBarrel(event, { allowContact: true })) {
       draw();
       return;
     }
@@ -12107,7 +12301,12 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   state.gestureSuppressTap = false;
-  if (!tapZoom) startCanvasPointerAction(event, screen);
+  if (!tapZoom) {
+    startCanvasPointerAction(event, screen);
+    if (displayedSnap && pointerPlacesCursorPoint(state.pointer) && sameCursorPreviewContext(displayedSnap.context)) {
+      state.pointer.confirmedSnap = displayedSnap;
+    }
+  }
 });
 
 function startCanvasPointerAction(event, screen) {
@@ -12118,6 +12317,10 @@ function startCanvasPointerAction(event, screen) {
     else closeMetricEntry();
   }
   state.pointerStartedAt = event.timeStamp;
+  if (spenModeEnabled() && event.pointerType === "touch") {
+    state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "touch-pan" };
+    return;
+  }
   if (state.leaderInput) {
     state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "pan" };
     return;
@@ -12205,6 +12408,11 @@ function startCanvasPointerAction(event, screen) {
     dimensionControl = hitDimensionControl(screen);
     const controlEntity = dimensionControl?.entity;
     const hitId = controlEntity?.id || pickEntity(screen);
+    if (spenModeEnabled() && event.pointerType === "pen" && state.selectTool === "select" && viewportIsSelecting() && !dimensionControl) {
+      state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false,
+        mode: "select-only", tapCandidateId: hitId, penWindowCandidate: true };
+      return;
+    }
     const hitEntity = controlEntity || state.entities.find(entity => entity.id === hitId);
     if (hitId && ((!controlEntity && !canDragEntityDirectly(hitEntity)) ||
         requiresActivation(hitId, state.selectedIds, state.directManipulationIds))) {
@@ -12413,29 +12621,47 @@ canvas.addEventListener("pointermove", (event) => {
     return;
   }
   const screen = getPointer(event);
+  if (state.pointer?.id === event.pointerId && pointDistance(screen, state.pointer.startScreen) > TAP_MOVE_TOLERANCE) {
+    state.pointer.confirmedSnap = null;
+  }
   if (tapZoom?.event.pointerId === event.pointerId && updateTapZoom(event, screen)) return;
   if (state.pinch || state.gestureSuppressTap || !state.pointer || state.pointer.id !== event.pointerId) return;
-  const isDragging = Boolean(event.buttons & 1) || event.pointerType === "touch" || state.pointer?.mode === "spen-pan";
+  const isDragging = Boolean(event.buttons & 1) || event.pointerType === "touch";
   if (!isDragging) return;
+  const penGesture = spenModeEnabled() && event.pointerType === "pen";
+  const penPlacesPoint = penGesture && (["survey-point", "dimension-attach", "line-edit", "endpoint-place", "move-command", "offset-command"].includes(state.pointer.mode) ||
+    (state.pointer.mode === "pan" && state.tool !== "select" && !state.leaderInput));
+  if (penPlacesPoint) {
+    // The preview follows the pen; lifting it commits the current point.
+    // Do not translate the viewport or suppress this placement as a pan.
+    state.pointer.screen = screen;
+    draw();
+    return;
+  }
   const travel = Math.hypot(screen.x - state.pointer.startScreen.x, screen.y - state.pointer.startScreen.y);
   if (travel > TAP_MOVE_TOLERANCE) {
     window.clearTimeout(state.pointer.selectionHoldTimer);
     state.pointer.moved = true;
   }
+  if (startPenSelectionDrag(screen)) {
+    draw();
+    return;
+  }
   if (state.pointer.mode === "select-only") {
+    if (penGesture) { draw(); return; }
     state.pointer.mode = activationGestureMode(state.pointer.moved);
     if (state.pointer.mode === "select-only") return;
     // This gesture belongs to the viewport, even while crossing other objects.
     // Do not activate or move the object when the finger is released.
     state.pointer.tapCandidateId = null;
   }
-  if (state.pointer.mode === "spen-pan") {
+  if (state.pointer.mode === "touch-pan") {
     if (!state.pointer.moved) return;
     state.view.panX += screen.x - state.pointer.screen.x;
     state.view.panY += screen.y - state.pointer.screen.y;
     state.pointer.screen = screen;
     resetSnapTracking();
-    statusChip.textContent = "S Pen · перемещение чертежа";
+    statusChip.textContent = "Перемещение вида пальцем";
     draw();
     return;
   }
@@ -12458,7 +12684,8 @@ canvas.addEventListener("pointermove", (event) => {
   if (state.pointer.mode === "selection-window" || state.pointer.mode === "selection-lasso") {
     updateSelectionDrag(screen);
     state.pointer.screen = screen;
-    statusChip.textContent = state.pointer.mode === "selection-lasso" ? "Лассо: отпустите палец для выбора" : "Выделение: отпустите палец для выбора";
+    const release = penGesture ? "перо" : "палец";
+    statusChip.textContent = state.pointer.mode === "selection-lasso" ? `Лассо: отпустите ${release} для выбора` : `Выделение: отпустите ${release} для выбора`;
     draw();
     return;
   }
@@ -12526,7 +12753,7 @@ canvas.addEventListener("pointermove", (event) => {
       const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
       statusChip.textContent = `Размер ${dimensionDisplayLength(entity)}`;
     }
-  } else {
+  } else if (!penGesture) {
     state.dimensionSnapHint = null;
     state.view.panX += screen.x - state.pointer.screen.x;
     state.view.panY += screen.y - state.pointer.screen.y;
@@ -12545,9 +12772,24 @@ canvas.addEventListener("contextmenu", (event) => {
 });
 
 function finishCanvasPointer(event, canceled = false) {
+  try {
+    finishCanvasPointerEvent(event, canceled);
+  } finally {
+    if (spenRuntime.contactId === event.pointerId) spenRuntime.contactId = null;
+  }
+}
+
+function finishCanvasPointerEvent(event, canceled = false) {
+  if (!canceled && state.pointer?.id === event.pointerId) startPenSelectionDrag(getPointer(event));
+  if (state.pointer?.id === event.pointerId && pointDistance(getPointer(event), state.pointer.startScreen) > TAP_MOVE_TOLERANCE) {
+    state.pointer.confirmedSnap = null;
+  }
   if (event.pointerType === "pen") {
-    activateSpenFromPointer(event);
-    spenRuntime.barrelDown = spenBarrelButtonPressed(event);
+    if (canceled) clearSpenHover();
+    else {
+      activateSpenFromPointer(event);
+      spenRuntime.barrelDown = spenBarrelButtonPressed(event);
+    }
   }
   const isSecondTap = tapZoom?.event.pointerId === event.pointerId;
   if (isSecondTap) {
@@ -12602,12 +12844,13 @@ function finishCanvasPointer(event, canceled = false) {
 }
 
 function finishCanvasPointerAction(event) {
-  const spenPan = state.pointer?.mode === "spen-pan";
-  const overlap = spenPan ? null : overlappingSelectionForTap(event, state.pointer);
+  const touchPan = state.pointer?.mode === "touch-pan";
+  const penGesture = spenModeEnabled() && event.pointerType === "pen";
+  const overlap = touchPan ? null : overlappingSelectionForTap(event, state.pointer);
   state.selectionPickCycle = null;
-  const annotation = spenPan || overlap ? null : annotationForDoubleTap(event, state.pointer);
-  if (spenPan) {
-    statusChip.textContent = "S Pen · чертёж перемещён";
+  const annotation = touchPan || overlap ? null : annotationForDoubleTap(event, state.pointer);
+  if (touchPan) {
+    if (state.pointer.moved) statusChip.textContent = "Вид перемещён пальцем";
   } else if (overlap) {
     state.lastAnnotationTap = null;
     state.dimensionPickCycle = null;
@@ -12623,9 +12866,10 @@ function finishCanvasPointerAction(event) {
       const hitId = state.pointer.tapCandidateId;
       applyTapSelection(hitId);
       if (state.selectedIds.includes(hitId)) state.directManipulationIds.add(hitId);
-      if (state.selectTool !== "multi") {
+      if (state.selectTool !== "multi" && state.selectedIds.includes(hitId)) {
         const entity = state.entities.find(item => item.id === hitId);
         if (entity?.dimensionKind === "angular") statusChip.textContent = "Угол выбран. Тяните дугу или точку измерения";
+        else if (penGesture) statusChip.textContent = "Объект выбран. Пером можно протянуть рамку";
         else statusChip.textContent = canDragEntityDirectly(entity)
           ? "Объект активирован. Теперь его можно перетащить"
           : "Объект выбран. Для перемещения нажмите «Переместить»";
@@ -12633,6 +12877,7 @@ function finishCanvasPointerAction(event) {
     }
   } else if (state.pointer?.mode === "selection-window" || state.pointer?.mode === "selection-lasso") {
     if (state.pointer.moved) {
+      if (penGesture) updateSelectionDrag(getPointer(event));
       finishSelectionDrag();
     } else {
       clearSelectionDrag();
@@ -12653,7 +12898,7 @@ function finishCanvasPointerAction(event) {
   } else if (state.pointer.mode === "angular-grip") {
     finishAngularGrip(state.pointer);
   } else if (state.pointer.mode === "line-edit") {
-    if (!state.pointer.moved) pickLineEditPoint(state.pointer.startScreen);
+    if (!state.pointer.moved) pickLineEditPoint(penGesture ? getPointer(event) : state.pointer.startScreen);
   } else if (state.pointer.mode === "quick-trim-once") {
     if (!state.pointer.moved) applyQuickEdit("trim", state.pointer.startScreen);
   } else if (state.pointer?.mode === "offset-command") {
@@ -12692,7 +12937,7 @@ function finishCanvasPointerAction(event) {
       if (hitId && state.selectedIds.includes(hitId)) state.directManipulationIds.add(hitId);
       draw();
     } else {
-      commitCursorPoint(state.pointer.startScreen);
+      commitCursorPoint(penGesture ? getPointer(event) : state.pointer.startScreen);
     }
   } else {
     finishPointerMoveUndo();
@@ -14731,13 +14976,46 @@ const projectLengthUnit = projectSettingsSheet.querySelector("#projectLengthUnit
 const projectPrintScale = projectSettingsSheet.querySelector("#projectPrintScale");
 const projectTotalArea = projectSettingsSheet.querySelector("#projectTotalArea");
 const projectTapZoom = projectSettingsSheet.querySelector("#projectTapZoom");
+const projectSpenModeChoices = [...projectSettingsSheet.querySelectorAll('input[name="spenInputMode"]')];
 const projectSpenFields = {
-  enabled: projectSettingsSheet.querySelector("#projectSpenEnabled"),
   hoverCursor: projectSettingsSheet.querySelector("#projectSpenHover"),
   sideButton: projectSettingsSheet.querySelector("#projectSpenButton"),
   palmRejection: projectSettingsSheet.querySelector("#projectSpenPalm"),
   compactUi: projectSettingsSheet.querySelector("#projectSpenCompact"),
 };
+
+for (const [mode, appearance] of Object.entries(spenInputModes)) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "spen-mode-choice";
+  button.dataset.inputMode = mode;
+  button.setAttribute("aria-pressed", "false");
+  button.innerHTML = `${cadIcon(appearance.icon)}<span><strong>${appearance.label}</strong><small>${appearance.description}</small></span>`;
+  button.addEventListener("click", () => {
+    cancelPendingCanvasTap();
+    tapZoom = null;
+    if (!state.activePointers.size) state.pointer = null;
+    spenSettings = normalizeSpenSettings({ ...spenSettings, mode });
+    saveSpenSettings();
+    syncSpenMode({ announce: true });
+    spenModeSheet.close();
+  });
+  document.getElementById("spenModeChoices").append(button);
+}
+spenIndicator.addEventListener("click", () => {
+  syncSpenMode();
+  spenModeSheet.showModal();
+  spenIndicator.setAttribute("aria-expanded", "true");
+  spenModeSheet.querySelector('[aria-pressed="true"]')?.focus({ preventScroll: true });
+});
+document.getElementById("closeSpenMode").addEventListener("click", () => spenModeSheet.close());
+spenModeSheet.addEventListener("click", (event) => {
+  if (event.target === spenModeSheet) spenModeSheet.close();
+});
+spenModeSheet.addEventListener("close", () => {
+  spenIndicator.setAttribute("aria-expanded", "false");
+  spenIndicator.focus({ preventScroll: true });
+});
 const projectPrecisionFields = {
   precision: projectSettingsSheet.querySelector("#projectLengthPrecision"),
   anglePrecision: projectSettingsSheet.querySelector("#projectAnglePrecision"),
@@ -14792,10 +15070,9 @@ function syncProjectTotalArea(settings = state.measurementSettings) {
 }
 
 function syncSpenSettingsForm() {
-  const enabled = projectSpenFields.enabled.checked;
-  for (const [name, field] of Object.entries(projectSpenFields)) {
-    if (name !== "enabled") field.disabled = !enabled;
-  }
+  const mode = projectSpenModeChoices.find(field => field.checked)?.value || "auto";
+  for (const field of Object.values(projectSpenFields)) field.disabled = mode === "finger";
+  document.getElementById("projectSpenModeHelp").textContent = spenInputModes[mode].description;
 }
 
 projectSettingsButton.addEventListener("click", () => {
@@ -14807,6 +15084,7 @@ projectSettingsButton.addEventListener("click", () => {
   projectLengthUnit.value = settings.unit;
   projectPrintScale.value = settings.printScale;
   projectTapZoom.checked = state.tapZoomEnabled;
+  for (const field of projectSpenModeChoices) field.checked = field.value === spenSettings.mode;
   for (const [name, field] of Object.entries(projectSpenFields)) field.checked = spenSettings[name];
   syncSpenSettingsForm();
   for (const [name, field] of Object.entries(projectPrecisionFields)) field.value = String(settings[name]);
@@ -14822,7 +15100,8 @@ projectSettingsForm.addEventListener("submit", (event) => {
   event.preventDefault();
   state.measurementSettings = projectSettingsDraft();
   state.tapZoomEnabled = projectTapZoom.checked;
-  spenSettings = normalizeSpenSettings(Object.fromEntries(Object.entries(projectSpenFields).map(([name, field]) => [name, field.checked])));
+  spenSettings = normalizeSpenSettings({ mode: projectSpenModeChoices.find(field => field.checked)?.value || "auto",
+    ...Object.fromEntries(Object.entries(projectSpenFields).map(([name, field]) => [name, field.checked])) });
   saveSpenSettings();
   syncSpenMode();
   if (!state.tapZoomEnabled) {
@@ -15697,7 +15976,8 @@ function planZoneName(type = state.tool) {
 }
 
 function planContourClosesAtCursor(points) {
-  return points.length >= 3 && snapEnabled("end") && distanceWorld(rawCursorWorld(), points[0]) * state.view.scale <= screenUiPx(14);
+  const point = state.pointer?.confirmedSnap?.resolved.point || rawCursorWorld();
+  return points.length >= 3 && snapEnabled("end") && distanceWorld(point, points[0]) * state.view.scale <= screenUiPx(14);
 }
 
 function planZoneSnapStart() {
@@ -16475,7 +16755,7 @@ function setSurveyPointPicker(label, callback) {
 }
 
 function commitSurveyPoint() {
-  const point = resolveDimensionPointSnap(rawCursorWorld(), { start: null }).point;
+  const point = cursorSnapResolved().point;
   if (!isLinePoint(point)) {
     statusChip.textContent = "Точка замера вне допустимой области";
     draw();

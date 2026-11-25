@@ -1,6 +1,7 @@
 // Проверяемый маршрут подготовки участка и объяснимая карта возможностей.
 // Модуль чистый: он читает проект, но не сохраняет вычисляемые статусы в модель.
 
+import { siteEntries } from './site-entries.js';
 import {
   area, bbox, difference, erode, interiorPoint, pointInPolygon,
 } from './geom/index.js';
@@ -412,7 +413,8 @@ function roadsFact(site) {
   const valid = roads.filter(validRoad);
   if (!roads.length) return fact('roads', 'Дорога', 'missing', 'Укажите прилегающую дорогу');
   if (valid.length !== roads.length) return fact('roads', 'Дорога', 'error', 'Часть линий дорог не содержит корректной геометрии');
-  if (validPoint(site.entry) && !valid.some((road) => roadReachesEntry(road, site.entry))) {
+  const gates = siteEntries(site).filter((e) => e.kind !== 'wicket' && validPoint(e));
+  if (gates.length && !valid.some((road) => gates.some((entry) => roadReachesEntry(road, entry)))) {
     return fact('roads', 'Дорога', 'error', 'Ни одна дорога не соединена с указанным въездом', {
       count: valid.length,
     });
@@ -421,12 +423,13 @@ function roadsFact(site) {
 }
 
 function entryFact(site) {
-  if (!site.entry) return fact('entry', 'Въезд', 'missing', 'Укажите въезд на участок');
-  if (!validPoint(site.entry)) return fact('entry', 'Въезд', 'error', 'Координаты въезда некорректны');
+  const gates = siteEntries(site).filter((e) => e.kind !== 'wicket');
+  if (!gates.length) return fact('entry', 'Въезд', 'missing', 'Укажите въезд на участок');
+  if (gates.some((entry) => !validPoint(entry))) return fact('entry', 'Въезд', 'error', 'Координаты въезда некорректны');
   if (!validBoundary(site.boundary)) {
     return fact('entry', 'Въезд', 'unknown', 'Въезд указан, но без корректной границы нельзя проверить его положение');
   }
-  const distance = distanceToPolyline(site.boundary, site.entry, true);
+  const distance = Math.max(...gates.map((entry) => distanceToPolyline(site.boundary, entry, true)));
   if (distance > ENTRY_BOUNDARY_TOLERANCE) {
     return fact('entry', 'Въезд', 'error', 'Въезд должен находиться на границе участка', {
       distanceToBoundary: distance,

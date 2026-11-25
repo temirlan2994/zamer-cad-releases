@@ -78,6 +78,7 @@ public final class MainActivity extends Activity {
     private boolean sPenActive;
     private boolean sPenDetected;
     private boolean sPenReceiverRegistered;
+    private boolean sPenHovering;
 
     private final BroadcastReceiver sPenReceiver = new BroadcastReceiver() {
         @Override
@@ -109,8 +110,18 @@ public final class MainActivity extends Activity {
         });
         webView.setBackgroundColor(Color.rgb(248, 250, 253));
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        // Android routes stylus proximity through dispatchHoverEvent, not the
+        // generic-motion/touch listeners. Some WebViews expose it as a mouse
+        // pointer in JavaScript, so forward the native coordinates explicitly.
+        webView.setOnHoverListener((view, event) -> {
+            noteSpenInput(event);
+            reportSpenHover(event);
+            return false;
+        });
         webView.setOnGenericMotionListener((view, event) -> {
             noteSpenInput(event);
+            if (sPenHovering && (event.getActionMasked() == MotionEvent.ACTION_BUTTON_PRESS ||
+                    event.getActionMasked() == MotionEvent.ACTION_BUTTON_RELEASE)) reportSpenHover(event);
             return false;
         });
         webView.setOnTouchListener((view, event) -> {
@@ -222,6 +233,31 @@ public final class MainActivity extends Activity {
         sPenDetected = true;
         sPenActive = !inserted;
         dispatchSpenState();
+        if (inserted) clearSpenHover();
+    }
+
+    private void reportSpenHover(MotionEvent event) {
+        if (webView == null || isDestroyed() || event.getPointerCount() == 0) return;
+        int type = event.getToolType(0);
+        if (type != MotionEvent.TOOL_TYPE_STYLUS && type != MotionEvent.TOOL_TYPE_ERASER) return;
+        if (event.getActionMasked() == MotionEvent.ACTION_HOVER_EXIT) {
+            clearSpenHover();
+            return;
+        }
+        float x = event.getX();
+        float y = event.getY();
+        if (!Float.isFinite(x) || !Float.isFinite(y) || webView.getWidth() <= 0 || webView.getHeight() <= 0) return;
+        sPenHovering = true;
+        String detail = "{\"hovering\":true,\"x\":" + x + ",\"y\":" + y +
+            ",\"width\":" + webView.getWidth() + ",\"height\":" + webView.getHeight() +
+            ",\"buttons\":" + event.getButtonState() + "}";
+        webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('zamer-spen-hover',{detail:" + detail + "}));", null);
+    }
+
+    private void clearSpenHover() {
+        sPenHovering = false;
+        if (webView != null && !isDestroyed()) webView.evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('zamer-spen-hover',{detail:{hovering:false}}));", null);
     }
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
@@ -335,6 +371,12 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        clearSpenHover();
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
         if (sPenReceiverRegistered) {
             try {
@@ -388,6 +430,21 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String availableUpdateVersion() {
             return updater.availableVersion();
+        }
+
+        @JavascriptInterface
+        public void showKeyboard() {
+            runOnUiThread(() -> {
+                if (webView == null || isDestroyed()) return;
+                webView.requestFocus();
+                // Native hover-button events are not WebView user gestures.
+                // Show the IME after the focused HTML input creates its connection.
+                webView.post(() -> {
+                    if (webView == null || isDestroyed() || !webView.hasFocus()) return;
+                    InputMethodManager keyboard = getSystemService(InputMethodManager.class);
+                    if (keyboard != null) keyboard.showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT);
+                });
+            });
         }
 
         @JavascriptInterface

@@ -259,6 +259,7 @@ export function pickFaces(faces) {
     else if (f.roofSource === 'linked' && f.roofId) pick = { type: 'roof', id: f.roofId, levelId: f.level };
     else if (f.roofId && (f.kind === 'roof' || f.kind === 'parapet' || f.kind === 'fascia')) pick = { type: 'roof', id: f.roofId, levelId: f.level };
     else if (f.facadeKind && f.massId) pick = { type: 'mass', id: f.massId, normal: f.normal };
+    else if (f.siteEntryId) pick = { type: 'site', kind: 'entry', id: f.siteEntryId };
     else if (f.landscapeId) pick = { type: 'landscape', id: f.landscapeId };
     else if (!OCCLUDERS.has(f.kind)) continue;
     const P = f.pts;

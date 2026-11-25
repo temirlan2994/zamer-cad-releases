@@ -2,8 +2,8 @@
 
 import { buildingCenter, rotateBuildingAbout } from '../core/building.js';
 import { siteWarning } from '../core/rooms.js';
-import { DEFAULT_ROAD_WIDTH, nearestPointOnPolyline, polygonAreaM2 } from '../core/site.js';
-import { pointInPolygon } from '../core/zamer/geometry.js';
+import { DEFAULT_ROAD_WIDTH, polygonAreaM2 } from '../core/site.js';
+import { entryAt } from '../core/site-entries.js';
 import { canvas, toast } from './dom.js';
 import { snapAt } from './draw-snap-ui.js';
 import { applyModeRotation } from './modes.js';
@@ -96,17 +96,8 @@ export function addDraftPoint(world, event = null, { exact = false } = {}) {
 }
 
 // Точка въезда на границе, ближайшая к курсору, со стрелкой внутрь участка.
-export function computeEntryAt(world) {
-  const site = state.project.site;
-  if (!site.boundary || site.boundary.length < 3) return null;
-  const near = nearestPointOnPolyline(site.boundary, world, true);
-  if (!near) return null;
-  const candidates = [near.angle + 90, near.angle - 90];
-  let dir = candidates[0];
-  const rad = (candidates[0] * Math.PI) / 180;
-  const probe = { x: near.x + Math.cos(rad) * 500, y: near.y + Math.sin(rad) * 500 };
-  if (!pointInPolygon(probe, site.boundary)) dir = candidates[1];
-  return { x: near.x, y: near.y, dir, dist: near.dist };
+export function computeEntryAt(world, entry = { kind: state.tool?.entryKind || 'gate' }) {
+  return entryAt(state.project.site, world, entry);
 }
 
 export function placeNeighborAt(world) {

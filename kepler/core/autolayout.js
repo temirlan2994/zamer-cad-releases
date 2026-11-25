@@ -6,6 +6,7 @@
 // позволяет применить выбранный вариант одной операцией истории.
 
 import { furnitureDef, isStructural } from './catalog.js';
+import { glazedOpeningProjections } from './glazed-openings.js';
 import { itemShapes } from './clearance.js';
 import { analyzeRoomErgonomics, ergoContext, ERGO_NORMS } from './ergonomics.js';
 import { itemsInRoom } from './furnish.js';
@@ -239,7 +240,7 @@ function contextOf(project, room, walls, { hardDoorFront = false } = {}) {
   const solar = windowMorningExposure(project);
   const solarByOpening = new Map(solar.windows.map((entry) => [entry.openingId, entry]));
   const windowSun = [];
-  for (const opening of project.openings || []) {
+  for (const opening of glazedOpeningProjections(project.openings || [])) {
     const placed = openingRect(project, opening, walls);
     if (!placed) continue;
     if (opening.kind === 'door') {

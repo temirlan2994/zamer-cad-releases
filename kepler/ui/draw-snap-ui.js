@@ -6,6 +6,7 @@
 import { DEFAULT_SNAP_OPTS, POLAR_STEPS, dynamicPoint, parseDynamicLength, snapDrawPoint } from '../core/draw-snap.js';
 import { isPathShape, landscapeDef } from '../core/landscape.js';
 import { houseFootprints } from '../core/landscape-tools.js';
+import { composeView, toLocal } from '../core/building.js';
 import { state } from './state.js';
 import { requestDraw } from './view.js';
 
@@ -132,7 +133,7 @@ export function bindSnapBar() {
 
 // Линии, контуры, углы дома, граница, центры деревьев — для привязок.
 // exclude: { landscapeId } или { siteKind, siteId } — правимый объект.
-export function snapContext(exclude = {}) {
+export function snapContext(exclude = {}, space = 'world') {
   const site = state.project?.site || {};
   const shapes = [];
   const circles = [];
@@ -148,7 +149,20 @@ export function snapContext(exclude = {}) {
   let house;
   try { house = houseFootprints(state.project); } catch { house = []; }
   const boundary = site.boundary?.length >= 3 && !skip('boundary') ? site.boundary : null;
+  if (space === 'plan') {
+    const local = (p) => toLocal(state.project.building, p);
+    return {
+      shapes: shapes.map((shape) => ({ ...shape, points: shape.points.map(local) })),
+      circles: circles.map(local), house: house.map((polygon) => polygon.map(local)),
+      boundary: boundary?.map(local) || null,
+    };
+  }
   return { shapes, circles, house, boundary };
+}
+
+function snapAxis(space) {
+  const view = space === 'plan' ? composeView(state.view, state.project.building) : state.view;
+  return -(view.rotation || 0);
 }
 
 // Вершина index тянется: оставшиеся части той же линии (без её рёбер).
@@ -191,20 +205,27 @@ const segKey = (s) => (s ? `${s.a.x},${s.a.y},${s.b.x},${s.b.y}` : '');
 
 /**
  * Привязать точку инструмента. opts: prev, points, closed, exclude, extraShapes,
- * grid (мм, 0 — без сетки), objects (false — без объектных привязок).
+ * grid (мм, 0 — без сетки), objects (false — без объектных привязок),
+ * space ('world' — участок, 'plan' — локальные координаты дома).
  * Результат кладётся в state.drawSnap для отрисовки направляющих.
  */
 export function snapAt(world, event, opts = {}) {
-  const { prev = null, points = [], closed = false, exclude = {}, extraShapes = [], grid = 0, objects = true } = opts;
+  const { prev = null, points = [], closed = false, exclude = {}, extraShapes = [], grid = 0, objects = true, space = 'world' } = opts;
   if (event) lastMods = { shiftKey: Boolean(event.shiftKey), ctrlKey: Boolean(event.ctrlKey) };
   const s = snapSettings();
-  const prevKey = prev ? `${prev.x},${prev.y}` : '';
-  if (prevKey !== parallelPrev) { parallelSeg = null; parallelPrev = prevKey; }
-  const ctx = snapContext(exclude);
+  const axis = snapAxis(space);
+  const prevKey = `${space}|${axis}|${prev ? `${prev.x},${prev.y}` : ''}`;
+  if (prevKey !== parallelPrev) {
+    parallelSeg = null;
+    parallelPrev = prevKey;
+    dwell = null;
+    clearTimeout(dwellTimer);
+  }
+  const ctx = snapContext(exclude, space);
   const res = snapDrawPoint({
     cursor: world, prev, points, closed,
     otherShapes: [...ctx.shapes, ...extraShapes], houseCorners: ctx.house, boundary: ctx.boundary, circles: ctx.circles,
-    scale: state.view.scale, grid, axis: -(state.view.rotation || 0), hoverSeg: parallelSeg,
+    scale: state.view.scale, grid, axis, hoverSeg: parallelSeg,
     opts: {
       ortho: s.ortho, polar: s.polar, polarStep: s.polarStep, objects: s.objects && objects, tracking: s.tracking,
       free: lastMods.shiftKey, tempOrtho: lastMods.ctrlKey,
@@ -224,7 +245,7 @@ export function snapAt(world, event, opts = {}) {
   } else if (!res.nearSeg) {
     dwell = null;
   }
-  state.drawSnap = { ...res, prev };
+  state.drawSnap = { ...res, prev, space };
   return res;
 }
 
@@ -242,7 +263,7 @@ const DIGIT = /^[0-9.,]$/;
 
 // Ввод с клавиатуры во время черчения. prev — последняя точка (null — ввод
 // недоступен). commit(point) ставит точку. true — клавиша обработана.
-export function handleDynamicKey(event, prev, commit) {
+export function handleDynamicKey(event, prev, commit, { space = 'world' } = {}) {
   if (!prev || event.ctrlKey || event.metaKey || event.altKey) return false;
   const d = state.dynInput;
   const field = d?.field || 'length';
@@ -288,7 +309,7 @@ export function handleDynamicKey(event, prev, commit) {
     if (!length) { requestDraw(); return true; }
     const angle = d.angle.trim() ? Number(d.angle.replace(',', '.')) : null;
     const point = dynamicPoint({
-      prev, toward: state.drawSnap?.point || null, length, angle, axis: -(state.view.rotation || 0),
+      prev, toward: state.drawSnap?.point || null, length, angle, axis: snapAxis(space),
     });
     state.dynInput = null;
     if (point) commit({ x: Math.round(point.x * 10) / 10, y: Math.round(point.y * 10) / 10 });

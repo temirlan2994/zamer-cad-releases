@@ -1,6 +1,8 @@
 // Действия режима «План»: комнаты, проёмы, мебель, удаление, группы.
 
 import { CORNER_PRESET, cornerWindowGeometry } from '../core/corner-windows.js';
+import { isGlazedAssembly } from '../core/glazed-openings.js';
+import { siteEntries, syncPrimaryEntry } from '../core/site-entries.js';
 import { levelWindowOpenings } from '../core/spanning-windows.js';
 import { wallZRange } from '../core/wall-z-range.js';
 import { applyOpeningPreset, openingHeight, openingSill } from '../core/opening-preset.js';
@@ -217,7 +219,6 @@ export function computeOpeningParams(at, { project = state.project, walls = stat
   const side = wall.sides[roomId];
   const room = roomById(project, roomId);
   if (!room) return null;
-  if (openKind === 'window' && (wall.kind === 'shared' || room.parentId)) return { error: 'Окно можно разместить только на наружной стене' };
   const edge = sideEdge(room, side);
   const base = edge.orient === 'h' ? room.x : room.y;
   const along = wall.orient === 'h' ? at.x : at.y;
@@ -244,7 +245,7 @@ export function computeOpeningParams(at, { project = state.project, walls = stat
     snapOpeningOffset(project, opening, walls, along - base, snap), { others });
   if (free === null) return { error: `На этой стене нет места: проём пересёкся бы с соседними (нужен зазор ≥ ${OPENING_GAP} мм)` };
   opening.offset = free;
-  if (openKind === 'door') {
+  if (openKind === 'door' || isGlazedAssembly(opening)) {
     // Сторона открывания — та, где мышь относительно линии стены.
     const perpRoomCenter = wall.orient === 'h' ? room.y + room.h / 2 : room.x + room.w / 2;
     const mousePerp = wall.orient === 'h' ? at.y : at.x;
@@ -274,7 +275,7 @@ function computeHostOpening(at, wall, openKind, project, walls, snap, others) {
     snapOpeningOffset(project, opening, walls, opening.host.t, snap), { others });
   if (free === null) return { error: `На этой стене нет места: проём пересёкся бы с соседними (нужен зазор ≥ ${OPENING_GAP} мм)` };
   opening.host.t = free;
-  if (openKind === 'door') {
+  if (openKind === 'door' || isGlazedAssembly(opening)) {
     // Открывание — в сторону курсора: «внутрь» — слева от оси a→b.
     const mid = wall.orient === 'h' ? wall.band.y + wall.band.h / 2 : wall.band.x + wall.band.w / 2;
     const mouseSign = Math.sign((wall.orient === 'h' ? at.y : at.x) - mid) || wall.outward;
@@ -290,10 +291,16 @@ export function placeOpeningAt(at) {
   if (res.error) { toast(res.error); return; }
   const { opening } = res;
   mutate(() => { state.project.openings.push(opening); });
+  if (isGlazedAssembly(opening)) {
+    cancelTool();
+    selectObject({ type: 'opening', id: opening.id });
+    toast('Дверь установлена · Окна слева и справа можно включить в свойствах');
+    return;
+  }
   // Инструмент остаётся активным: можно ставить следующий проём подряд.
   // Esc — выход; проём правится кликом по нему после выхода.
   state.ghostOpening = null; state.ghostOpeningFull = null; state.ghostDoor = null;
-  toast(`${opening.kind === 'door' ? 'Дверь' : 'Окно'} поставлена · кликайте дальше или Esc`);
+  toast(`${isGlazedAssembly(opening) ? 'Оконно-дверной блок установлен' : opening.kind === 'door' ? 'Дверь поставлена' : 'Окно поставлено'} · кликайте дальше или Esc`);
   requestDraw();
 }
 
@@ -341,6 +348,7 @@ export function deleteSelection() {
   } else if (sel.type === 'multi') {
     mutate(() => {
       state.project.items = state.project.items.filter((i) => !sel.itemIds.includes(i.id));
+      for (const wallId of sel.wallIds || []) removeManualWall(state.project, wallId);
       for (const roomId of sel.roomIds) removeRoom(state.project, roomId);
       reconcileEats(state.project);
       reconcileOpenings();
@@ -350,11 +358,14 @@ export function deleteSelection() {
   } else if (sel.type === 'site') {
     const site = state.project.site;
     mutate(() => {
-      if (sel.kind === 'boundary') { site.boundary = null; site.entry = null; }
+      if (sel.kind === 'boundary') { site.boundary = null; site.entry = null; site.entries = []; }
       if (sel.kind === 'redline') site.redLine = null;
       if (sel.kind === 'road') site.roads = site.roads.filter((r) => r.id !== sel.id);
       if (sel.kind === 'neighbor') site.neighbors = site.neighbors.filter((n) => n.id !== sel.id);
-      if (sel.kind === 'entry') site.entry = null;
+      if (sel.kind === 'entry') {
+        site.entries = siteEntries(site).filter((e) => e.id !== (sel.id || site.entry?.id || 'entry-legacy'));
+        syncPrimaryEntry(site);
+      }
       if (sel.kind === 'underlay') site.underlay = null;
       if (sel.kind === 'terrain-point' && site.terrain) site.terrain.points = site.terrain.points.filter((p) => p.id !== sel.id);
     });
@@ -400,17 +411,21 @@ export function toggleInMulti(kind, id) {
   const sel = state.selection;
   const roomIds = new Set(sel?.type === 'multi' ? sel.roomIds : sel?.type === 'room' ? [sel.id] : []);
   const itemIds = new Set(sel?.type === 'multi' ? sel.itemIds : sel?.type === 'item' ? [sel.id] : []);
-  const set = kind === 'room' ? roomIds : itemIds;
+  const wallIds = new Set(sel?.type === 'multi' ? sel.wallIds || [] : sel?.type === 'wall' && sel.key.startsWith('m|') ? [sel.key.slice(2)] : []);
+  const set = kind === 'wall' ? wallIds : kind === 'room' ? roomIds : itemIds;
   if (set.has(id)) set.delete(id); else set.add(id);
-  const rooms = [...roomIds];
-  const items = [...itemIds];
-  const total = rooms.length + items.length;
+  selectPlanObjects([...roomIds], [...itemIds], [...wallIds]);
+}
+
+export function selectPlanObjects(roomIds, itemIds, wallIds = []) {
+  const total = roomIds.length + itemIds.length + wallIds.length;
   if (total === 0) { selectObject(null); return; }
   if (total === 1) {
-    selectObject(rooms.length ? { type: 'room', id: rooms[0] } : { type: 'item', id: items[0] });
+    selectObject(wallIds.length ? { type: 'wall', key: `m|${wallIds[0]}` }
+      : roomIds.length ? { type: 'room', id: roomIds[0] } : { type: 'item', id: itemIds[0] });
     return;
   }
-  selectObject({ type: 'multi', roomIds: rooms, itemIds: items });
+  selectObject({ type: 'multi', roomIds, itemIds, ...(wallIds.length ? { wallIds } : {}) });
 }
 
 // Выбрать всю группу мебели как мультивыбор. Возвращает этот выбор: на
@@ -454,7 +469,7 @@ function applyGroupChange(action, failText, roomIds = [], { reflow = false } = {
 export function moveMultiBy(dx, dy) {
   const sel = state.selection;
   if (sel?.type !== 'multi') return false;
-  const ok = applyGroupChange((project, carry) => moveRoomGroup(project, sel.roomIds, sel.itemIds, dx, dy, { carry }), 'Так сдвинуть нельзя', sel.roomIds);
+  const ok = applyGroupChange((project, carry) => moveRoomGroup(project, sel.roomIds, sel.itemIds, dx, dy, { carry, wallIds: sel.wallIds }), 'Так сдвинуть нельзя', sel.roomIds);
   if (ok) selectObject(sel);
   return ok;
 }
@@ -555,8 +570,8 @@ export function autoDockAfterGesture(roomIds, kind, { magnet = true, before: bef
 // С помещениями — поворот всей группы (core/room-group.js).
 export function rotateMulti90() {
   const sel = state.selection;
-  if (sel?.type === 'multi' && sel.roomIds.length) {
-    if (applyGroupChange((project, carry) => rotateRoomGroup(project, sel.roomIds, sel.itemIds, { carry }), 'Так повернуть нельзя', sel.roomIds)) {
+  if (sel?.type === 'multi' && (sel.roomIds.length || sel.wallIds?.length)) {
+    if (applyGroupChange((project, carry) => rotateRoomGroup(project, sel.roomIds, sel.itemIds, { carry, wallIds: sel.wallIds }), 'Так повернуть нельзя', sel.roomIds)) {
       selectObject(sel);
       toast('Группа повёрнута на 90° · Ctrl+Z — отменить');
     }
@@ -602,7 +617,7 @@ function selectedItems(sel) {
   if (sel.type === 'item') {
     return [state.project.items.find((item) => item.id === sel.id)].filter(Boolean);
   }
-  if (sel.type === 'multi' && !sel.roomIds.length) {
+  if (sel.type === 'multi' && !sel.roomIds.length && !sel.wallIds?.length) {
     return sel.itemIds.map((id) => state.project.items.find((item) => item.id === id)).filter(Boolean);
   }
   return [];
@@ -611,9 +626,10 @@ function selectedItems(sel) {
 function groupClipboard(sel) {
   return {
     kind: 'group',
-    ...cloneData(captureRoomGroup(state.project, sel.roomIds, sel.itemIds)),
+    ...cloneData(captureRoomGroup(state.project, sel.roomIds, sel.itemIds, sel.wallIds)),
     selectedRoomIds: [...sel.roomIds],
     selectedItemIds: [...sel.itemIds],
+    selectedWallIds: [...(sel.wallIds || [])],
     pastes: 0,
   };
 }
@@ -627,14 +643,16 @@ function pasteGroup(clipboard) {
     state.project.rooms.push(...plan.rooms);
     state.project.openings.push(...plan.openings);
     state.project.items.push(...plan.items);
+    state.project.walls.push(...plan.walls);
     reconcileOpenings();
   });
   clipboard.pastes += 1;
   const itemIndex = new Map(clipboard.items.map((item, index) => [item.id, index]));
   const roomIds = clipboard.selectedRoomIds.map((id) => plan.roomMap.get(id)).filter(Boolean);
   const itemIds = clipboard.selectedItemIds.filter((id) => itemIndex.has(id)).map((id) => plan.items[itemIndex.get(id)].id);
-  const single = roomIds.length === 1 && !itemIds.length;
-  selectObject(single ? { type: 'room', id: roomIds[0] } : { type: 'multi', roomIds, itemIds });
+  const wallIds = (clipboard.selectedWallIds || []).map((id) => plan.wallMap.get(id)).filter(Boolean);
+  const single = roomIds.length === 1 && !itemIds.length && !wallIds.length;
+  selectPlanObjects(roomIds, itemIds, wallIds);
   const where = !plan.dx && !plan.dy ? 'на том же месте'
     : plan.detached ? 'отдельно справа от дома (вплотную места нет)'
       : plan.dx > 0 ? 'справа' : plan.dx < 0 ? 'слева' : plan.dy > 0 ? 'снизу' : 'сверху';
@@ -679,9 +697,9 @@ export function copySelection() {
     const room = roomById(state.project, sel.id);
     if (!room) return false;
     objectClipboard = roomClipboard(room);
-  } else if (sel.type === 'multi' && sel.roomIds.length) {
+  } else if (sel.type === 'multi' && (sel.roomIds.length || sel.wallIds?.length)) {
     objectClipboard = groupClipboard(sel);
-    toast(`Скопирована группа: помещений ${sel.roomIds.length} · Ctrl+V — вставить`);
+    toast('Группа скопирована · Ctrl+V — вставить');
     return true;
   } else {
     toast('Этот тип выделения нельзя скопировать', true);
@@ -907,10 +925,10 @@ export function duplicateSelection() {
   const sel = state.selection;
   if (!sel) return;
   if (sel.type === 'mass') { duplicateMass(sel.id); return; }
-  if (sel.type === 'item' || (sel.type === 'multi' && !sel.roomIds.length)) duplicateItemSelection(sel);
+  if (sel.type === 'item' || (sel.type === 'multi' && !sel.roomIds.length && !sel.wallIds?.length)) duplicateItemSelection(sel);
   else if (sel.type === 'opening') duplicateOpeningSelection(sel);
   else if (sel.type === 'room') duplicateRoomSelection(sel);
-  else if (sel.type === 'multi' && sel.roomIds.length) pasteGroup(groupClipboard(sel));
+  else if (sel.type === 'multi' && (sel.roomIds.length || sel.wallIds?.length)) pasteGroup(groupClipboard(sel));
 }
 
 export function rotateSelection90() {
@@ -954,7 +972,7 @@ export function mirrorSelection() {
     selectObject(sel);
     return;
   }
-  if (sel?.type !== 'multi' || sel.roomIds.length) return;
+  if (sel?.type !== 'multi' || sel.roomIds.length || sel.wallIds?.length) return;
   const items = sel.itemIds.map((id) => state.project.items.find((item) => item.id === id)).filter(Boolean);
   if (!items.length) return;
   const cx = items.reduce((sum, item) => sum + item.x, 0) / items.length;
@@ -970,7 +988,7 @@ export function mirrorSelection() {
 export function flipSelectedOpening(part) {
   const opening = state.selection?.type === 'opening'
     ? state.project.openings.find((candidate) => candidate.id === state.selection.id) : null;
-  if (!opening || opening.kind !== 'door') return;
+  if (!opening || (opening.kind !== 'door' && !isGlazedAssembly(opening))) return;
   mutate(() => {
     if (part === 'hinge') opening.hingeStart = !opening.hingeStart;
     else opening.swingIn = !opening.swingIn;

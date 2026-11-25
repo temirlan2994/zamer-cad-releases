@@ -8,6 +8,24 @@ import {
 } from '../core/opening-catalog.js';
 import { DOOR_TYPES, WINDOW_TYPES } from '../core/walls.js';
 import { applyOpeningPreset, defaultOpeningPreset } from '../core/opening-preset.js';
+import { glazedOpeningParts, setGlazedWindow } from '../core/glazed-openings.js';
+
+test('«С дверью»: ровно три простых варианта, боковые окна выключены до выбора пользователя', () => {
+  const list = openingPresets('window', 'with-door');
+  assert.deepEqual(list.map((p) => p.title), ['Распашная', 'Раздвижная', 'Балконная дверь']);
+  for (const preset of list) {
+    const opening = applyOpeningPreset({ kind: 'window', offset: 2000 }, presetToOpening(preset));
+    const door = glazedOpeningParts(opening)[0];
+    assert.equal(glazedOpeningParts(opening).length, 1);
+    Object.assign(opening, setGlazedWindow(opening, 'left', true));
+    Object.assign(opening, setGlazedWindow(opening, 'right', true));
+    const parts = glazedOpeningParts(opening);
+    assert.equal(parts.length, 3);
+    assert.deepEqual([parts[0].width, parts[0].height], [door.width, door.height]);
+    const low = presetToOpening(preset, 2400);
+    assert.ok(low.assembly.doorHeight <= low.height);
+  }
+});
 
 test('пресеты — только типы модели, у каждой категории есть пресеты, id уникальны', () => {
   assert.equal(new Set(OPENING_PRESETS.map((p) => p.id)).size, OPENING_PRESETS.length);

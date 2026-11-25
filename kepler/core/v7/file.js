@@ -30,7 +30,7 @@ export function fileV7(project, { warnings = [] } = {}) {
     if (!Array.isArray(l.openings)) l.openings = [];
     if (Array.isArray(l.rooms)) nominalizeLevel(l);
   }
-  const out = fromV6(src, { warnings });
+  const out = fromV6(src, { warnings, copy: false });
   if (src.settings?.wallsEngine) out.settings.wallsEngine = src.settings.wallsEngine;
   for (const [k, v] of Object.entries(src)) if (!V7_TOP.has(k) && !(k in out)) out[k] = v;
   out.levels.forEach((l, i) => {
@@ -123,7 +123,7 @@ function levelToV6(l, warnings) {
 }
 
 // Данные файла kepler-plan/7 → данные kepler-plan/6.
-export function toV6Data(data, { warnings = [] } = {}) {
-  const src = JSON.parse(JSON.stringify(data));
+export function toV6Data(data, { warnings = [], copy = true } = {}) {
+  const src = copy ? JSON.parse(JSON.stringify(data)) : data;
   return { ...src, schema: 'kepler-plan/6', levels: (src.levels || []).map((l) => levelToV6(l, warnings)) };
 }

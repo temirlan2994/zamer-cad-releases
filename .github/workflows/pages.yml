@@ -48,8 +48,24 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url || steps.deployment_final.outputs.page_url }}
     steps:
       - name: Публикация
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@v5
+      - name: Пауза после ошибки GitHub Pages
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 15
+      - name: Повтор публикации
+        if: steps.deployment.outcome == 'failure'
+        id: deployment_retry
+        continue-on-error: true
+        uses: actions/deploy-pages@v5
+      - name: Пауза перед последней попыткой
+        if: steps.deployment_retry.outcome == 'failure'
+        run: sleep 30
+      - name: Последняя попытка публикации
+        if: steps.deployment_retry.outcome == 'failure'
+        id: deployment_final
         uses: actions/deploy-pages@v5

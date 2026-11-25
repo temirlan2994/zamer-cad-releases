@@ -4,12 +4,12 @@
 // запись истории.
 //
 // Груз группы: выбранные помещения + их вложенные помещения + мебель и
-// лестницы, стоящие внутри них, + отдельно выбранная мебель. Проёмы хранятся
+// лестницы внутри них + отдельно выбранные мебель и ручные стены. Проёмы хранятся
 // относительно комнаты (side/offset) — при сдвиге едут сами, при повороте
 // пересчитываются.
 
 import { GRID_STEP } from './catalog.js';
-import { createItem } from './model.js';
+import { createItem, makeId } from './model.js';
 import { planRoomsCopy } from './duplicate-room.js';
 import { roomBoundaryEdges, roomContainsPoint, roomPolygon } from './room-shape.js';
 import { validateRoomPlacement } from './rooms.js';
@@ -21,14 +21,15 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 // carry — готовый набор мебели комнат (Set id): жест над съеденной комнатой
 // берёт мебель по ВИДИМОЙ форме до того, как ей вернули номинал (иначе
 // уехала бы мебель верхней комнаты, стоящая над «вырезом»).
-export function groupCargo(project, roomIds = [], itemIds = [], carry = null) {
+export function groupCargo(project, roomIds = [], itemIds = [], carry = null, wallIds = []) {
   const selected = new Set(roomIds);
   const rooms = project.rooms.filter((r) => selected.has(r.id) || (r.parentId && selected.has(r.parentId)));
   const pickedItems = new Set(itemIds);
   const items = (project.items || []).filter((item) => pickedItems.has(item.id)
     || (carry ? carry.has(item.id) : rooms.some((room) => roomContainsPoint(room, item.x, item.y))));
   const ids = new Set(rooms.map((room) => room.id));
-  const walls = (project.walls || []).filter((wall) => ids.has(wall.ownerRoomId));
+  const pickedWalls = new Set(wallIds);
+  const walls = (project.walls || []).filter((wall) => ids.has(wall.ownerRoomId) || pickedWalls.has(wall.id));
   return { rooms, items, walls };
 }
 
@@ -71,9 +72,9 @@ function rollback(project, saved) {
 
 // Сдвиг группы на (dx, dy). Возвращает { ok, reason?, warning?, rooms, items };
 // при ok=false проект возвращается в исходное состояние.
-export function moveRoomGroup(project, roomIds, itemIds, dx, dy, { carry = null } = {}) {
-  const cargo = groupCargo(project, roomIds, itemIds, carry);
-  if (!cargo.rooms.length && !cargo.items.length) return { ok: false, reason: 'Нечего сдвигать' };
+export function moveRoomGroup(project, roomIds, itemIds, dx, dy, { carry = null, wallIds = [] } = {}) {
+  const cargo = groupCargo(project, roomIds, itemIds, carry, wallIds);
+  if (!cargo.rooms.length && !cargo.items.length && !cargo.walls.length) return { ok: false, reason: 'Нечего сдвигать' };
   const saved = remember(project, cargo);
   for (const room of cargo.rooms) { room.x += dx; room.y += dy; }
   for (const item of cargo.items) { item.x += dx; item.y += dy; }
@@ -138,6 +139,10 @@ export function groupCenter(cargo, grid = GRID_STEP) {
   const boxes = [
     ...cargo.rooms.map((r) => ({ x1: r.x, y1: r.y, x2: r.x + r.w, y2: r.y + r.h })),
     ...(cargo.rooms.length ? [] : cargo.items.map((i) => ({ x1: i.x, y1: i.y, x2: i.x, y2: i.y }))),
+    ...(cargo.walls || []).map((w) => ({
+      x1: Math.min(w.axis.a.x, w.axis.b.x), y1: Math.min(w.axis.a.y, w.axis.b.y),
+      x2: Math.max(w.axis.a.x, w.axis.b.x), y2: Math.max(w.axis.a.y, w.axis.b.y),
+    })),
   ];
   if (!boxes.length) return null;
   const cx = (Math.min(...boxes.map((b) => b.x1)) + Math.max(...boxes.map((b) => b.x2))) / 2;
@@ -148,8 +153,8 @@ export function groupCenter(cargo, grid = GRID_STEP) {
 // Поворот группы на 90° по часовой вокруг центра группы. Проёмы остаются на
 // тех же (повёрнутых) местах стен, переопределения своих стен (толщина,
 // тип, скрытие) переходят на повёрнутые стороны. Возвращает как moveRoomGroup.
-export function rotateRoomGroup(project, roomIds, itemIds, { grid = GRID_STEP, carry = null } = {}) {
-  const cargo = groupCargo(project, roomIds, itemIds, carry);
+export function rotateRoomGroup(project, roomIds, itemIds, { grid = GRID_STEP, carry = null, wallIds = [] } = {}) {
+  const cargo = groupCargo(project, roomIds, itemIds, carry, wallIds);
   const center = groupCenter(cargo, grid);
   if (!center) return { ok: false, reason: 'Нечего поворачивать' };
   const { x: cx, y: cy } = center;
@@ -228,14 +233,16 @@ function turnCargo(project, cargo, cx, cy) {
   }
 }
 
-// Снимок группы для буфера (Ctrl+C): помещения, их проёмы и мебель.
-export function captureRoomGroup(project, roomIds, itemIds = []) {
-  const cargo = groupCargo(project, roomIds, itemIds);
+// Снимок группы для буфера (Ctrl+C): помещения, мебель, ручные стены и проёмы.
+export function captureRoomGroup(project, roomIds, itemIds = [], wallIds = []) {
+  const cargo = groupCargo(project, roomIds, itemIds, null, wallIds);
   const ids = new Set(cargo.rooms.map((r) => r.id));
+  const wallSet = new Set(cargo.walls.map((w) => w.id));
   return {
     rooms: clone(cargo.rooms),
-    openings: clone((project.openings || []).filter((o) => ids.has(o.roomId))),
+    openings: clone((project.openings || []).filter((o) => ids.has(o.roomId) || wallSet.has(o.host?.wallId))),
     items: clone(cargo.items),
+    walls: clone(cargo.walls),
   };
 }
 
@@ -244,7 +251,9 @@ export function captureRoomGroup(project, roomIds, itemIds = []) {
 // убираются, мебель едет с тем же смещением. source — снимок captureRoomGroup.
 // Проект не меняется. Возвращает план planRoomsCopy + items.
 export function planGroupCopy(project, source) {
-  const plan = planRoomsCopy(project, source.rooms, source.openings);
+  if (!source.rooms.length && !source.walls?.length) return { ok: false, reason: 'Нет помещений для копии' };
+  const plan = source.rooms.length ? planRoomsCopy(project, source.rooms, source.openings)
+    : { ok: true, rooms: [], openings: [], roomMap: new Map(), dx: 1000, dy: 1000, detached: true };
   if (!plan.ok) return plan;
   const ids = new Set(source.rooms.map((r) => r.id));
   const anchorIds = new Set(source.rooms.filter((r) => !r.parentId || !ids.has(r.parentId)).map((r) => plan.roomMap.get(r.id)));
@@ -262,5 +271,18 @@ export function planGroupCopy(project, source) {
     }
     return copy;
   });
-  return { ...plan, items };
+  const wallMap = new Map();
+  const walls = (source.walls || []).map((wall) => {
+    const copy = clone(wall);
+    copy.id = makeId('wall');
+    wallMap.set(wall.id, copy.id);
+    for (const p of [copy.axis.a, copy.axis.b]) { p.x += plan.dx; p.y += plan.dy; }
+    if (plan.roomMap.has(wall.ownerRoomId)) copy.ownerRoomId = plan.roomMap.get(wall.ownerRoomId);
+    else delete copy.ownerRoomId;
+    return copy;
+  });
+  const wallOpenings = (source.openings || []).filter((o) => wallMap.has(o.host?.wallId)).map((opening) => ({
+    ...clone(opening), id: makeId('opening'), host: { ...opening.host, wallId: wallMap.get(opening.host.wallId) },
+  }));
+  return { ...plan, items, walls, wallMap, openings: [...plan.openings.filter((o) => !o.host), ...wallOpenings] };
 }

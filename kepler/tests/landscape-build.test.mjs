@@ -125,6 +125,17 @@ test('короб: группа — перенос, поворот, размер,
   assert.ok(rest.every((o) => !o.parent));
 });
 
+test('копия выноски с объектом меняет связь, отдельная копия становится самостоятельной', () => {
+  const tree = createLandscapeObject('tree-fruit', 0, 0);
+  const note = createLandscapeObject('callout', 0, 0, { meta: { text: 'Яблоня', targetId: tree.id } });
+  const [copiedTree, copiedNote] = cloneGroup([tree, note], 1000, 1000);
+  assert.equal(copiedNote.meta.targetId, copiedTree.id);
+  assert.equal(note.meta.targetId, tree.id, 'исходная связь сохранена');
+  const [standalone] = cloneGroup([note]);
+  assert.equal(standalone.meta.targetId, null);
+  assert.equal(normalizeLandscape({ objects: [standalone] }).objects[0].meta.targetId, null);
+});
+
 test('посадка внутрь: заполнение короба, все внутри и привязаны', () => {
   const box = createLandscapeObject('planter-box', 0, 0, { id: 'box-c', w: 4000, h: 1600 });
   const objects = [box];
