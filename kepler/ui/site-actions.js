@@ -96,7 +96,7 @@ export function addDraftPoint(world, event = null, { exact = false } = {}) {
 }
 
 // Точка въезда на границе, ближайшая к курсору, со стрелкой внутрь участка.
-export function computeEntryAt(world, entry = { kind: state.tool?.entryKind || 'gate' }) {
+export function computeEntryAt(world, entry = { ...state.tool, kind: state.tool?.entryKind || 'gate' }) {
   return entryAt(state.project.site, world, entry);
 }
 

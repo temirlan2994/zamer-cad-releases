@@ -2,6 +2,7 @@
 
 import { openClimatePanel } from './solar-analysis.js';
 import { polygonAreaM2 } from '../core/site.js';
+import { drawEntryPreview } from '../render.js';
 import { ensureSiteEntries, entryAt, entryById, entryOverlaps, entryTitle, syncPrimaryEntry } from '../core/site-entries.js';
 import { workingBuildableGeometry } from '../core/site-planning.js';
 import { setBuildingOrigin } from '../core/site-check.js';
@@ -202,26 +203,28 @@ export function renderSiteObjectProps(panel, sel) {
     const wicket = entry.kind === 'wicket';
     panel.innerHTML = `
       <h2>${entryTitle(entry)}</h2>
+      <canvas class="entry-props-preview" id="entryPreview" width="480" height="200" aria-label="Предпросмотр ворот или калитки"></canvas>
       <div class="prop-block">
-        <label class="prop-field"><span>${wicket ? 'Ширина калитки' : 'Ширина ворот'}, м</span>
-          <input id="entryWidth" type="number" min="${wicket ? .6 : 2}" max="${wicket ? 2 : 10}" step="0.1" value="${(entry.width || (wicket ? 1000 : 4000)) / 1000}"></label>
-        <label class="prop-field"><span>Высота, м</span><input id="entryHeight" type="number" min="0.6" max="4" step="0.1" value="${(entry.height || 1800) / 1000}"></label>
+        ${wicket ? '' : `<label class="prop-field"><span>Тип ворот</span><select id="entryOpening"><option value="swing" ${entry.opening !== 'sliding' ? 'selected' : ''}>Распашные</option><option value="sliding" ${entry.opening === 'sliding' ? 'selected' : ''}>Раздвижные</option></select></label>`}
+        <label class="prop-field"><span>${wicket ? 'Ширина калитки' : 'Ширина ворот'}, мм</span>
+          <input id="entryWidth" type="number" min="${wicket ? 600 : 2000}" max="${wicket ? 2000 : 10000}" step="50" value="${entry.width || (wicket ? 1000 : 4000)}"></label>
+        <label class="prop-field"><span>Высота, мм</span><input id="entryHeight" type="number" min="600" max="4000" step="50" value="${entry.height || 1800}"></label>
         ${wicket ? '' : `<label class="check-row"><input id="entryWicket" type="checkbox" ${entry.wicket ? 'checked' : ''}><span>Калитка рядом с воротами</span></label>
         ${entry.wicket ? `<label class="prop-field"><span>Сторона калитки (со стороны участка)</span><select id="entryWicketSide"><option value="left" ${entry.wicketSide === 'left' ? 'selected' : ''}>Слева</option><option value="right" ${entry.wicketSide !== 'left' ? 'selected' : ''}>Справа</option></select></label>
-        <label class="prop-field"><span>Ширина калитки, м</span><input id="entryWicketWidth" type="number" min="0.6" max="2" step="0.1" value="${(entry.wicketWidth || 1000) / 1000}"></label>` : ''}`}
+        <label class="prop-field"><span>Ширина калитки, мм</span><input id="entryWicketWidth" type="number" min="600" max="2000" step="50" value="${entry.wicketWidth || 1000}"></label>` : ''}`}
       </div>
-      <p class="empty-hint">Тяните вдоль границы, чтобы передвинуть. Инструмент «Ворота» или «Калитка» добавляет новый объект на свободном месте.</p>
+      <p class="empty-hint">Тяните вдоль границы, чтобы передвинуть. Кнопка «Въезд» открывает выбор ворот и калитки.</p>
       <div class="prop-actions"><button id="entryAdd">Добавить ещё</button><button id="del" class="danger">Удалить</button></div>`;
     const apply = () => {
-      const width = Number(panel.querySelector('#entryWidth').value) * 1000;
-      const height = Number(panel.querySelector('#entryHeight').value) * 1000;
+      const width = Number(panel.querySelector('#entryWidth').value);
+      const height = Number(panel.querySelector('#entryHeight').value);
       if (!Number.isFinite(width) || width < (wicket ? 600 : 2000) || width > (wicket ? 2000 : 10000) || !Number.isFinite(height) || height < 600 || height > 4000) {
         toast('Проверьте ширину и высоту'); renderSiteObjectProps(panel, sel); return;
       }
-      const next = { ...entry, width, height, wicket: panel.querySelector('#entryWicket')?.checked || false,
+      const next = { ...entry, width, height, opening: panel.querySelector('#entryOpening')?.value || 'swing', wicket: panel.querySelector('#entryWicket')?.checked || false,
         wicketSide: panel.querySelector('#entryWicketSide')?.value || entry.wicketSide || 'right',
-        wicketWidth: panel.querySelector('#entryWicketWidth') ? Number(panel.querySelector('#entryWicketWidth').value) * 1000 : entry.wicketWidth || 1000 };
-      if (next.wicketWidth < 600 || next.wicketWidth > 2000) { toast('Ширина калитки: от 0,6 до 2 м'); renderSiteObjectProps(panel, sel); return; }
+        wicketWidth: panel.querySelector('#entryWicketWidth') ? Number(panel.querySelector('#entryWicketWidth').value) : entry.wicketWidth || 1000 };
+      if (next.wicketWidth < 600 || next.wicketWidth > 2000) { toast('Ширина калитки: от 600 до 2000 мм'); renderSiteObjectProps(panel, sel); return; }
       const spot = entryAt(site, next, next);
       if (!spot || entryOverlaps(site, { ...next, ...spot }, entry.id)) { toast('Недостаточно места: рядом угол, ворота или калитка'); renderSiteObjectProps(panel, sel); return; }
       mutate(() => {
@@ -231,9 +234,10 @@ export function renderSiteObjectProps(panel, sel) {
       });
       selectObject({ ...sel, id: entry.id });
     };
+    drawEntryPreview(panel.querySelector('#entryPreview'), entry);
     for (const input of panel.querySelectorAll('input, select')) input.addEventListener('change', apply);
     panel.querySelector('#entryAdd').addEventListener('click', () => {
-      setTool({ kind: 'entry', entryKind: entry.kind || 'gate' }, 'Кликните по свободному месту на границе участка');
+      setTool({ kind: 'entry', entryKind: entry.kind || 'gate', opening: entry.opening || 'swing', width: entry.width, height: entry.height, wicket: entry.wicket, wicketWidth: entry.wicketWidth, wicketSide: entry.wicketSide }, 'Кликните по свободному месту на границе участка');
       closeSheets();
     });
     panel.querySelector('#del').addEventListener('click', deleteSelection);

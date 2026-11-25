@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import { clickWorld, openNew, settleView, startApp, worldToClient } from './helpers.mjs';
 
 const entries = (page) => page.evaluate(() => structuredClone(window.__kepler.state.project.site.entries));
+async function chooseEntry(page, choice, { mobile = false, wicket = false, size = choice === 'wicket' ? '1000-1800' : '4000-1800' } = {}) {
+  if (mobile) {
+    if (!await page.locator('#mobileDraw').isVisible()) await page.tap('#mobileBar [data-sheet="draw"]');
+    await page.tap('#mobileDraw [data-draw="entry"]');
+  } else await page.click('[data-site-tool="entry"]');
+  await page.click(`#siteEntryMenu [data-entry-cat="${choice}"]`);
+  if (choice !== 'wicket') await page.locator('#entryPresetWicket').setChecked(wicket);
+  if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/entry-menu-${mobile ? 'phone' : 'desktop'}-${choice}.png` });
+  await page.click(`#siteEntryMenu [data-entry-preset="${choice}-${size}"]`);
+}
 async function setup(page, mobile = false) {
   await openNew(page);
   await page.evaluate(async () => {
@@ -29,11 +39,21 @@ describe('ворота и калитки участка', () => {
 
   it('два клика создают двое ворот, а отдельная калитка — третий объект', async () => {
     const { page } = app;
-    await page.click('[data-site-tool="entry"]');
+    assert.equal(await page.locator('[data-site-tool="entry"]').getAttribute('aria-label'), 'Въезд');
+    assert.equal(await page.locator('[data-site-tool="wicket"]').count(), 0);
+    await chooseEntry(page, 'swing');
     await clickWorld(page, 6000, 18000);
+    await page.click('[data-site-tool="entry"]');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#siteEntryMenu[open]').count(), 0);
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'entry');
+    await chooseEntry(page, 'sliding', { wicket: true, size: '5000-2000' });
     await clickWorld(page, 16000, 18000);
     assert.equal((await entries(page)).length, 2);
-    await page.click('[data-site-tool="wicket"]');
+    assert.deepEqual((await entries(page)).map((e) => [e.opening, e.wicket]), [['swing', false], ['sliding', true]]);
+    assert.deepEqual([(await entries(page))[1].width, (await entries(page))[1].height], [5000, 2000]);
+    await chooseEntry(page, 'wicket');
+    assert.equal(await page.locator('#siteEntryMenu[open]').count(), 0);
     await clickWorld(page, 6000, 0);
     const list = await entries(page);
     assert.equal(list.length, 3);
@@ -48,18 +68,38 @@ describe('ворота и калитки участка', () => {
     await clickWorld(page, 16000, 18000);
     await page.check('#entryWicket');
     await page.selectOption('#entryWicketSide', 'left');
-    await page.fill('#entryWicketWidth', '1.2'); await page.locator('#entryWicketWidth').press('Tab');
+    await page.fill('#entryWicketWidth', '1200'); await page.locator('#entryWicketWidth').press('Tab');
     let list = await entries(page);
     assert.equal(list[0].wicket, false);
     assert.equal(list[1].wicket, true);
     assert.equal(list[1].wicketSide, 'left');
     assert.equal(list[1].wicketWidth, 1200);
-    assert.equal(list[1].width, 4000);
+    assert.equal(list[1].width, 5000);
+    await page.selectOption('#entryOpening', 'swing');
+    assert.equal((await entries(page))[1].width, 5000);
+    assert.equal((await entries(page))[1].wicketWidth, 1200);
+    await page.selectOption('#entryOpening', 'sliding');
     await page.uncheck('#entryWicket');
     list = await entries(page);
     assert.equal(list[1].wicket, false);
     assert.equal(list[1].wicketWidth, 1200);
     await page.check('#entryWicket');
+  });
+
+  it('размеры установленных ворот правятся в миллиметрах, как у окон', async () => {
+    const { page } = app;
+    await page.fill('#entryWidth', '4500'); await page.locator('#entryWidth').press('Tab');
+    await page.fill('#entryHeight', '2100'); await page.locator('#entryHeight').press('Tab');
+    const list = await entries(page);
+    assert.deepEqual([list[1].width, list[1].height, list[1].wicketWidth], [4500, 2100, 1200]);
+    assert.equal(list[0].width, 4000);
+    assert.equal(list[2].width, 1000);
+    assert.equal(await page.locator('#entryWidth').inputValue(), '4500');
+    assert.equal(await page.locator('#entryHeight').inputValue(), '2100');
+    if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/entry-dimension-properties.png` });
+    await page.click('#undoBtn'); await page.click('#undoBtn');
+    assert.deepEqual((await entries(page)).map((e) => e.width), [4000, 5000, 1000]);
+    assert.equal((await entries(page))[1].height, 2000);
   });
 
   it('перемещение и удаление затрагивают одни ворота; Undo восстанавливает их', async () => {
@@ -93,7 +133,7 @@ describe('ворота и калитки участка', () => {
     assert.equal(hit?.type, 'site'); assert.equal(hit?.id, target.id);
     await page.mouse.click(target.at.x, target.at.y);
     assert.deepEqual(await page.evaluate(() => window.__kepler.state.selection), { type: 'site', kind: 'entry', id: target.id });
-    assert.equal(await page.locator('#entryWidth').inputValue(), '4');
+    assert.equal(await page.locator('#entryWidth').inputValue(), '4000');
     if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/site-gates-3d.png` });
     assert.deepEqual(app.errors, []);
   });
@@ -105,8 +145,7 @@ describe('ворота на телефоне', () => {
   after(async () => { await app?.close(); });
   it('касания создают несколько ворот; в свойствах включается калитка', async () => {
     const { page } = app;
-    await page.tap('#mobileBar [data-sheet="draw"]');
-    await page.tap('#mobileDraw [data-draw="entry"]');
+    await chooseEntry(page, 'sliding', { mobile: true });
     for (const x of [6000, 16000]) {
       const p = await worldToClient(page, x, 18000);
       await page.touchscreen.tap(p.x, p.y);
@@ -117,8 +156,7 @@ describe('ворота на телефоне', () => {
     assert.equal((await entries(page))[1].wicket, true);
     await page.tap('#entryAdd');
     assert.equal(await page.locator('body').evaluate((b) => b.classList.contains('sheet-props')), false);
-    await page.tap('#mobileBar [data-sheet="draw"]');
-    await page.tap('#mobileDraw [data-draw="wicket"]');
+    await chooseEntry(page, 'wicket', { mobile: true });
     const at = await worldToClient(page, 6000, 0);
     await page.touchscreen.tap(at.x, at.y);
     assert.equal((await entries(page))[2].kind, 'wicket');
