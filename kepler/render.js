@@ -1034,6 +1034,11 @@ export function createRenderer(canvas) {
         const room = state.project.rooms.find((r) => r.id === id);
         if (room) ctx.strokeRect(room.x, room.y, room.w, room.h);
       }
+      for (const id of state.selection.wallIds || []) {
+        const wall = state.project.walls.find((w) => w.id === id);
+        if (!wall) continue;
+        ctx.beginPath(); ctx.moveTo(wall.axis.a.x, wall.axis.a.y); ctx.lineTo(wall.axis.b.x, wall.axis.b.y); ctx.stroke();
+      }
       ctx.setLineDash([]);
     }
     // Подсветка места замечания (ui/issues.js) — на мгновение после перехода.

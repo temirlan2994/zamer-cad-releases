@@ -12,7 +12,7 @@ import { stepLevel } from './levels.js';
 import { applyLibraryTab } from './library.js';
 import {
   copySelection, deleteSelection, duplicateSelection, eatOverlapsAfter, mirrorSelection, moveMultiBy,
-  pasteSelection, reconcileOpenings, rotateSelection90,
+  pasteSelection, reconcileOpenings, rotateSelection90, selectPlanObjects,
 } from './plan-actions.js';
 import {
   addLandscapeDraftExact, deleteLandscapeSelection, duplicateLandscapeSelection, handleLandscapeKey, landscapeDraftPrev,
@@ -193,6 +193,12 @@ export function bindKeyboard() {
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyY') { event.preventDefault(); redo(); return; }
     // «Ландшафт»: копирование, удаление, поворот, стрелки — свои объекты.
     if (state.modeName === 'landscape' && handleLandscapeKey(event)) return;
+    if ((event.ctrlKey || event.metaKey) && event.code === 'KeyA' && state.modeName === 'plan' && !state.tool && !state.roofPlan) {
+      event.preventDefault();
+      selectPlanObjects(state.project.rooms.map((r) => r.id), state.project.items.map((i) => i.id),
+        state.project.walls.filter((w) => !w.hidden).map((w) => w.id));
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyC' && state.selection) {
       event.preventDefault();
       copySelection();

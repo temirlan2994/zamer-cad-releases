@@ -58,7 +58,7 @@ import { switchLevel } from './levels.js';
 import { closeLibrarySheet } from './mobile.js';
 import {
   addBedsideNightstand, addFurnitureAt, autoDockAfterGesture, computeOpeningParams, eatOverlapsAfter, openingSnapOpts, placeOpeningAt,
-  placeRoomAt, reconcileOpenings, roomPlacementContext, selectGroup, toggleInMulti, toggleOpeningFlip,
+  placeRoomAt, reconcileOpenings, roomPlacementContext, selectGroup, selectPlanObjects, toggleInMulti, toggleOpeningFlip,
 } from './plan-actions.js';
 import {
   addDraftPoint, addNorthPoint, computeEntryAt, finishDraft, placeNeighborAt, updateDraftCursor,
@@ -122,7 +122,7 @@ function sameSelectedTarget(a, b) {
     return a.key === b.key && sameFrom;
   }
   if (a.type === 'site') return a.kind === b.kind && (a.id ?? null) === (b.id ?? null);
-  if (a.type === 'multi') return sameIdSet(a.roomIds, b.roomIds) && sameIdSet(a.itemIds, b.itemIds);
+  if (a.type === 'multi') return sameIdSet(a.roomIds, b.roomIds) && sameIdSet(a.itemIds, b.itemIds) && sameIdSet(a.wallIds, b.wallIds);
   if (a.type === 'landscape') return sameIdSet(a.ids, b.ids);
   if (a.type === 'railing') return a.roomId === b.roomId && a.id === b.id;
   if (a.type === 'slab') return a.levelId === b.levelId && a.id === b.id;
@@ -279,7 +279,7 @@ function startMultiDrag(plan, sel = state.selection, wasSelected = false) {
   // Груз фиксируется при захвате: выбранные комнаты с их вложенными
   // помещениями и мебелью внутри + отдельно выбранная мебель.
   // Состав груза — как у стрелок и поворота группы (core/room-group.js).
-  const cargo = groupCargo(state.project, sel.roomIds, sel.itemIds);
+  const cargo = groupCargo(state.project, sel.roomIds, sel.itemIds, null, sel.wallIds);
   const movedRooms = new Map(cargo.rooms.map((room) => [room.id, { x: room.x, y: room.y }])); // id -> старт
   const movedItems = new Map(cargo.items.map((item) => [item.id, { x: item.x, y: item.y }])); // id -> старт
   const movedWalls = new Map(cargo.walls.map((wall) => [wall.id, structuredClone(wall.axis)]));
@@ -306,10 +306,11 @@ function groupGuideSession(d) {
   const moving = [
     ...state.project.rooms.filter((r) => roomSet.has(r.id)).map((r) => roomShape(r)),
     ...state.project.items.filter((i) => items.includes(i.id)).map((i) => itemShape(i)),
+    ...[...(d.wallStarts?.values() || [])].map((axis) => ({ pts: [axis.a, axis.b] })),
   ];
   return startGuideSession({
     space: 'plan', moving, frames: rooms.length ? [0] : null, ownAngles: [0],
-    exclude: { rooms: roomSet, items: new Set(items), walls: (w) => (w.rooms || []).some((id) => roomSet.has(id)) },
+    exclude: { rooms: roomSet, items: new Set(items), walls: (w) => d.wallStarts?.has(w.wallId) || (w.rooms || []).some((id) => roomSet.has(id)) },
   });
 }
 
@@ -332,13 +333,10 @@ function applyMarquee() {
   for (const item of state.project.items) {
     if (contains(item.x, item.y)) itemIds.push(item.id);
   }
-  const total = roomIds.length + itemIds.length;
-  if (total === 0) { selectObject(null); return; }
-  if (total === 1) {
-    selectObject(roomIds.length ? { type: 'room', id: roomIds[0] } : { type: 'item', id: itemIds[0] });
-    return;
-  }
-  selectObject({ type: 'multi', roomIds, itemIds });
+  const wallIds = (state.project.walls || [])
+    .filter((wall) => !wall.hidden && contains(wall.axis.a.x, wall.axis.a.y) && contains(wall.axis.b.x, wall.axis.b.y))
+    .map((wall) => wall.id);
+  selectPlanObjects(roomIds, itemIds, wallIds);
 }
 
 // Калибровка и «Север по 2 точкам»: привязка второй точки к лучам от первой.
@@ -1100,6 +1098,11 @@ export function bindCanvasInput() {
     if (picked?.type === 'wall') {
       const wall = picked.entity;
       const manual = wall.kind === 'manual';
+      if (manual && event.shiftKey) { toggleInMulti('wall', wall.wallId); return; }
+      if (manual && state.selection?.type === 'multi' && state.selection.wallIds?.includes(wall.wallId)) {
+        startMultiDrag(plan, state.selection, true);
+        return;
+      }
       // Ручная стена выбирается по ключу: её начало (from) меняется при правке.
       selectObject({ type: 'wall', key: wall.key, from: manual ? undefined : wall.from, at: wall.orient === 'h' ? plan.x : plan.y });
       drag = {

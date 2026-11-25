@@ -1409,6 +1409,7 @@ function renderMultiProps(panel, sel) {
     <div class="prop-block">
       <div class="prop-row"><span>Комнат</span><strong>${sel.roomIds.length}</strong></div>
       <div class="prop-row"><span>Мебели</span><strong>${sel.itemIds.length}</strong></div>
+      ${sel.wallIds?.length ? `<div class="prop-row"><span>Ручных стен</span><strong>${sel.wallIds.length}</strong></div>` : ''}
     </div>
     <p class="empty-hint desktop-selection-hint">Shift + клик меняет состав выделения.</p>`;
 }

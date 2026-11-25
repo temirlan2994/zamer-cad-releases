@@ -341,6 +341,7 @@ export function deleteSelection() {
   } else if (sel.type === 'multi') {
     mutate(() => {
       state.project.items = state.project.items.filter((i) => !sel.itemIds.includes(i.id));
+      for (const wallId of sel.wallIds || []) removeManualWall(state.project, wallId);
       for (const roomId of sel.roomIds) removeRoom(state.project, roomId);
       reconcileEats(state.project);
       reconcileOpenings();
@@ -400,17 +401,21 @@ export function toggleInMulti(kind, id) {
   const sel = state.selection;
   const roomIds = new Set(sel?.type === 'multi' ? sel.roomIds : sel?.type === 'room' ? [sel.id] : []);
   const itemIds = new Set(sel?.type === 'multi' ? sel.itemIds : sel?.type === 'item' ? [sel.id] : []);
-  const set = kind === 'room' ? roomIds : itemIds;
+  const wallIds = new Set(sel?.type === 'multi' ? sel.wallIds || [] : sel?.type === 'wall' && sel.key.startsWith('m|') ? [sel.key.slice(2)] : []);
+  const set = kind === 'wall' ? wallIds : kind === 'room' ? roomIds : itemIds;
   if (set.has(id)) set.delete(id); else set.add(id);
-  const rooms = [...roomIds];
-  const items = [...itemIds];
-  const total = rooms.length + items.length;
+  selectPlanObjects([...roomIds], [...itemIds], [...wallIds]);
+}
+
+export function selectPlanObjects(roomIds, itemIds, wallIds = []) {
+  const total = roomIds.length + itemIds.length + wallIds.length;
   if (total === 0) { selectObject(null); return; }
   if (total === 1) {
-    selectObject(rooms.length ? { type: 'room', id: rooms[0] } : { type: 'item', id: items[0] });
+    selectObject(wallIds.length ? { type: 'wall', key: `m|${wallIds[0]}` }
+      : roomIds.length ? { type: 'room', id: roomIds[0] } : { type: 'item', id: itemIds[0] });
     return;
   }
-  selectObject({ type: 'multi', roomIds: rooms, itemIds: items });
+  selectObject({ type: 'multi', roomIds, itemIds, ...(wallIds.length ? { wallIds } : {}) });
 }
 
 // Выбрать всю группу мебели как мультивыбор. Возвращает этот выбор: на
@@ -454,7 +459,7 @@ function applyGroupChange(action, failText, roomIds = [], { reflow = false } = {
 export function moveMultiBy(dx, dy) {
   const sel = state.selection;
   if (sel?.type !== 'multi') return false;
-  const ok = applyGroupChange((project, carry) => moveRoomGroup(project, sel.roomIds, sel.itemIds, dx, dy, { carry }), 'Так сдвинуть нельзя', sel.roomIds);
+  const ok = applyGroupChange((project, carry) => moveRoomGroup(project, sel.roomIds, sel.itemIds, dx, dy, { carry, wallIds: sel.wallIds }), 'Так сдвинуть нельзя', sel.roomIds);
   if (ok) selectObject(sel);
   return ok;
 }
@@ -555,8 +560,8 @@ export function autoDockAfterGesture(roomIds, kind, { magnet = true, before: bef
 // С помещениями — поворот всей группы (core/room-group.js).
 export function rotateMulti90() {
   const sel = state.selection;
-  if (sel?.type === 'multi' && sel.roomIds.length) {
-    if (applyGroupChange((project, carry) => rotateRoomGroup(project, sel.roomIds, sel.itemIds, { carry }), 'Так повернуть нельзя', sel.roomIds)) {
+  if (sel?.type === 'multi' && (sel.roomIds.length || sel.wallIds?.length)) {
+    if (applyGroupChange((project, carry) => rotateRoomGroup(project, sel.roomIds, sel.itemIds, { carry, wallIds: sel.wallIds }), 'Так повернуть нельзя', sel.roomIds)) {
       selectObject(sel);
       toast('Группа повёрнута на 90° · Ctrl+Z — отменить');
     }
@@ -602,7 +607,7 @@ function selectedItems(sel) {
   if (sel.type === 'item') {
     return [state.project.items.find((item) => item.id === sel.id)].filter(Boolean);
   }
-  if (sel.type === 'multi' && !sel.roomIds.length) {
+  if (sel.type === 'multi' && !sel.roomIds.length && !sel.wallIds?.length) {
     return sel.itemIds.map((id) => state.project.items.find((item) => item.id === id)).filter(Boolean);
   }
   return [];
@@ -611,9 +616,10 @@ function selectedItems(sel) {
 function groupClipboard(sel) {
   return {
     kind: 'group',
-    ...cloneData(captureRoomGroup(state.project, sel.roomIds, sel.itemIds)),
+    ...cloneData(captureRoomGroup(state.project, sel.roomIds, sel.itemIds, sel.wallIds)),
     selectedRoomIds: [...sel.roomIds],
     selectedItemIds: [...sel.itemIds],
+    selectedWallIds: [...(sel.wallIds || [])],
     pastes: 0,
   };
 }
@@ -627,14 +633,16 @@ function pasteGroup(clipboard) {
     state.project.rooms.push(...plan.rooms);
     state.project.openings.push(...plan.openings);
     state.project.items.push(...plan.items);
+    state.project.walls.push(...plan.walls);
     reconcileOpenings();
   });
   clipboard.pastes += 1;
   const itemIndex = new Map(clipboard.items.map((item, index) => [item.id, index]));
   const roomIds = clipboard.selectedRoomIds.map((id) => plan.roomMap.get(id)).filter(Boolean);
   const itemIds = clipboard.selectedItemIds.filter((id) => itemIndex.has(id)).map((id) => plan.items[itemIndex.get(id)].id);
-  const single = roomIds.length === 1 && !itemIds.length;
-  selectObject(single ? { type: 'room', id: roomIds[0] } : { type: 'multi', roomIds, itemIds });
+  const wallIds = (clipboard.selectedWallIds || []).map((id) => plan.wallMap.get(id)).filter(Boolean);
+  const single = roomIds.length === 1 && !itemIds.length && !wallIds.length;
+  selectPlanObjects(roomIds, itemIds, wallIds);
   const where = !plan.dx && !plan.dy ? 'на том же месте'
     : plan.detached ? 'отдельно справа от дома (вплотную места нет)'
       : plan.dx > 0 ? 'справа' : plan.dx < 0 ? 'слева' : plan.dy > 0 ? 'снизу' : 'сверху';
@@ -679,9 +687,9 @@ export function copySelection() {
     const room = roomById(state.project, sel.id);
     if (!room) return false;
     objectClipboard = roomClipboard(room);
-  } else if (sel.type === 'multi' && sel.roomIds.length) {
+  } else if (sel.type === 'multi' && (sel.roomIds.length || sel.wallIds?.length)) {
     objectClipboard = groupClipboard(sel);
-    toast(`Скопирована группа: помещений ${sel.roomIds.length} · Ctrl+V — вставить`);
+    toast('Группа скопирована · Ctrl+V — вставить');
     return true;
   } else {
     toast('Этот тип выделения нельзя скопировать', true);
@@ -907,10 +915,10 @@ export function duplicateSelection() {
   const sel = state.selection;
   if (!sel) return;
   if (sel.type === 'mass') { duplicateMass(sel.id); return; }
-  if (sel.type === 'item' || (sel.type === 'multi' && !sel.roomIds.length)) duplicateItemSelection(sel);
+  if (sel.type === 'item' || (sel.type === 'multi' && !sel.roomIds.length && !sel.wallIds?.length)) duplicateItemSelection(sel);
   else if (sel.type === 'opening') duplicateOpeningSelection(sel);
   else if (sel.type === 'room') duplicateRoomSelection(sel);
-  else if (sel.type === 'multi' && sel.roomIds.length) pasteGroup(groupClipboard(sel));
+  else if (sel.type === 'multi' && (sel.roomIds.length || sel.wallIds?.length)) pasteGroup(groupClipboard(sel));
 }
 
 export function rotateSelection90() {
@@ -954,7 +962,7 @@ export function mirrorSelection() {
     selectObject(sel);
     return;
   }
-  if (sel?.type !== 'multi' || sel.roomIds.length) return;
+  if (sel?.type !== 'multi' || sel.roomIds.length || sel.wallIds?.length) return;
   const items = sel.itemIds.map((id) => state.project.items.find((item) => item.id === id)).filter(Boolean);
   if (!items.length) return;
   const cx = items.reduce((sum, item) => sum + item.x, 0) / items.length;

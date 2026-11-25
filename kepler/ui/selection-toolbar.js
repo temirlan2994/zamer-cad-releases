@@ -166,18 +166,18 @@ function contentForSelection(sel) {
   }
   if (sel.type === 'multi') {
     const items = sel.itemIds.map((id) => state.project.items.find((candidate) => candidate.id === id)).filter(Boolean);
-    const onlyItems = items.length > 0 && sel.roomIds.length === 0;
+    const onlyItems = items.length > 0 && sel.roomIds.length === 0 && !sel.wallIds?.length;
     const groups = new Set(items.map((item) => item.group).filter(Boolean));
     const grouped = items.length >= 2 && groups.size === 1 && items.every((item) => item.group);
     const canMirror = onlyItems && items.every(itemCanMirror);
     // Группа с помещениями: копия, поворот вокруг центра группы, удаление.
-    const canMove = onlyItems || sel.roomIds.length > 0;
-    const gap = sel.roomIds.length === 2 && !sel.itemIds.length ? gapOfSelection(sel) : null;
+    const canMove = onlyItems || sel.roomIds.length > 0 || sel.wallIds?.length > 0;
+    const gap = sel.roomIds.length === 2 && !sel.itemIds.length && !sel.wallIds?.length ? gapOfSelection(sel) : null;
     if (gap) {
       return { label: `Зазор ${Math.round(gap.gap)} мм (нужно ${gap.target})`, html: gapButtons(gap) };
     }
     return {
-      label: `Выбрано: ${sel.roomIds.length + sel.itemIds.length}`,
+      label: `Выбрано: ${sel.roomIds.length + sel.itemIds.length + (sel.wallIds?.length || 0)}`,
       html: `${canMove ? button('duplicate', '⧉', 'Копировать', 'Ctrl+D') : ''}
         ${canMove ? button('rotate', '↻', 'Повернуть 90°', 'R') : ''}
         ${onlyItems ? button('mirror', '⇋', 'Зеркально', 'M', canMirror ? '' : 'disabled') : ''}
