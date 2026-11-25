@@ -627,7 +627,7 @@ export function createRenderer(canvas) {
           ctx.restore();
           return;
         }
-        ctx.fillStyle = wall.wallType === 'bearing' ? houseTokens.wallBearing : houseTokens.wall;
+        ctx.fillStyle = houseTokens.wall;
         if (selected) ctx.fillStyle = tokens.accent;
         else if (hovered) ctx.fillStyle = tokens.hover;
         if (wall.hidden) ctx.globalAlpha = 0.22;
@@ -654,7 +654,7 @@ export function createRenderer(canvas) {
       for (const wall of sharedWalls) paintWall(wall);
       // Фаски на переходах толщины — заполняют ступеньку треугольником.
       for (const wall of chamferWalls) {
-        ctx.fillStyle = wall.wallType === 'bearing' ? houseTokens.wallBearing : houseTokens.wall;
+        ctx.fillStyle = houseTokens.wall;
         ctx.beginPath();
         ctx.moveTo(wall.poly[0].x, wall.poly[0].y);
         for (let i = 1; i < wall.poly.length; i += 1) ctx.lineTo(wall.poly[i].x, wall.poly[i].y);
