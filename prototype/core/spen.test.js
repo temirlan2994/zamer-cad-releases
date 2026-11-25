@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_SPEN_SETTINGS, nativeSpenClientPoint, normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed, spenModeActive } from "./spen.js";
+import { DEFAULT_SPEN_SETTINGS, isSpenPointer, nativeSpenClientPoint, normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed, spenInputScreen, spenModeActive } from "./spen.js";
 
 test("S Pen settings keep safe defaults and accept explicit switches", () => {
   assert.deepEqual(normalizeSpenSettings(null), DEFAULT_SPEN_SETTINGS);
@@ -28,6 +28,30 @@ test("recognizes Android and browser barrel-button bitmasks", () => {
   assert.equal(spenBarrelButtonPressed({ button: 2 }), true);
   assert.equal(spenBarrelButtonPressed({ buttons: 32 }), true);
   assert.equal(spenBarrelButtonPressed({ button: 0, buttons: 1 }), false);
+});
+
+test("losing hover keeps the last pen point in drawing coordinates while the viewport moves", () => {
+  const settings = normalizeSpenSettings({ mode: "pen" });
+  const runtime = { active: true, hovering: true, point: { x: 100, y: 200 }, worldPoint: { x: 40, y: 70 }, contactId: null };
+  const view = { scale: 2, panX: 20, panY: 60 };
+  assert.deepEqual(spenInputScreen(settings, runtime, view), runtime.point);
+  runtime.hovering = false;
+  assert.deepEqual(spenInputScreen(settings, runtime, { ...view, panX: 80, panY: 100 }), { x: 160, y: 240 });
+  runtime.contactId = 9;
+  assert.deepEqual(spenInputScreen(settings, runtime, { ...view, panX: 80 }), runtime.point);
+  assert.equal(spenInputScreen(normalizeSpenSettings({ mode: "finger" }), runtime, view), null);
+  assert.equal(spenInputScreen(settings, { active: true, point: null }, view), null);
+  assert.equal(spenInputScreen(DEFAULT_SPEN_SETTINGS, { ...runtime, active: false }, view), null);
+});
+
+test("mouse-shaped Samsung pen contacts stay pen input while fingers remain navigation", () => {
+  const pen = normalizeSpenSettings({ mode: "pen" });
+  assert.equal(isSpenPointer(pen, {}, "mouse"), true);
+  assert.equal(isSpenPointer(pen, {}, "touch"), false);
+  assert.equal(isSpenPointer(DEFAULT_SPEN_SETTINGS, { active: true }, "mouse"), true);
+  assert.equal(isSpenPointer(DEFAULT_SPEN_SETTINGS, { active: false }, "mouse"), false);
+  assert.equal(isSpenPointer(DEFAULT_SPEN_SETTINGS, { active: false }, "pen"), true);
+  assert.equal(isSpenPointer(normalizeSpenSettings({ mode: "finger" }), {}, "mouse"), false);
 });
 
 test("native pen hover maps physical WebView coordinates to the current CSS viewport without a touch", () => {
