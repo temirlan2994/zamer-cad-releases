@@ -3,6 +3,7 @@
 // а в проект записываются только явные решения пользователя.
 
 import { contextNeighborSignature } from '../core/site.js';
+import { siteEntries } from '../core/site-entries.js';
 import { siteOpportunity, sitePassport, sitePlanningRoute } from '../core/site-planning.js';
 import { panForMovedBuilding } from '../core/site-check.js';
 import { floorAnalyticalViewById, floorAnalyticalViewId } from '../core/analytical-views.js';
@@ -807,6 +808,7 @@ function opportunityInputSignature(project, footprint) {
     setbacks: [site.setbackBoundary, site.setbackNeighbor],
     roads: site.roads || [],
     entry: site.entry || null,
+    entries: siteEntries(site),
     neighbors: site.neighbors || [],
     north: site.north,
     location: site.location || null,

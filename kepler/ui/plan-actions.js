@@ -2,6 +2,7 @@
 
 import { CORNER_PRESET, cornerWindowGeometry } from '../core/corner-windows.js';
 import { isGlazedAssembly } from '../core/glazed-openings.js';
+import { siteEntries, syncPrimaryEntry } from '../core/site-entries.js';
 import { levelWindowOpenings } from '../core/spanning-windows.js';
 import { wallZRange } from '../core/wall-z-range.js';
 import { applyOpeningPreset, openingHeight, openingSill } from '../core/opening-preset.js';
@@ -357,11 +358,14 @@ export function deleteSelection() {
   } else if (sel.type === 'site') {
     const site = state.project.site;
     mutate(() => {
-      if (sel.kind === 'boundary') { site.boundary = null; site.entry = null; }
+      if (sel.kind === 'boundary') { site.boundary = null; site.entry = null; site.entries = []; }
       if (sel.kind === 'redline') site.redLine = null;
       if (sel.kind === 'road') site.roads = site.roads.filter((r) => r.id !== sel.id);
       if (sel.kind === 'neighbor') site.neighbors = site.neighbors.filter((n) => n.id !== sel.id);
-      if (sel.kind === 'entry') site.entry = null;
+      if (sel.kind === 'entry') {
+        site.entries = siteEntries(site).filter((e) => e.id !== (sel.id || site.entry?.id || 'entry-legacy'));
+        syncPrimaryEntry(site);
+      }
       if (sel.kind === 'underlay') site.underlay = null;
       if (sel.kind === 'terrain-point' && site.terrain) site.terrain.points = site.terrain.points.filter((p) => p.id !== sel.id);
     });

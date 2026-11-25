@@ -5,6 +5,7 @@
 import { pointInPolygon } from './zamer/geometry.js';
 import { normalizeTerrain } from './terrain.js';
 import { normalizeLandscape } from './landscape.js';
+import { ensureSiteEntries } from './site-entries.js';
 
 export const DEFAULT_SETBACK_BOUNDARY = 1500; // отступ от границы участка, мм
 export const DEFAULT_SETBACK_NEIGHBOR = 6000; // отступ от соседнего дома, мм
@@ -100,7 +101,8 @@ export function createSite() {
     redLine: null, // [{x,y}...] — красная линия (ломаная)
     roads: [], // [{id, points:[{x,y}...], width}]
     neighbors: [], // [{id, x, y, w, h, height}] — соседние дома (прямоугольники)
-    entry: null, // {x, y, angle} — въезд на участок (на границе)
+    entry: null, // главный автомобильный въезд, совместимость с прежними файлами
+    entries: [], // ворота и отдельные калитки на границе участка
     underlay: null, // {srcId, x, y, mmPerPx, opacity, locked, widthPx, heightPx}
     norms: { day: null, hours: null }, // норма инсоляции: null — по широте (core/insolation.js)
     terrain: null, // рельеф: отметки высот (core/terrain.js); null — плоская земля
@@ -130,6 +132,7 @@ export function ensureSite(project) {
     landscape: normalizeLandscape(source.landscape),
     planning: null,
   };
+  ensureSiteEntries(site);
   site.planning = bindContextReview(site, normalizePlanning(source.planning, site));
   project.site = site;
   return site;

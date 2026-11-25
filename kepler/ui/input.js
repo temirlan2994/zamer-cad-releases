@@ -9,7 +9,7 @@ import { STAIR_FIELDS, applyStairPreset, applyStairStylePreset, dragStairHandle,
 import { itemsInRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { activeLevel, roomById } from '../core/model.js';
 import { determineParent, snapRoomPosition, validateRoomPlacement } from '../core/rooms.js';
-import { nearestPointOnPolyline } from '../core/site.js';
+import { ensureSiteEntries, entryById, entryOverlaps, entryTitle, syncPrimaryEntry } from '../core/site-entries.js';
 import { pointInBuilding, setBuildingOrigin } from '../core/site-check.js';
 import {
   openingFrame, openingPos, openingPosAt, openingRect, setOpeningPos, wallRects,
@@ -256,21 +256,28 @@ function movePinch() {
   requestDraw();
 }
 
-// Инструмент «Въезд» активен: клик создаёт въезд (если нет) и сразу тянет
-// его по границе; существующий — просто тянется.
-function startEntryDrag(world) {
+// Пустое место — новый объект; попадание в существующий — его перемещение.
+function startEntryDrag(world, hit = null) {
   const site = state.project.site;
   if (!site.boundary || site.boundary.length < 3) { toast('Сначала начертите границу участка'); return; }
   const before = snapshot();
-  let created = false;
-  if (!site.entry) {
-    const spot = computeEntryAt(world);
-    if (!spot) { toast('Кликните ближе к границе участка'); return; }
-    site.entry = { x: spot.x, y: spot.y, dir: spot.dir };
-    created = true;
+  const list = ensureSiteEntries(site);
+  let entry = hit ? entryById(site, hit.id) : null;
+  const created = !entry;
+  if (created) {
+    const kind = state.tool?.entryKind || 'gate';
+    entry = { id: `entry-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, kind,
+      width: kind === 'wicket' ? 1000 : 4000, height: 1800, wicket: false, wicketWidth: 1000, wicketSide: 'right' };
+    const spot = computeEntryAt(world, entry);
+    if (!spot) { toast('На этой стороне недостаточно места для ворот или калитки'); return; }
+    Object.assign(entry, { x: spot.x, y: spot.y, dir: spot.dir });
+    if (entryOverlaps(site, entry)) { toast('Здесь уже есть ворота или калитка'); return; }
+    list.push(entry);
+    syncPrimaryEntry(site);
   }
-  selectObject({ type: 'site', kind: 'entry' });
-  drag = { kind: 'entry', before, moved: created }; // создание сразу коммитится
+  selectObject({ type: 'site', kind: 'entry', id: entry.id });
+  drag = { kind: 'entry', id: entry.id, before, moved: created };
+  if (created) toast(`${entryTitle(entry)} ${entry.kind === 'wicket' ? 'добавлена' : 'добавлены'} · Размеры — в свойствах`);
   if (created) requestDraw();
 }
 
@@ -794,9 +801,10 @@ export function bindCanvasInput() {
       touchPan();
       return;
     }
-    if (layer === 'entry') {
+    if (layer === 'entry' || layer === 'wicket') {
       // Касанием: новый въезд — тапом, существующий двигается после удержания.
-      if (state.project.site.entry) startEntryDrag(world);
+      const hit = hitSiteObject(world);
+      if (hit?.kind === 'entry') startEntryDrag(world, hit);
       else tapOrNow(event, screen, () => startEntryDrag(world));
       return;
     }
@@ -883,6 +891,8 @@ export function bindCanvasInput() {
     // дом хватается только целиком (за любую комнату) и едет по участку.
     if (state.modeName === 'site') {
       if (state.calibration && !el('calOverlay').hidden) hideCalInput();
+      const hit = hitSiteObject(world);
+      if (hit?.kind === 'entry') { startEntryDrag(world, hit); return; }
       if (pointInBuilding(state.project, world)) {
         selectObject({ type: 'site', kind: 'building' });
         const o = state.project.building?.origin || { x: 0, y: 0 };
@@ -1905,15 +1915,13 @@ export function bindCanvasInput() {
     if (drag.kind === 'entry') {
       const site = state.project.site;
       if (!site.boundary) return;
-      drag.moved = true;
-      const near = nearestPointOnPolyline(site.boundary, world, true);
-      if (near) {
-        const candidates = [near.angle + 90, near.angle - 90];
-        let dir = candidates[0];
-        const rad = (candidates[0] * Math.PI) / 180;
-        const probe = { x: near.x + Math.cos(rad) * 500, y: near.y + Math.sin(rad) * 500 };
-        if (!pointInPolygon(probe, site.boundary)) dir = candidates[1];
-        site.entry = { x: near.x, y: near.y, dir };
+      const entry = entryById(site, drag.id);
+      if (!entry) return;
+      const near = computeEntryAt(world, entry);
+      if (near && !entryOverlaps(site, { ...entry, ...near }, entry.id)) {
+        drag.moved = true;
+        Object.assign(entry, { x: near.x, y: near.y, dir: near.dir });
+        syncPrimaryEntry(site);
         requestDraw();
       }
       return;
@@ -2138,9 +2146,12 @@ export function bindCanvasInput() {
         // Граница изменилась — въезд заново садится на неё и ориентируется
         // перпендикулярно отрезку границы (стрелка внутрь участка).
         const site = state.project.site;
-        if (site.boundary && site.entry) {
-          const spot = computeEntryAt(site.entry);
-          if (spot) { site.entry.x = spot.x; site.entry.y = spot.y; site.entry.dir = spot.dir; }
+        if (site.boundary) {
+          for (const entry of ensureSiteEntries(site)) {
+            const spot = computeEntryAt(entry, entry);
+            if (spot) Object.assign(entry, { x: spot.x, y: spot.y, dir: spot.dir });
+          }
+          syncPrimaryEntry(site);
         }
       }
       refreshDerived();

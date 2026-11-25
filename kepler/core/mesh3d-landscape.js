@@ -6,6 +6,7 @@
 // y вниз по плану, z вверх; объекты ландшафта — в мире (участок),
 // переводятся toLocal(building).
 
+import { entryLandscapeObjects } from './site-entries.js';
 import { LOUNGE_COLORS, loungeParts } from './landscape-lounge.js';
 import { bbox, boxesOverlap, orientRing, ringArea } from './geom/poly.js';
 import { clipFace } from './geom/clip.js';
@@ -282,6 +283,7 @@ function objectFaces(o, def, outline, path, hz, dryOutlines) {
   // --- Ограждения: полотно + столбы.
   if (look === 'fence-line' || look === 'fence' || look === 'gate') {
     const H = Math.max(600, h);
+    if (o.siteEntryId) return prism(outline, o.entryPost ? 0 : 100, H, C[0], hz);
     const mesh = o.variant === 'mesh';
     const poly = look === 'fence-line' ? lineLayout({ ...o, width: Math.min(o.width || def.h, mesh ? 40 : 200) }).outline : outline;
     faces.push(...prism(poly, mesh ? 50 : 100, H, C[0], hz).map((f) => (mesh ? { ...f, alpha: 0.45 } : f)));
@@ -603,7 +605,7 @@ export function cutLandscapeGround(faces, project, hz) {
 
 // Все грани ландшафта в осях дома. hz(x, y) — рельеф (оси дома) или null.
 export function landscapeFaces(project, hz = null, { evening = false } = {}) {
-  const objects = project.site?.landscape?.objects || [];
+  const objects = [...(project.site?.landscape?.objects || []), ...entryLandscapeObjects(project.site)];
   if (!objects.length) return [];
   const b = project.building;
   const local = (p) => toLocal(b, p);
@@ -675,8 +677,8 @@ export function landscapeFaces(project, hz = null, { evening = false } = {}) {
     // Идентификатор хранится на каждой грани: 3D выбирает не условную
     // категорию «ландшафт», а конкретное дерево, дорожку или сооружение.
     for (let i = firstFace; i < faces.length; i += 1) {
-      faces[i].landscapeId = o0.id;
-      faces[i].landscapeKind = o0.kind;
+      if (o0.siteEntryId) faces[i].siteEntryId = o0.siteEntryId;
+      else { faces[i].landscapeId = o0.id; faces[i].landscapeKind = o0.kind; }
     }
     if (evening && o.kind === 'lamp') {
       for (const [radius, alpha] of [[1100, 0.07], [720, 0.1], [360, 0.15]]) {

@@ -218,7 +218,7 @@ export function activeSiteLayer() {
   const t = state.tool;
   if (!t) return null;
   if (t.kind === 'underlay-edit') return 'underlay';
-  if (t.kind === 'entry') return 'entry';
+  if (t.kind === 'entry') return t.entryKind === 'wicket' ? 'wicket' : 'entry';
   if (t.kind === 'neighbor') return 'neighbor';
   if (t.kind === 'terrain') return 'terrain';
   if (t.kind === 'draw' || t.kind === 'edit') return t.target;

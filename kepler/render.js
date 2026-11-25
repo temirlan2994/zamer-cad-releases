@@ -4,6 +4,7 @@
 
 import { cornerWindowHandles, cornerWindowProjections } from './core/corner-windows.js';
 import { levelWindowOpenings } from './core/spanning-windows.js';
+import { entryParts, entrySpan, entryTitle, siteEntries } from './core/site-entries.js';
 import { glazedOpeningParts, isGlazedAssembly } from './core/glazed-openings.js';
 import {
   deriveWalls, doorLeaves, doorSymbol, openingRect, wallOutline, wallRects,
@@ -856,27 +857,11 @@ export function createRenderer(canvas) {
       for (const p of [a, b]) { ctx.beginPath(); ctx.arc(p.x, p.y, px(4), 0, Math.PI * 2); ctx.fill(); }
     }
 
-    // Предпросмотр въезда: стрелка скользит по границе за курсором.
+    // Предпросмотр ворот/калитки целиком, с привязкой к стороне участка.
     if (state.entryGhost) {
-      const e = state.entryGhost;
-      const rad = (e.dir * Math.PI) / 180;
-      const len = 2200;
-      const tip = { x: e.x + Math.cos(rad) * len, y: e.y + Math.sin(rad) * len };
-      ctx.globalAlpha = 0.6;
-      ctx.strokeStyle = tokens.accent2;
-      ctx.fillStyle = tokens.accent2;
-      ctx.lineWidth = px(2.4);
-      ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(tip.x, tip.y); ctx.stroke();
-      const head = 500;
-      ctx.beginPath();
-      ctx.moveTo(tip.x, tip.y);
-      ctx.lineTo(tip.x - Math.cos(rad - 0.45) * head, tip.y - Math.sin(rad - 0.45) * head);
-      ctx.lineTo(tip.x - Math.cos(rad + 0.45) * head, tip.y - Math.sin(rad + 0.45) * head);
-      ctx.closePath(); ctx.fill();
-      ctx.beginPath();
-      ctx.arc(e.x, e.y, px(5), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      ctx.save(); ctx.globalAlpha = 0.6;
+      drawSiteEntry(ctx, { kind: state.tool?.entryKind || 'gate', ...state.entryGhost }, tokens.accent2, tokens, px);
+      ctx.restore();
     }
     if (state.draft?.points?.length) drawDraft(ctx, state.draft, tokens, px);
     state._snapLabelAt = (state.draft?.snapStart && state.draft.points.length)
@@ -1512,6 +1497,30 @@ function paintHatch(ctx, polygon, fill, stroke, px) {
 
 // --- Участок: линии поверх (граница, красная линия, зона, въезд, черновик) ---
 
+function drawSiteEntry(ctx, entry, color, tokens, px) {
+  const parts = entryParts(entry); const span = entrySpan(entry);
+  ctx.save();
+  ctx.translate(entry.x, entry.y);
+  ctx.rotate(((entry.dir ?? entry.angle ?? 0) - 90) * Math.PI / 180);
+  ctx.strokeStyle = tokens.canvas;
+  ctx.lineWidth = px(4);
+  ctx.beginPath(); ctx.moveTo(span.from - 120, 0); ctx.lineTo(span.to + 120, 0); ctx.stroke();
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = px(2);
+  for (const p of parts) {
+    const left = p.offset - p.width / 2; const right = p.offset + p.width / 2;
+    for (const x of [left, right]) ctx.fillRect(x - 60, -90, 120, 180);
+    ctx.beginPath(); ctx.moveTo(left, 0); ctx.lineTo(right, 0); ctx.stroke();
+    const leaves = p.kind === 'gate' ? [[left, p.width / 2, 1], [right, p.width / 2, -1]] : [[left, p.width, 1]];
+    for (const [hinge, length, sign] of leaves) {
+      ctx.beginPath(); ctx.moveTo(hinge, 0); ctx.lineTo(hinge + sign * length * .7, length * .7); ctx.stroke();
+      ctx.setLineDash([px(4), px(3)]);
+      ctx.beginPath(); ctx.arc(hinge, 0, length, sign > 0 ? 0 : Math.PI / 2, sign > 0 ? Math.PI / 2 : Math.PI); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+  ctx.restore();
+}
+
 function drawSiteOver(ctx, state, site, tokens, px) {
   const selectedKind = state.selection?.type === 'site' ? state.selection.kind : null;
   const hov = state.hover?.type === 'site-obj' ? state.hover : null;
@@ -1559,32 +1568,8 @@ function drawSiteOver(ctx, state, site, tokens, px) {
     ctx.setLineDash([]);
   }
 
-  if (site.entry) {
-    const e = site.entry;
-    const rad = (e.dir * Math.PI) / 180;
-    const len = 2200;
-    const tip = { x: e.x + Math.cos(rad) * len, y: e.y + Math.sin(rad) * len };
-    ctx.strokeStyle = kindColor('entry', undefined, tokens.accent2);
-    ctx.fillStyle = ctx.strokeStyle;
-    ctx.lineWidth = px(2.4);
-    ctx.beginPath();
-    ctx.moveTo(e.x, e.y);
-    ctx.lineTo(tip.x, tip.y);
-    ctx.stroke();
-    const head = 500;
-    ctx.beginPath();
-    ctx.moveTo(tip.x, tip.y);
-    ctx.lineTo(tip.x - Math.cos(rad - 0.45) * head, tip.y - Math.sin(rad - 0.45) * head);
-    ctx.lineTo(tip.x - Math.cos(rad + 0.45) * head, tip.y - Math.sin(rad + 0.45) * head);
-    ctx.closePath();
-    ctx.fill();
-    // Разрыв в заборе.
-    ctx.strokeStyle = tokens.canvas;
-    ctx.lineWidth = px(3.2);
-    ctx.beginPath();
-    ctx.moveTo(e.x - Math.sin(rad) * 1500, e.y + Math.cos(rad) * 1500);
-    ctx.lineTo(e.x + Math.sin(rad) * 1500, e.y - Math.cos(rad) * 1500);
-    ctx.stroke();
+  for (const e of siteEntries(site)) {
+    drawSiteEntry(ctx, e, kindColor('entry', e.id, tokens.accent2), tokens, px);
   }
 
   // Дом на участке: красный пунктир — выходит за зону застройки или ближе
@@ -1643,12 +1628,12 @@ function drawSiteLabels(ctx, state, site, w2s, tokens) {
     ctx.textAlign = 'center';
     ctx.fillText(`Участок ${polygonAreaM2(site.boundary).toFixed(1)} м²`, p.x, p.y - 10);
   }
-  if (site.entry) {
-    const p = w2s(site.entry.x, site.entry.y);
+  for (const e of siteEntries(site)) {
+    const p = w2s(e.x, e.y);
     ctx.fillStyle = tokens.accent2;
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Въезд', p.x, p.y + 22);
+    ctx.fillText(`${entryTitle(e)}${e.wicket ? ' + калитка' : ''}`, p.x, p.y + 22);
   }
   for (const n of site.neighbors || []) {
     const p = w2s(n.x, n.y);

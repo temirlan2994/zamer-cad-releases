@@ -14,6 +14,7 @@
 //   mat, color, label?, at? }. cut — объект в сечении, depth — расстояние от
 // плоскости разреза, мм (дальние рисуются бледнее).
 
+import { entryLandscapeObjects } from './site-entries.js';
 import { LOUNGE_COLORS, loungeParts } from './landscape-lounge.js';
 import { rectCornersWorld, toLocal as buildingLocal, toWorld as buildingWorld } from './building.js';
 import { facadeParts } from './facade.js';
@@ -276,7 +277,7 @@ export function sectionProfile(project, line, side, opts = {}) {
     return iv;
   };
 
-  const objects = project.site?.landscape?.objects || [];
+  const objects = [...(project.site?.landscape?.objects || []), ...entryLandscapeObjects(project.site)];
   const byId = new Map(objects.map((o) => [o.id, o]));
   const liftOf = (o) => {
     const p = o.parent ? byId.get(o.parent) : null;
