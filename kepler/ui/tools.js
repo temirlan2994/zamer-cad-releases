@@ -16,11 +16,13 @@ import { clearDrawSnap } from './draw-snap-ui.js';
 import { groupHandleId } from '../core/group-handles.js';
 import { lsHandleKey } from '../core/landscape-handles.js';
 import { isRoofPlan } from './plan-roofs.js';
+import { cancelEditingGesture } from './edit-guard.js';
 
 export function selectObject(selection) {
   // Касание: выбор откладывается до тапа (ui/input.js), чтобы панорама пальцем
   // ничего не выделяла.
   if (state.touchDeferSelect) { state.touchDeferred = { selection }; return; }
+  if (state.tool?.kind === 'move-furniture') cancelTool();
   const split = state.splitEdit;
   if (split && (selection?.type !== 'wall' || selection.key !== split.key ||
     Math.abs((selection.from ?? split.from) - split.from) >= 1)) hideSplitInput();
@@ -56,6 +58,7 @@ export function setHint(text) {
 }
 
 export function setTool(tool, hint) {
+  if (state.tool?.kind === 'move-furniture') cancelTool();
   const profile = el('lsRouteProfile');
   if (profile) profile.hidden = true;
   // Инструмент плана этажа на «Плане крыши» — назад к плану этажа.
@@ -81,6 +84,12 @@ export function setTool(tool, hint) {
 }
 
 export function cancelTool() {
+  if (state.tool?.kind === 'move-furniture') {
+    // Убираем инструмент до отката: restoreFrom может обновить интерфейс.
+    state.tool = null;
+    cancelEditingGesture();
+    canvas.style.cursor = '';
+  }
   const profile = el('lsRouteProfile');
   if (profile) profile.hidden = true;
   const wasOpening = state.tool?.kind === 'place-opening';
@@ -111,6 +120,19 @@ export function cancelTool() {
   if (wasOpening) renderProps();
   if (wasOpening) document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
   requestDraw();
+}
+
+export function startFurnitureMove() {
+  if (state.editLocked || state.modeName !== 'plan') return;
+  const sel = state.selection;
+  const ids = sel?.type === 'item' ? [sel.id]
+    : sel?.type === 'multi' && !sel.roomIds?.length && !sel.wallIds?.length ? sel.itemIds : [];
+  if (!ids.length || ids.some((id) => !state.project.items.some((item) => item.id === id))) return;
+  state.itemHandle = null;
+  closeLibrarySheet();
+  setTool({ kind: 'move-furniture', itemIds: [...ids], stage: 'pick' },
+    'Нажмите на мебель в точке захвата, затем нажмите в новом месте · Esc — отмена');
+  canvas.style.cursor = 'crosshair';
 }
 
 export function startPlaceRoom(type) {

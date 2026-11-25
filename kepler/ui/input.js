@@ -93,7 +93,8 @@ import { state } from './state.js';
 import { registerEditGestureCancel } from './edit-guard.js';
 import { afterChange, pushHistory, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot } from './store.js';
 import { arrangeRoomsNow } from './auto-layout.js';
-import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
+import { activeSiteLayer, cancelTool, positionWallButtons, selectObject, setHint } from './tools.js';
+import { renderSelectionToolbar } from './selection-toolbar.js';
 import { addCalibratePoint, hideCalInput, positionCalInput } from './underlay.js';
 import {
   applyElevInput, hitTerrainPoint, openElevInput, positionElevInput, terrainStatus,
@@ -366,6 +367,7 @@ setSnapRehover((mods) => {
 
 function updateHoverAndGhost(world, plan, event) {
   lastHover = { world, plan };
+  if (state.tool?.kind === 'move-furniture') { canvas.style.cursor = 'crosshair'; return; }
   if (state.tool?.kind === 'align-view') {
     // «Выровнять вид»: привязка к рёбрам/углам стен, комнат, участка, соседей.
     const p = snapAlignPoint(world, event);
@@ -547,6 +549,16 @@ export function bindCanvasInput() {
   canvas.addEventListener('selectstart', (e) => e.preventDefault()); // долгое нажатие не выделяет холст
   // Esc во время жеста «тянуть ребро» ландшафта — отмена (раньше общих клавиш).
   window.addEventListener('keydown', (e) => {
+    if (state.tool?.kind === 'move-furniture') {
+      if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        cancelTool();
+        return;
+      }
+      // Иная команда сначала отменяет предпросмотр переноса.
+      if (!['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) cancelTool();
+    }
     // Esc во время жеста на «Плане крыши» — отмена жеста.
     if (e.key === 'Escape' && drag?.kind?.startsWith('roofplan-')) {
       e.preventDefault();
@@ -666,6 +678,32 @@ export function bindCanvasInput() {
     const world = pointerWorld(event); // участок — координаты съёмки
     const plan = worldToPlan(world); // дом — его собственные оси
     canvas.setPointerCapture(event.pointerId);
+    if (state.tool?.kind === 'move-furniture') {
+      if (event.button === 2) { cancelTool(); return; }
+      if (event.button !== 0) return;
+      if (drag?.clickMove) {
+        drag.placing = true;
+        onCanvasPointerMove(event);
+        return;
+      }
+      const item = hitItem(plan);
+      if (!item || !state.tool.itemIds.includes(item.id)) return;
+      tapOrNow(event, screen, () => {
+        if (state.tool?.kind !== 'move-furniture') return;
+        if (state.tool.itemIds.length > 1) startMultiDrag(plan);
+        else drag = {
+          kind: 'item', id: item.id, start: { x: item.x, y: item.y }, plan,
+          before: snapshot(), moved: false,
+        };
+        drag.clickMove = true;
+        state.tool.stage = 'place';
+        setHint('Мебель следует за указателем · Нажмите, чтобы поставить · Esc — отмена');
+        renderSelectionToolbar();
+        canvas.style.cursor = 'grabbing';
+        requestDraw();
+      });
+      return;
+    }
     // Деление стены: клик режет по линии деления.
     if (state.splitEdit && event.button === 0 && !spaceDown) {
       if (splitLiveClick(plan, screen, event.pointerType === 'touch')) return;
@@ -888,7 +926,8 @@ export function bindCanvasInput() {
     const onRoomHandle = Boolean(hitRoomHandle(screen));
     const lockHit = onRoomHandle ? null : hitGridLock(state, screen);
     if (lockHit) { const sw = Boolean(event.shiftKey); tapOrNow(event, screen, () => toggleGridLock(lockHit, { switchMode: sw })); return; }
-    const tempDimHit = onRoomHandle ? null : hitTempDim(screen);
+    // Shift расширяет выделение, даже если подпись размера лежит над мебелью.
+    const tempDimHit = onRoomHandle || event.shiftKey ? null : hitTempDim(screen);
     if (tempDimHit) { tapOrNow(event, screen, () => openDimInput(tempDimHit)); return; }
 
     // Маркер нестандартного зазора «≠ N мм» — выделить пару и предложить стыковку.
@@ -1177,6 +1216,7 @@ export function bindCanvasInput() {
     try { onCanvasPointerDown(event); } finally { state.touchDeferSelect = false; }
     const pending = state.touchDeferred;
     state.touchDeferred = null;
+    if (drag?.clickMove) return;
     // Первое касание другого объекта — только выбор. Даже долгое удержание не
     // должно сразу сдвигать его; если палец пошёл в сторону, это панорама.
     // Ручки уже выбранного объекта сохраняют прежнее непосредственное действие.
@@ -1207,7 +1247,7 @@ export function bindCanvasInput() {
     }
     drag = hold;
   });
-  canvas.addEventListener('pointermove', (event) => {
+  const onCanvasPointerMove = (event) => {
     const screen = pointerScreen(event);
     if (event.pointerType === 'touch' && touches.has(event.pointerId)) touches.set(event.pointerId, screen);
     if (drag?.kind === 'pinch') { movePinch(); return; }
@@ -1901,7 +1941,8 @@ export function bindCanvasInput() {
       u.y = drag.start.y + (world.y - drag.world.y);
       requestDraw();
     }
-  });
+  };
+  canvas.addEventListener('pointermove', onCanvasPointerMove);
   canvas.addEventListener('pointerup', (event) => {
     touches.delete(event.pointerId);
     if (drag?.kind === 'pinch') {
@@ -1932,8 +1973,10 @@ export function bindCanvasInput() {
       if (!drag) { requestDraw(); return; }
     }
     if (!drag) return;
+    if (drag.clickMove && !drag.placing) return;
     const finished = drag;
     drag = null;
+    if (finished.clickMove) cancelTool();
     cancelLiveDerived(finished);
     state.guides = [];
     state.gridSnapTag = null;
@@ -2104,6 +2147,13 @@ export function bindCanvasInput() {
     touches.delete(event.pointerId);
     cancelActiveGesture();
   });
+  document.addEventListener('pointerdown', (event) => {
+    if (state.tool?.kind === 'move-furniture' && event.target !== canvas &&
+      !event.target.closest?.('[data-selection-action="cancel-move"]')) cancelTool();
+  }, true);
+  window.addEventListener('blur', () => {
+    if (state.tool?.kind === 'move-furniture') cancelTool();
+  });
   canvas.addEventListener('dblclick', (event) => {
     if (isRoofPlan()) { roofPlanDblClick(pointerScreen(event), worldToPlan(pointerWorld(event))); return; }
     if (state.modeName === 'landscape') { landscapeDblClick(pointerWorld(event)); return; }
@@ -2150,6 +2200,7 @@ export function bindCanvasInput() {
 // незавершённый жест тем же способом, что системный pointercancel, прежде
 // чем показать блокирующее окно другого устройства.
 export function cancelActiveGesture() {
+  const furnitureSelection = drag?.clickMove ? state.selection : null;
   touches.clear();
   state.planPinching = false;
   canvas.parentElement?.classList.remove('move-armed');
@@ -2169,6 +2220,8 @@ export function cancelActiveGesture() {
   state.slabLabel = null;
   state.slabEdge = null;
   state.slabEdgeHover = null;
+  if (state.tool?.kind === 'move-furniture') cancelTool();
+  if (furnitureSelection) selectObject(furnitureSelection);
   requestDraw();
 }
 

@@ -159,7 +159,7 @@ function contentForSelection(sel) {
     const stair = item.kind === 'stairs' ? button('reverse-stair', '↕', 'Развернуть подъём') : '';
     return {
       label: item.kind === 'stairs' ? 'Лестница' : 'Мебель',
-      html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}
+      html: `${button('move-furniture', '✥', 'Переместить')}${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}
         ${button('rotate', '↻', 'Повернуть 90°', 'R')}${mirror}${stair}
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
@@ -178,7 +178,7 @@ function contentForSelection(sel) {
     }
     return {
       label: `Выбрано: ${sel.roomIds.length + sel.itemIds.length + (sel.wallIds?.length || 0)}`,
-      html: `${canMove ? button('duplicate', '⧉', 'Копировать', 'Ctrl+D') : ''}
+      html: `${onlyItems ? button('move-furniture', '✥', 'Переместить') : ''}${canMove ? button('duplicate', '⧉', 'Копировать', 'Ctrl+D') : ''}
         ${canMove ? button('rotate', '↻', 'Повернуть 90°', 'R') : ''}
         ${onlyItems ? button('mirror', '⇋', 'Зеркально', 'M', canMirror ? '' : 'disabled') : ''}
         ${items.length >= 2 ? button(grouped ? 'ungroup' : 'group', grouped ? '⊘' : '⊞', grouped ? 'Разгруппировать' : 'Сгруппировать') : ''}
@@ -237,6 +237,12 @@ export function renderSelectionToolbar() {
   const panel = el('selectionToolbar');
   if (!panel) return;
   if (state.tool?.kind !== 'atrium') el('atriumPanel').hidden = true;
+  if (state.tool?.kind === 'move-furniture') {
+    panel.innerHTML = `<span class="selection-toolbar-label">${state.tool.stage === 'pick' ? 'Нажмите на мебель' : 'Укажите новое место'}</span>
+      ${button('cancel-move', '×', 'Отмена', 'Esc')}`;
+    panel.hidden = false;
+    return;
+  }
   const content = state.selection && !state.tool ? contentForSelection(state.selection) : null;
   if (!content) { panel.hidden = true; panel.innerHTML = ''; return; }
   panel.innerHTML = `<span class="selection-toolbar-label" title="${escapeHtml(content.label)}">${escapeHtml(content.label)}</span>
@@ -253,6 +259,11 @@ export function bindSelectionToolbar() {
     const target = event.target.closest('[data-selection-action]');
     if (!target || target.disabled) return;
     const action = target.dataset.selectionAction;
+    if (action === 'move-furniture' || action === 'cancel-move') {
+      const tools = await toolsReady;
+      if (action === 'move-furniture') tools.startFurnitureMove(); else tools.cancelTool();
+      return;
+    }
     if (state.selection?.type === 'landscape') {
       const ls = await import('./landscape.js');
       if (action === 'duplicate') ls.duplicateLandscapeSelection();
