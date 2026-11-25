@@ -32,7 +32,7 @@ import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatPr
   fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
 import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planAnnotationSnapGeometry, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, totalPlanAreaM2, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
 import { planRegionAtPoint } from "./core/plan-region.js";
-import { nativeSpenClientPoint, normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed } from "./core/spen.js";
+import { nativeSpenClientPoint, normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed, spenModeActive } from "./core/spen.js";
 import { ANNOTATION_LINE_SPACING, ANNOTATION_SCALE_PRESETS, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./core/annotation-text.js";
 
 
@@ -40,6 +40,7 @@ import { ANNOTATION_LINE_SPACING, ANNOTATION_SCALE_PRESETS, annotationScaleFacto
 function cadIcon(name) {
   const paths = {
     cursor: '<path d="m5 3 14 9-7 2-3 7Z"/>',
+    finger: '<path d="M9 12V4a2 2 0 0 1 4 0v6l4-1a3 3 0 0 1 4 3l-1 7a3 3 0 0 1-3 2h-5a4 4 0 0 1-3-2l-5-6a2 2 0 0 1 3-2l2 2"/>',
     frame: '<rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 2"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
     back: '<path d="M19 12H5m7-7-7 7 7 7"/>',
     line: '<path d="m5 19 14-14"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/>',
@@ -689,6 +690,12 @@ const dimensionLinkCancel = document.getElementById("dimensionLinkCancel");
 const dimensionLinkButtons = [...dimensionLinks.querySelectorAll("[data-dimension-anchor]")];
 const saveIndicator = document.getElementById("saveIndicator");
 const spenIndicator = document.getElementById("spenIndicator");
+const spenModeSheet = document.getElementById("spenModeSheet");
+const spenInputModes = {
+  auto: { label: "Авто", icon: "rotate", description: "Стилус распознаётся автоматически. Поднятие пера не меняет режим." },
+  pen: { label: "Стилус", icon: "edit", description: "Перо чертит и выбирает. Палец перемещает вид, два пальца меняют масштаб." },
+  finger: { label: "Палец", icon: "finger", description: "Обычное сенсорное управление с крестиком в центре экрана." },
+};
 const layersSheet = document.getElementById("layersSheet");
 const layerActionsDialog = document.getElementById("layerActionsDialog");
 const layerActionsList = document.getElementById("layerActionsList");
@@ -984,7 +991,7 @@ let pendingCanvasTap = null;
 let tapZoom = null;
 
 function spenModeEnabled() {
-  return spenSettings.enabled && spenRuntime.active;
+  return spenModeActive(spenSettings, spenRuntime);
 }
 
 function spenCursorActive() {
@@ -1003,7 +1010,18 @@ function syncSpenMode({ announce = false } = {}) {
   const active = spenModeEnabled();
   shell.classList.toggle("spen-mode", active);
   shell.classList.toggle("spen-compact-ui", active && spenSettings.compactUi);
-  spenIndicator.hidden = !active;
+  shell.dataset.inputMode = spenSettings.mode;
+  shell.dataset.effectiveInputMode = active ? "pen" : "finger";
+  const mode = spenInputModes[spenSettings.mode];
+  const effectiveLabel = active ? "Стилус" : "Палец";
+  const label = spenSettings.mode === "auto" ? `Авто · ${effectiveLabel}` : mode.label;
+  spenIndicator.innerHTML = `${cadIcon(active ? "edit" : "finger")}<small>${mode.label}</small>`;
+  spenIndicator.title = `Управление: ${label}`;
+  spenIndicator.setAttribute("aria-label", `Режим управления: ${label}. Изменить`);
+  spenIndicator.setAttribute("data-active", String(active));
+  for (const button of spenModeSheet.querySelectorAll("[data-input-mode]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.inputMode === spenSettings.mode));
+  }
   if (!active) {
     spenRuntime.hovering = false;
     spenRuntime.nativeHover = false;
@@ -1011,7 +1029,7 @@ function syncSpenMode({ announce = false } = {}) {
     spenRuntime.barrelDown = false;
   }
   if (announce && projectHome.hidden) {
-    statusChip.textContent = active ? "S Pen активен · наведите перо на чертёж" : "Обычный сенсорный режим";
+    statusChip.textContent = active ? `${label} · перо чертит, палец перемещает вид` : `${label} · крестик в центре`;
   }
   draw();
 }
@@ -1047,6 +1065,7 @@ window.setTimeout(() => {
   try {
     applySpenDeviceState(JSON.parse(window.ZamerAndroid?.spenState?.() || "null"));
   } catch { /* Browser and older APKs activate the mode from the first pen pointer. */ }
+  syncSpenMode();
 }, 0);
 
 function decodeMojibakeText(value) {
@@ -14806,13 +14825,46 @@ const projectLengthUnit = projectSettingsSheet.querySelector("#projectLengthUnit
 const projectPrintScale = projectSettingsSheet.querySelector("#projectPrintScale");
 const projectTotalArea = projectSettingsSheet.querySelector("#projectTotalArea");
 const projectTapZoom = projectSettingsSheet.querySelector("#projectTapZoom");
+const projectSpenModeChoices = [...projectSettingsSheet.querySelectorAll('input[name="spenInputMode"]')];
 const projectSpenFields = {
-  enabled: projectSettingsSheet.querySelector("#projectSpenEnabled"),
   hoverCursor: projectSettingsSheet.querySelector("#projectSpenHover"),
   sideButton: projectSettingsSheet.querySelector("#projectSpenButton"),
   palmRejection: projectSettingsSheet.querySelector("#projectSpenPalm"),
   compactUi: projectSettingsSheet.querySelector("#projectSpenCompact"),
 };
+
+for (const [mode, appearance] of Object.entries(spenInputModes)) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "spen-mode-choice";
+  button.dataset.inputMode = mode;
+  button.setAttribute("aria-pressed", "false");
+  button.innerHTML = `${cadIcon(appearance.icon)}<span><strong>${appearance.label}</strong><small>${appearance.description}</small></span>`;
+  button.addEventListener("click", () => {
+    cancelPendingCanvasTap();
+    tapZoom = null;
+    if (!state.activePointers.size) state.pointer = null;
+    spenSettings = normalizeSpenSettings({ ...spenSettings, mode });
+    saveSpenSettings();
+    syncSpenMode({ announce: true });
+    spenModeSheet.close();
+  });
+  document.getElementById("spenModeChoices").append(button);
+}
+spenIndicator.addEventListener("click", () => {
+  syncSpenMode();
+  spenModeSheet.showModal();
+  spenIndicator.setAttribute("aria-expanded", "true");
+  spenModeSheet.querySelector('[aria-pressed="true"]')?.focus({ preventScroll: true });
+});
+document.getElementById("closeSpenMode").addEventListener("click", () => spenModeSheet.close());
+spenModeSheet.addEventListener("click", (event) => {
+  if (event.target === spenModeSheet) spenModeSheet.close();
+});
+spenModeSheet.addEventListener("close", () => {
+  spenIndicator.setAttribute("aria-expanded", "false");
+  spenIndicator.focus({ preventScroll: true });
+});
 const projectPrecisionFields = {
   precision: projectSettingsSheet.querySelector("#projectLengthPrecision"),
   anglePrecision: projectSettingsSheet.querySelector("#projectAnglePrecision"),
@@ -14867,10 +14919,9 @@ function syncProjectTotalArea(settings = state.measurementSettings) {
 }
 
 function syncSpenSettingsForm() {
-  const enabled = projectSpenFields.enabled.checked;
-  for (const [name, field] of Object.entries(projectSpenFields)) {
-    if (name !== "enabled") field.disabled = !enabled;
-  }
+  const mode = projectSpenModeChoices.find(field => field.checked)?.value || "auto";
+  for (const field of Object.values(projectSpenFields)) field.disabled = mode === "finger";
+  document.getElementById("projectSpenModeHelp").textContent = spenInputModes[mode].description;
 }
 
 projectSettingsButton.addEventListener("click", () => {
@@ -14882,6 +14933,7 @@ projectSettingsButton.addEventListener("click", () => {
   projectLengthUnit.value = settings.unit;
   projectPrintScale.value = settings.printScale;
   projectTapZoom.checked = state.tapZoomEnabled;
+  for (const field of projectSpenModeChoices) field.checked = field.value === spenSettings.mode;
   for (const [name, field] of Object.entries(projectSpenFields)) field.checked = spenSettings[name];
   syncSpenSettingsForm();
   for (const [name, field] of Object.entries(projectPrecisionFields)) field.value = String(settings[name]);
@@ -14897,7 +14949,8 @@ projectSettingsForm.addEventListener("submit", (event) => {
   event.preventDefault();
   state.measurementSettings = projectSettingsDraft();
   state.tapZoomEnabled = projectTapZoom.checked;
-  spenSettings = normalizeSpenSettings(Object.fromEntries(Object.entries(projectSpenFields).map(([name, field]) => [name, field.checked])));
+  spenSettings = normalizeSpenSettings({ mode: projectSpenModeChoices.find(field => field.checked)?.value || "auto",
+    ...Object.fromEntries(Object.entries(projectSpenFields).map(([name, field]) => [name, field.checked])) });
   saveSpenSettings();
   syncSpenMode();
   if (!state.tapZoomEnabled) {
