@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD</title>
-    <link rel="stylesheet" href="./styles.css?v=322" />
+    <link rel="stylesheet" href="./styles.css?v=323" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -398,6 +398,7 @@
         </div>
         <div class="corner-metrics" id="cornerMetrics" role="group" aria-label="Точные параметры" hidden>
           <div class="line-point-assist" id="linePointAssist" hidden>
+            <button id="lineLengthEntryToggle" type="button" aria-label="Ввод длины после второй точки" title="После второй точки ввести точную длину" aria-pressed="false" hidden><span data-line-icon="dimension" aria-hidden="true"></span><span>Ввод длины</span></button>
             <button id="polylineArcMode" type="button" aria-label="Дуга полилинии" aria-pressed="false" hidden>Дуга</button>
             <select id="lineDirection" aria-label="Направление заданной длины" hidden>
               <option value="">По курсору</option>
@@ -711,7 +712,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=337"></script>
+    <script type="module" src="./app.js?v=338"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {
