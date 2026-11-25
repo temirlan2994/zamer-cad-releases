@@ -216,6 +216,7 @@ function restoreWallDragRooms(wallDrag) {
 // Второй палец: всё начатое одним пальцем отменяется, начинается щипок.
 function startPinch() {
   if (drag?.before && drag.moved) restoreFrom(drag.before);
+  state.planPinching = true;
   state.marquee = null;
   state.ghost = null;
   state.guides = [];
@@ -1901,7 +1902,11 @@ export function bindCanvasInput() {
   canvas.addEventListener('pointerup', (event) => {
     touches.delete(event.pointerId);
     if (drag?.kind === 'pinch') {
-      if (touches.size < 2) { drag = null; requestDraw(); }
+      if (touches.size < 2) {
+        drag = null;
+        state.planPinching = false;
+        requestDraw();
+      }
       return;
     }
     canvas.parentElement?.classList.remove('move-armed');
@@ -2143,6 +2148,7 @@ export function bindCanvasInput() {
 // чем показать блокирующее окно другого устройства.
 export function cancelActiveGesture() {
   touches.clear();
+  state.planPinching = false;
   canvas.parentElement?.classList.remove('move-armed');
   if (drag?.kind === 'touch-hold') clearTimeout(drag.timer);
   cancelLiveDerived(drag);

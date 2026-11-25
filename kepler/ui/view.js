@@ -82,7 +82,7 @@ export function requestDraw() {
     drawQueued = false;
     if (!state.project) return; // ResizeObserver может сработать до восстановления аккаунта и модели.
     advanceZoom(now);
-    renderer.draw(state);
+    renderer.draw(state, { zooming: Boolean(zoomAnimation) || state.planPinching });
     const firstDraw = document.getElementById('firstDrawActions');
     if (firstDraw) firstDraw.hidden = !state.project || state.modeName !== 'plan' || Boolean(
       state.tool || state.selection || state.editLocked || state.roofPlan || state.sheetOpen ||

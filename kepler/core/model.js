@@ -313,18 +313,20 @@ export function deserializeProject(text) {
   } catch {
     throw new Error('Файл не является JSON-проектом kep•ler 3D');
   }
-  return projectFromData(raw);
+  return projectFromData(raw, { copy: false });
 }
 
-// То же для уже разобранного JSON (снимки истории собираются с reviver).
-export function projectFromData(raw) {
+// copy: false только для свежеразобранного JSON, которым владеет вызывающий код.
+export function projectFromData(raw, { copy = true } = {}) {
   const v7 = isV7Data(raw);
   const ver = schemaVersion(raw?.schema);
   if (ver != null && ver > 7) {
     throw new Error(`Файл создан более новой версией kep•ler 3D (формат ${ver}, `
       + 'здесь поддерживается до 7). Обновите приложение.');
   }
-  const data = migrateProject(v7 ? toV6Data(raw) : raw);
+  const data = v7
+    ? migrateProject(toV6Data(raw, { copy }), { copy: false })
+    : migrateProject(raw, { copy });
   const levelOk = (l) => isObj(l) && Array.isArray(l.rooms) && Array.isArray(l.openings) && Array.isArray(l.items);
   if (!Array.isArray(data.levels) || !data.levels.some(levelOk)) {
     throw new Error('Файл повреждён: нет этажей со списками rooms/openings/items');

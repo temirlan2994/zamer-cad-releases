@@ -2,6 +2,7 @@
 
 export const state = {
   project: null,
+  drawingRevision: 0, // меняется при правках модели, остаётся прежней при движении камеры
   walls: [],
   freeLoops: [], // замкнутые петли стен без помещения (core/bound-rooms.js)
   gaps: [], // нестандартные зазоры этажа (core/gaps.js, без расчёта сдвига)
@@ -82,6 +83,7 @@ export const state = {
   touchDeferSelect: false,
   touchDeferred: null,
   view: { scale: 0.08, panX: 120, panY: 120, rotation: 0 },
+  planPinching: false,
   selection: null,
   hover: null,
   tool: null, // активный инструмент (размещение, рисование, калибровка...)

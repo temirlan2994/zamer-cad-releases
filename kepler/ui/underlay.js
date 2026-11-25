@@ -12,16 +12,18 @@ import { selectObject, setHint } from './tools.js';
 import { fitView, requestDraw, screenToWorld, worldToScreen } from './view.js';
 
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174';
+let underlaySource = null;
 
 export function syncUnderlayImage() {
   const src = state.project.site?.underlay?.src;
-  if (!src) { state.underlayImg = null; return; }
-  if (state.underlayImg?.dataset?.src === src) return;
+  if (!src) { state.underlayImg = null; underlaySource = null; return; }
+  if (underlaySource === src && state.underlayImg) return;
   const img = new Image();
-  img.dataset.src = src;
-  img.onload = () => requestDraw();
-  img.src = src;
+  img.decoding = 'async';
+  img.onload = () => { if (state.underlayImg === img) requestDraw(); };
+  underlaySource = src;
   state.underlayImg = img;
+  img.src = src;
 }
 
 export function addCalibratePoint(world) {

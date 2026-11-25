@@ -299,24 +299,65 @@ export function planVisibleRoomIds(rooms, visibleWalls, viewport) {
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
-  // Слой ландшафта на плане: рисуется отдельно и кладётся одной картинкой с
-  // прозрачностью — объекты не просвечивают друг через друга.
-  let lsLayer = null;
-  function drawPlanLandscape(target, objects, lsOpts) {
-    const { width: w, height: h } = target.canvas;
-    if (!lsLayer) lsLayer = document.createElement('canvas');
-    if (lsLayer.width !== w || lsLayer.height !== h) { lsLayer.width = w; lsLayer.height = h; }
-    const lctx = lsLayer.getContext('2d');
-    lctx.setTransform(1, 0, 0, 1, 0, 0);
-    lctx.clearRect(0, 0, w, h);
-    lctx.setTransform(target.getTransform());
-    drawLandscapeGround(lctx, objects, lsOpts);
-    drawLandscapeRaised(lctx, objects, lsOpts);
-    target.save();
+  let backgroundLayer = null;
+  let landscapeLayer = null;
+  let backgroundRaster = null;
+
+  function drawPlanLandscape(target, width, height, paint) {
+    landscapeLayer ||= typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
+    if (landscapeLayer.width !== width) landscapeLayer.width = width;
+    if (landscapeLayer.height !== height) landscapeLayer.height = height;
+    const layer = landscapeLayer.getContext('2d');
+    layer.setTransform(1, 0, 0, 1, 0, 0);
+    layer.clearRect(0, 0, width, height);
+    paint(layer);
     target.setTransform(1, 0, 0, 1, 0, 0);
     target.globalAlpha = PLAN_LS_ALPHA;
-    target.drawImage(lsLayer, 0, 0);
-    target.restore();
+    target.drawImage(landscapeLayer, 0, 0);
+    target.globalAlpha = 1;
+  }
+
+  function drawCachedBackground({ view, dpr, key, sources, zooming, paint, paintLandscape }) {
+    const { width, height } = canvas;
+    const scale = view.scale * dpr;
+    const rotation = view.rotation || 0;
+    const panX = view.panX * dpr;
+    const panY = view.panY * dpr;
+    const ratio = backgroundRaster ? scale / backgroundRaster.scale : 1;
+    const x = backgroundRaster ? panX - backgroundRaster.x * ratio : 0;
+    const y = backgroundRaster ? panY - backgroundRaster.y * ratio : 0;
+    const reusable = backgroundRaster?.key === key && backgroundRaster.rotation === rotation
+      && backgroundRaster.sources.length === sources.length
+      && sources.every((source, i) => source === backgroundRaster.sources[i])
+      && (zooming ? ratio >= 0.82 && ratio <= 1.25 : ratio === 1)
+      && x <= 0 && y <= 0 && x + backgroundLayer.width * ratio >= width
+      && y + backgroundLayer.height * ratio >= height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (reusable) {
+      ctx.drawImage(backgroundRaster.bitmap || backgroundLayer,
+        -x / ratio, -y / ratio, width / ratio, height / ratio, 0, 0, width, height);
+      return;
+    }
+
+    // Запас за краями позволяет сдвигать и масштабировать готовый фон.
+    const padX = Math.ceil(Math.min(width * 0.35, 200 * dpr));
+    const padY = Math.ceil(Math.min(height * 0.35, 200 * dpr));
+    const w = width + padX * 2;
+    const h = height + padY * 2;
+    backgroundLayer ||= typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
+    if (backgroundLayer.width !== w) backgroundLayer.width = w;
+    if (backgroundLayer.height !== h) backgroundLayer.height = h;
+    const background = backgroundLayer.getContext('2d');
+    paint(background, w / dpr, h / dpr, padX / dpr, padY / dpr);
+
+    if (paintLandscape) {
+      drawPlanLandscape(background, w, h, (layer) => paintLandscape(layer, padX / dpr, padY / dpr));
+    }
+
+    backgroundRaster?.bitmap?.close();
+    const bitmap = backgroundLayer.transferToImageBitmap?.();
+    backgroundRaster = { key, sources, rotation, scale, x: panX + padX, y: panY + padY, bitmap };
+    ctx.drawImage(bitmap || backgroundLayer, padX, padY, width, height, 0, 0, width, height);
   }
 
   // opts (для печати листов): width/height — размер в CSS px, dpr — плотность,
@@ -347,32 +388,15 @@ export function createRenderer(canvas) {
     // на поворот дома (core/building.js). Масштаб тот же.
     const pv = composeView(view, state.project.building);
     const p2s = (x, y) => projectPoint(pv, x, y);
-    const setView = (v) => {
+    const setView = (v, target = ctx, offsetX = 0, offsetY = 0) => {
       const c = Math.cos(v.rotation || 0);
       const s = Math.sin(v.rotation || 0);
-      ctx.setTransform(dpr * v.scale * c, dpr * v.scale * s, -dpr * v.scale * s, dpr * v.scale * c, dpr * v.panX, dpr * v.panY);
+      target.setTransform(dpr * v.scale * c, dpr * v.scale * s, -dpr * v.scale * s, dpr * v.scale * c,
+        dpr * (v.panX + offsetX), dpr * (v.panY + offsetY));
     };
     // Сетка: в «Плане» — по осям дома, в «Участке» — по осям съёмки.
     const gridView = state.modeName === 'plan' ? pv : view;
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = tokens.canvas;
-    ctx.fillRect(0, 0, width, height);
-
-    // Видимая область в координатах сетки.
-    const corners = [
-      unprojectPoint(gridView, 0, 0), unprojectPoint(gridView, width, 0),
-      unprojectPoint(gridView, 0, height), unprojectPoint(gridView, width, height),
-    ];
-    const worldBox = {
-      minX: Math.min(...corners.map((c) => c.x)),
-      maxX: Math.max(...corners.map((c) => c.x)),
-      minY: Math.min(...corners.map((c) => c.y)),
-      maxY: Math.max(...corners.map((c) => c.y)),
-    };
-
-    const px = (v) => v / scale; // толщина линии в экранных пикселях
-    // Отображение и освещение этого вида (core/view-display.js); листы — по умолчанию.
+    const px = (v) => v / scale;
     const vd = thumbnail
       ? { ...VIEW_DISPLAY_DEFAULT, rooms: 'color', shadows: true, light: 'fixed', length: 'short' }
       : print ? VIEW_DISPLAY_DEFAULT : viewDisplay(
@@ -380,39 +404,41 @@ export function createRenderer(canvas) {
         state.analyticalView?.id || viewIdOf(state.project, state.modeName),
       );
 
-    // 1. Сетка (на печати не нужна).
-    setView(gridView);
-    if (!print || planSnapshot) drawGrid(ctx, worldBox, scale, px, tokens);
-    setView(view); // дальше — участок в координатах съёмки
+    const underlay = site?.underlay;
+    const image = state.underlayImg;
+    const underlayImg = underlay && !state.underlayHidden && image?.complete && image.naturalWidth ? image : null;
+    function drawBackground(target, w, h, offsetX, offsetY) {
+      target.setTransform(dpr, 0, 0, dpr, 0, 0);
+      target.fillStyle = tokens.canvas;
+      target.fillRect(0, 0, w, h);
 
-    // 2. Подложка-топосъёмка — ПОВЕРХ сетки, чтобы её было видно.
-    if (site?.underlay && state.underlayImg && !state.underlayHidden) {
-      const u = site.underlay;
-      const uw = u.widthPx * u.mmPerPx;
-      const uh = u.heightPx * u.mmPerPx;
-      const ucx = u.x + uw / 2;
-      const ucy = u.y + uh / 2;
-      const urot = ((u.rot || 0) * Math.PI) / 180;
-      ctx.save();
-      ctx.translate(ucx, ucy);
-      ctx.rotate(urot);
-      ctx.globalAlpha = u.opacity ?? 0.7;
-      ctx.drawImage(state.underlayImg, -uw / 2, -uh / 2, uw, uh);
-      ctx.globalAlpha = 1;
-      if (state.selection?.type === 'site' && state.selection.kind === 'underlay') {
-        ctx.strokeStyle = tokens.accent;
-        ctx.lineWidth = px(1.6);
-        ctx.setLineDash([px(8), px(5)]);
-        ctx.strokeRect(-uw / 2, -uh / 2, uw, uh);
-        ctx.setLineDash([]);
+      setView(gridView, target, offsetX, offsetY);
+      if (!print || planSnapshot) {
+        const shifted = { ...gridView, panX: gridView.panX + offsetX, panY: gridView.panY + offsetY };
+        drawGrid(target, planViewportBox(shifted, w, h, 0), scale, px, tokens);
       }
-      ctx.restore();
+      setView(view, target, offsetX, offsetY);
+      // Топосъёмка поверх сетки, затем рельеф, дороги и соседние здания.
+      if (underlayImg) {
+        const uw = underlay.widthPx * underlay.mmPerPx;
+        const uh = underlay.heightPx * underlay.mmPerPx;
+        target.save();
+        target.translate(underlay.x + uw / 2, underlay.y + uh / 2);
+        target.rotate(((underlay.rot || 0) * Math.PI) / 180);
+        target.globalAlpha = underlay.opacity ?? 0.7;
+        target.drawImage(underlayImg, -uw / 2, -uh / 2, uw, uh);
+        target.globalAlpha = 1;
+        if (state.selection?.type === 'site' && state.selection.kind === 'underlay') {
+          target.strokeStyle = tokens.accent;
+          target.lineWidth = px(1.6);
+          target.setLineDash([px(8), px(5)]);
+          target.strokeRect(-uw / 2, -uh / 2, uw, uh);
+        }
+        target.restore();
+      }
+      if (site) drawTerrainUnder(target, state, site, px, tokens.canvas);
+      if (site) drawSiteUnder(target, state, site, tokens, px, { sunShadow: vd.sunShadow });
     }
-
-    // 2. Рельеф (закраска высот, горизонтали), затем участок: дороги,
-    // запретная зона, соседи, тени.
-    if (site) drawTerrainUnder(ctx, state, site, px);
-    if (site) drawSiteUnder(ctx, state, site, tokens, px, { sunShadow: vd.sunShadow });
 
     // Ландшафт (core/landscape.js, ui/render-landscape.js): в «Ландшафте» —
     // для правки, в «Участке» — для контекста. Покрытия — под домом.
@@ -442,6 +468,38 @@ export function createRenderer(canvas) {
       style: lsStyle, dark: lsDark, pal: lsPal, dpr,
     };
     const houseFootprints = landscape ? buildingSiteCheck(state.project).footprint.map((f) => f.corners) : [];
+    const showPlanLandscape = Boolean(planLs && lsObjects.length);
+    function paintLandscape(target, offsetX, offsetY) {
+      setView(view, target, offsetX, offsetY);
+      drawLandscapeGround(target, lsObjects, lsOpts);
+      drawLandscapeRaised(target, lsObjects, lsOpts);
+    }
+    if ((showPlanLandscape || underlayImg) && state.modeName === 'plan' && !print && !thumbnail) {
+      const selection = state.selection?.type === 'site' ? state.selection : null;
+      const hover = state.hover?.type === 'site-obj' ? state.hover : null;
+      // Сетка, топосъёмка, рельеф и полупрозрачный ландшафт компонуются один
+      // раз, чтобы браузер не смешивал большие изображения на каждом кадре.
+      const sunWalls = site?.sun?.enabled && vd.sunShadow ? state.walls : null;
+      const key = [
+        state.drawingRevision, canvas.width, canvas.height, dpr, lsStyle, tokens.canvas, lsOpts.noShadows, vd.sunShadow,
+        lsOpts.shadow?.x, lsOpts.shadow?.y, lsOpts.shadow?.k, document.fonts?.status,
+        underlay?.x, underlay?.y, underlay?.mmPerPx, underlay?.rot, underlay?.opacity,
+        selection?.kind, selection?.id, hover?.kind, hover?.id,
+      ].join('|');
+      drawCachedBackground({
+        view, dpr, key, sources: [state.project, state.siteBuildable, underlayImg, sunWalls, ...lsObjects], zooming: opts.zooming,
+        paint: drawBackground,
+        paintLandscape: showPlanLandscape ? paintLandscape : null,
+      });
+      state._siteOpportunityUI = null;
+      setView(view);
+    } else {
+      drawBackground(ctx, width, height, 0, 0);
+      if (showPlanLandscape) {
+        drawPlanLandscape(ctx, canvas.width, canvas.height, (layer) => paintLandscape(layer, 0, 0));
+        setView(view);
+      }
+    }
     // Участок — газоном (светлая зелень с зерном; в «Чертеже» — пунктир).
     if (landscape && site?.boundary?.length >= 3) drawLandscapeSiteBase(ctx, site.boundary, lsOpts);
     // В «Ландшафте» дом — «белое пятно с планом»: светлые полы, тёмные стены.
@@ -450,11 +508,8 @@ export function createRenderer(canvas) {
       roomFill: () => lsPal.paper,
       wall: lsPal.ink, wallBearing: lsPal.ink,
     } : vd.rooms === 'gray' ? { ...tokens, roomFill: lsDark ? grayFillDark : grayFill } : tokens;
-    state._planLandscape = 0;
-    if (planLs && lsObjects.length) {
-      drawPlanLandscape(ctx, lsObjects, lsOpts);
-      state._planLandscape = lsObjects.length;
-    } else if (lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
+    state._planLandscape = showPlanLandscape ? lsObjects.length : 0;
+    if (!showPlanLandscape && lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
     if (landscape && sunMode === 'sun') {
       // Анализ освещённости — под тенями; тени по солнцу — на земле, до дома и объектов.
       const grid = state.lsSun?.analysis ? landscapeSunGrid(state.project, lsObjects) : null;

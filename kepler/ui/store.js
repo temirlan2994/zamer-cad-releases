@@ -68,6 +68,7 @@ let lastVoidTargetKey = '';
 // лёгкий сигнал и сами пересчитывают производные данные. В проект статус
 // таких панелей не записывается.
 function dispatchProjectChange() {
+  state.drawingRevision += 1;
   if (typeof globalThis.document?.dispatchEvent !== 'function'
       || typeof globalThis.CustomEvent !== 'function') return;
   globalThis.document.dispatchEvent(new globalThis.CustomEvent(PROJECT_CHANGE_EVENT));
@@ -159,7 +160,7 @@ export function parseProjectText(text) {
   } catch {
     throw new Error('Файл не является JSON-проектом kep•ler 3D');
   }
-  return projectFromData(raw);
+  return projectFromData(raw, { copy: false });
 }
 
 // Снимок для истории при замене проекта целиком (пример, шаблон, файл,
@@ -627,11 +628,11 @@ export function discardAutosave() {
   } catch { /* локальное хранилище недоступно */ }
 }
 
-// Замена проекта текстом (файл, версия, отмена). Сначала разбор и расчёт
-// стен на новом проекте; бросило — текущий проект не тронут. Сломалось
-// уже после замены — откат к прежнему и ошибка наружу.
-export function restoreFrom(text) {
-  const project = parseProjectText(text);
+// Замена проекта текстом или результатом JSON.parse, переданным во владение.
+// Сначала разбираем и считаем стены, затем меняем текущий проект.
+// Ошибка после замены откатывает редактор к прежнему проекту.
+export function restoreFrom(source) {
+  const project = typeof source === 'string' ? parseProjectText(source) : projectFromData(source, { copy: false });
   const derived = deriveAll(project);
   const prev = {
     project: state.project,
