@@ -5,6 +5,7 @@
 import { cornerWindowHandles, cornerWindowProjections } from './core/corner-windows.js';
 import { levelWindowOpenings } from './core/spanning-windows.js';
 import { entryOpeningSymbol, entryParts, entrySpan, entryTitle, siteEntries } from './core/site-entries.js';
+import { entryWorldPoint, siteEntryHandles } from './core/site-entry-handles.js';
 import { glazedOpeningParts, isGlazedAssembly } from './core/glazed-openings.js';
 import {
   deriveWalls, doorLeaves, doorSymbol, openingRect, wallOutline, wallRects,
@@ -1111,7 +1112,12 @@ export function createRenderer(canvas) {
       drawMassOverlay(ctx, { p2s, tokens });
       ctx.restore();
     }
-    if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
+    if (site) drawSiteLabels(ctx, state, site, w2s, tokens, { entryHandles: !print && !thumbnail });
+    state._entryUI = null;
+    if (site && !print && !thumbnail && state.selection?.type === 'site' && state.selection.kind === 'entry' && (!state.tool || state.tool.kind === 'entry')) {
+      const entry = siteEntries(site).find((item) => item.id === state.selection.id);
+      if (entry) drawSelectedEntryUI(ctx, state, entry, w2s, tokens);
+    }
     // Подписи ландшафта на плане — только если включены во «Видах».
     if (planLs?.labels && lsObjects.length) {
       drawLandscapeOverlay(ctx, lsObjects, { w2s, tokens, scale, labels: true, style: lsStyle });
@@ -1645,7 +1651,51 @@ function drawDraft(ctx, draft, tokens, px) {
   }
 }
 
-function drawSiteLabels(ctx, state, site, w2s, tokens) {
+function drawSelectedEntryUI(ctx, state, entry, w2s, tokens) {
+  const project = (p) => w2s(p.x, p.y);
+  const center = project(entry);
+  const normalPoint = project(entryWorldPoint(entry, 0, 1000));
+  const normalLength = Math.hypot(normalPoint.x - center.x, normalPoint.y - center.y) || 1;
+  const normal = { x: (normalPoint.x - center.x) / normalLength, y: (normalPoint.y - center.y) / normalLength };
+  const ui = { id: entry.id, controls: [] };
+  const r = state.coarsePointer ? 16 : 12;
+  ctx.save();
+  for (const handle of siteEntryHandles(entry)) {
+    const p = project(handle); drawHandleSquare(ctx, p, tokens);
+    ui.controls.push({ kind: 'resize', ...handle, ...p, r: state.coarsePointer ? 22 : 10 });
+  }
+  const flips = [];
+  const flip = (point, part, action, symbol) => {
+    let p = { ...point };
+    while (flips.some((other) => Math.hypot(other.x - p.x, other.y - p.y) < r * 2 + 8)) p = { x: p.x + normal.x * (r * 2 + 10), y: p.y + normal.y * (r * 2 + 10) };
+    ctx.fillStyle = tokens.surface; ctx.strokeStyle = tokens.accent; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = tokens.accent; ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(symbol, p.x, p.y + 5);
+    const control = { kind: 'flip', part, action, ...p, r: state.coarsePointer ? 22 : 15 };
+    flips.push(control); ui.controls.push(control);
+  };
+  for (const [index, part] of entryParts(entry).entries()) {
+    const a = project(entryWorldPoint(entry, part.offset - part.width / 2));
+    const b = project(entryWorldPoint(entry, part.offset + part.width / 2));
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const lift = Math.max(r * 2 + 14, Math.min(90, Math.hypot(b.x - a.x, b.y - a.y) / 2 + 28));
+    flip({ x: mid.x + normal.x * lift, y: mid.y + normal.y * lift }, index, 'direction', part.opening === 'sliding' ? '⇆' : '⇅');
+    if (part.kind === 'wicket' && part.opening !== 'sliding') flip({ x: mid.x + normal.x * (lift + r * 2 + 12), y: mid.y + normal.y * (lift + r * 2 + 12) }, index, 'hinge', '⇆');
+    const offset = index ? 48 : 25;
+    const da = { x: a.x - normal.x * offset, y: a.y - normal.y * offset };
+    const db = { x: b.x - normal.x * offset, y: b.y - normal.y * offset };
+    ctx.strokeStyle = tokens.accent; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(da.x, da.y); ctx.lineTo(db.x, db.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    const label = String(Math.round(part.width)); const x = (da.x + db.x) / 2; const y = (da.y + db.y) / 2;
+    ctx.font = '600 12px system-ui, sans-serif'; ctx.textAlign = 'center';
+    const width = ctx.measureText(label).width + 8;
+    ctx.fillStyle = tokens.surface; ctx.fillRect(x - width / 2, y - 9, width, 18);
+    ctx.fillStyle = tokens.accent; ctx.fillText(label, x, y + 4);
+  }
+  state._entryUI = ui; ctx.restore();
+}
+
+function drawSiteLabels(ctx, state, site, w2s, tokens, { entryHandles = false } = {}) {
   if (site.boundary?.length >= 3) {
     const cx = site.boundary.reduce((s, p) => s + p.x, 0) / site.boundary.length;
     const minY = Math.min(...site.boundary.map((p) => p.y));
@@ -1656,6 +1706,7 @@ function drawSiteLabels(ctx, state, site, w2s, tokens) {
     ctx.fillText(`Участок ${polygonAreaM2(site.boundary).toFixed(1)} м²`, p.x, p.y - 10);
   }
   for (const e of siteEntries(site)) {
+    if (entryHandles && state.selection?.type === 'site' && state.selection.kind === 'entry' && state.selection.id === e.id && (!state.tool || state.tool.kind === 'entry')) continue;
     const p = w2s(e.x, e.y);
     ctx.fillStyle = tokens.accent2;
     ctx.font = '600 11px system-ui, sans-serif';

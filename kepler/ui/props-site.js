@@ -10,7 +10,6 @@ import { refs, toast } from './dom.js';
 import { closeSheets } from './mobile.js';
 import { deleteSelection } from './plan-actions.js';
 import { setBuildingRotation } from './site-actions.js';
-import { entryDirectionFields, readEntryDirections } from './site-entry-menu.js';
 import { state } from './state.js';
 import { mutate, tweak } from './store.js';
 import { selectObject, setTool, startDraw } from './tools.js';
@@ -207,7 +206,6 @@ export function renderSiteObjectProps(panel, sel) {
       <canvas class="entry-props-preview" id="entryPreview" width="480" height="200" aria-label="Предпросмотр ворот или калитки"></canvas>
       <div class="prop-block">
         <label class="prop-field"><span>${wicket ? 'Тип калитки' : 'Тип ворот'}</span><select id="entryOpening"><option value="swing" ${entry.opening !== 'sliding' ? 'selected' : ''}>${wicket ? 'Распашная' : 'Распашные'}</option><option value="sliding" ${entry.opening === 'sliding' ? 'selected' : ''}>${wicket ? 'Раздвижная' : 'Раздвижные'}</option></select></label>
-        ${entryDirectionFields(entry, 'entry')}
         <label class="prop-field"><span>${wicket ? 'Ширина калитки' : 'Ширина ворот'}, мм</span>
           <input id="entryWidth" type="number" min="${wicket ? 600 : 2000}" max="${wicket ? 2000 : 10000}" step="50" value="${entry.width || (wicket ? 1000 : 4000)}"></label>
         <label class="prop-field"><span>Высота, мм</span><input id="entryHeight" type="number" min="600" max="4000" step="50" value="${entry.height || 1800}"></label>
@@ -215,9 +213,9 @@ export function renderSiteObjectProps(panel, sel) {
         ${entry.wicket ? `<h3>Боковая калитка</h3><label class="prop-field"><span>Сторона калитки (со стороны участка)</span><select id="entryWicketSide"><option value="left" ${entry.wicketSide === 'left' ? 'selected' : ''}>Слева</option><option value="right" ${entry.wicketSide !== 'left' ? 'selected' : ''}>Справа</option></select></label>
         <label class="prop-field"><span>Ширина калитки, мм</span><input id="entryWicketWidth" type="number" min="600" max="2000" step="50" value="${entry.wicketWidth || 1000}"></label>
         <label class="prop-field"><span>Тип боковой калитки</span><select id="entryWicketOpening"><option value="swing" ${entry.wicketOpening !== 'sliding' ? 'selected' : ''}>Распашная</option><option value="sliding" ${entry.wicketOpening === 'sliding' ? 'selected' : ''}>Раздвижная</option></select></label>
-        ${entryDirectionFields({ kind: 'wicket', opening: entry.wicketOpening, swingSide: entry.wicketSwingSide, hinge: entry.wicketHinge, slideDirection: entry.wicketSlideDirection }, 'entryWicket')}` : ''}`}
+        ` : ''}`}
       </div>
-      <p class="empty-hint">Тяните вдоль границы, чтобы передвинуть. Кнопка «Въезд» открывает выбор ворот и калитки.</p>
+      <p class="empty-hint">На плане: круглые кнопки ⇅/⇆ меняют открывание и петли, квадратные ручки — ширину. Тяните полотно вдоль границы, чтобы передвинуть.</p>
       <div class="prop-actions"><button id="entryAdd">Добавить ещё</button><button id="del" class="danger">Удалить</button></div>`;
     const apply = () => {
       const width = Number(panel.querySelector('#entryWidth').value);
@@ -227,9 +225,7 @@ export function renderSiteObjectProps(panel, sel) {
       }
       const opening = panel.querySelector('#entryOpening').value;
       const wicketOpening = panel.querySelector('#entryWicketOpening')?.value || entry.wicketOpening || 'swing';
-      const wicketDirections = readEntryDirections(panel, { opening: wicketOpening, swingSide: entry.wicketSwingSide, hinge: entry.wicketHinge, slideDirection: entry.wicketSlideDirection }, 'entryWicket');
-      const next = { ...entry, ...readEntryDirections(panel, { ...entry, opening }, 'entry'), width, height, opening,
-        wicketOpening, wicketSwingSide: wicketDirections.swingSide, wicketHinge: wicketDirections.hinge, wicketSlideDirection: wicketDirections.slideDirection,
+      const next = { ...entry, width, height, opening, wicketOpening,
         wicket: panel.querySelector('#entryWicket')?.checked || false,
         wicketSide: panel.querySelector('#entryWicketSide')?.value || entry.wicketSide || 'right',
         wicketWidth: panel.querySelector('#entryWicketWidth') ? Number(panel.querySelector('#entryWicketWidth').value) : entry.wicketWidth || 1000 };

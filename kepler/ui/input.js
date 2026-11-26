@@ -10,6 +10,7 @@ import { itemsInRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { activeLevel, roomById } from '../core/model.js';
 import { determineParent, snapRoomPosition, validateRoomPlacement } from '../core/rooms.js';
 import { ensureSiteEntries, entryById, entryOverlaps, entryTitle, syncPrimaryEntry } from '../core/site-entries.js';
+import { resizeSiteEntry, toggleEntryOpening } from '../core/site-entry-handles.js';
 import { pointInBuilding, setBuildingOrigin } from '../core/site-check.js';
 import {
   openingFrame, openingPos, openingPosAt, openingRect, setOpeningPos, wallRects,
@@ -45,7 +46,7 @@ import {
 import { hideSofaMenu, openSofaMenu } from './props-composite.js';
 import { canvas, el, refs, toast } from './dom.js';
 import {
-  findWall, hitGroupHandle, hitItem, hitItemHandle, hitManualWallEnd, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRailingEnd, hitRoom,
+  findWall, hitGroupHandle, hitItem, hitItemHandle, hitManualWallEnd, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRailingEnd, hitRoom, hitSiteEntryControl,
   hitPlanStack, hitRoomHandle, hitSiteMidpoint, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
@@ -92,7 +93,7 @@ import { eatersOf, liftRoom } from '../core/v7/eat-bridge.js';
 import { materializeRailings, moveRailingEnd } from '../core/railings.js';
 import { state } from './state.js';
 import { registerEditGestureCancel } from './edit-guard.js';
-import { afterChange, pushHistory, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot } from './store.js';
+import { afterChange, mutate, pushHistory, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot } from './store.js';
 import { arrangeRoomsNow } from './auto-layout.js';
 import { activeSiteLayer, cancelTool, positionWallButtons, selectObject, setHint } from './tools.js';
 import { renderSelectionToolbar } from './selection-toolbar.js';
@@ -448,6 +449,12 @@ function updateHoverAndGhost(world, plan, event) {
     requestDraw();
     return;
   }
+  const entryControl = hitSiteEntryControl(event?.clientX !== undefined ? pointerScreen(event) : worldToScreen(world.x, world.y));
+  if (entryControl) {
+    if (state.entryGhost) { state.entryGhost = null; requestDraw(); }
+    canvas.style.cursor = entryControl.kind === 'resize' ? 'ew-resize' : 'pointer';
+    return;
+  }
   if (state.tool?.kind === 'entry') {
     // Предпросмотр: стрелка скользит по границе за курсором.
     state.entryGhost = computeEntryAt(world);
@@ -562,6 +569,13 @@ export function bindCanvasInput() {
   canvas.addEventListener('selectstart', (e) => e.preventDefault()); // долгое нажатие не выделяет холст
   // Esc во время жеста «тянуть ребро» ландшафта — отмена (раньше общих клавиш).
   window.addEventListener('keydown', (e) => {
+    if (drag?.kind === 'entry-resize' && (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ'))) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      const id = drag.id;
+      cancelActiveGesture();
+      if (entryById(state.project.site, id)) selectObject({ type: 'site', kind: 'entry', id });
+      return;
+    }
     if (state.tool?.kind === 'move-furniture') {
       if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ')) {
         e.preventDefault();
@@ -730,6 +744,32 @@ export function bindCanvasInput() {
     // Панорама: правая/средняя кнопка или зажатый пробел.
     if (event.button === 1 || event.button === 2 || spaceDown) {
       drag = { kind: 'pan', start: screen, view: { ...state.view } };
+      return;
+    }
+
+    const entryControl = hitSiteEntryControl(screen);
+    if (entryControl) {
+      state.entryGhost = null;
+      requestDraw();
+      if (entryControl.kind === 'flip') {
+        const id = state.selection.id;
+        tapOrNow(event, screen, () => {
+          const entry = entryById(state.project.site, id);
+          const next = entry && toggleEntryOpening(entry, entryControl.part, entryControl.action);
+          if (!next) return;
+          mutate(() => {
+            ensureSiteEntries(state.project.site);
+            Object.assign(entryById(state.project.site, id), next);
+            syncPrimaryEntry(state.project.site);
+          });
+        });
+      } else {
+        const before = snapshot();
+        const site = state.project.site;
+        ensureSiteEntries(site);
+        const entry = entryById(site, state.selection.id);
+        if (entry) drag = { kind: 'entry-resize', id: entry.id, part: entryControl.part, end: entryControl.end, start: structuredClone(entry), before, moved: false };
+      }
       return;
     }
 
@@ -1917,6 +1957,15 @@ export function bindCanvasInput() {
       return;
     }
 
+    if (drag.kind === 'entry-resize') {
+      const site = state.project.site;
+      const entry = entryById(site, drag.id);
+      const next = entry && resizeSiteEntry(site, drag.start, drag.part, drag.end, world, event.shiftKey ? 1 : 50);
+      if (next && (next.width !== entry.width || next.wicketWidth !== entry.wicketWidth || Math.hypot(next.x - entry.x, next.y - entry.y) > .1)) {
+        Object.assign(entry, next); syncPrimaryEntry(site); drag.moved = true; requestDraw();
+      }
+      return;
+    }
     if (drag.kind === 'entry') {
       const site = state.project.site;
       if (!site.boundary) return;
