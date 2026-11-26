@@ -42,8 +42,9 @@ jobs:
         working-directory: android-offline
         run: |
           mkdir -p build/policy-tests
-          javac -encoding UTF-8 -d build/policy-tests app/src/main/java/com/zamercad/offline/UpdatePolicy.java app/src/main/java/com/zamercad/offline/FileOpenPolicy.java app/src/main/java/com/zamercad/offline/SitePolicy.java tests/UpdatePolicyTest.java tests/FileOpenPolicyTest.java tests/SitePolicyTest.java
+          javac -encoding UTF-8 -d build/policy-tests app/src/main/java/com/zamercad/offline/UpdatePolicy.java app/src/main/java/com/zamercad/offline/UpdateFlow.java app/src/main/java/com/zamercad/offline/FileOpenPolicy.java app/src/main/java/com/zamercad/offline/SitePolicy.java tests/UpdatePolicyTest.java tests/UpdateFlowTest.java tests/FileOpenPolicyTest.java tests/SitePolicyTest.java
           java -cp build/policy-tests com.zamercad.offline.UpdatePolicyTest
+          java -cp build/policy-tests com.zamercad.offline.UpdateFlowTest
           java -cp build/policy-tests com.zamercad.offline.FileOpenPolicyTest
           java -cp build/policy-tests com.zamercad.offline.SitePolicyTest
       - run: bash ./gradlew assembleDebug lintDebug

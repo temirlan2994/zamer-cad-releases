@@ -26,6 +26,7 @@ import { driveProjectStamp, googleAccountForToken, googleDriveProjects, syncDriv
 import { BILLING, PRO_FEATURES, canUseFeature, checkoutUrl, licenseFromResponse, needsLicenseCheck, normalizeLicenseKey, subscriptionStatus, touchSubscription } from "./core/subscription.js";
 import { DEFAULT_LINE_LAYER, DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT, LINE_TYPE_VALUES, LINE_WEIGHT_VALUES, MAX_CUSTOM_LINE_LAYERS, MAX_LINE_LAYER_NAME_LENGTH, normalizeActiveLineLayer, normalizeLineLayerColor, normalizeLineLayerName, normalizeLineLayerSettings, normalizeLineType, normalizeLineWeight, resolveLineStyle } from "./core/line-layers.js";
 import { buildProjectPreview } from "./core/project-preview.js";
+import { projectStorageInfo } from "./core/project-storage.js";
 import { describeSurveyRecord, measureSurveyContour, normalizeSurvey, normalizeSurveyRecord, surveyMarkers, surveyRoom } from "./core/survey.js";
 import { bindSurveyPanel } from "./core/survey-panel.js";
 import { createSurveyLaser } from "./core/survey-laser.js";
@@ -112,6 +113,8 @@ function cadIcon(name) {
     offset: '<path d="M5 19 15 9m-5 10L20 9M7 12l-2-2m4-2 2 2"/>',
     percent: '<path d="m5 19 14-14"/><circle cx="7" cy="7" r="2"/><circle cx="17" cy="17" r="2"/>',
     exit: '<path d="M10 4H4v16h6m5-12 4 4-4 4m-6-4h10"/>',
+    phone: '<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M10 18h4"/>',
+    drive: '<path d="M8.7 2h6.6L6.6 17H0Z" fill="#34a853" stroke="none"/><path d="M6.6 17H24l-3.3 5.7H3.3Z" fill="#4285f4" stroke="none"/><path d="m15.3 2 8.7 15h-6.6L8.7 2Z" fill="#fbbc04" stroke="none"/>',
     update: '<path d="M20 5v5h-5m5 0a8 8 0 1 0-2 8m-6-9v6m-2.5-2.5 2.5 2.5 2.5-2.5"/>',
   };
   return `<svg class="cad-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.cursor}</svg>`;
@@ -1625,6 +1628,10 @@ async function writeGoogleProjectState(owner, id, fields) {
   const entry = { ...await idbRequest(store.get([owner, id])), ...fields, owner, id };
   store.put(entry);
   await completed;
+  if (projectDriveSnapshot.owner === owner) {
+    projectDriveSnapshot.states[id] = entry;
+    refreshProjectStorageBadge(id, owner);
+  }
   return entry;
 }
 
@@ -2036,6 +2043,7 @@ function projectDateLabel(value) {
 
 const projectObjectPlural = new Intl.PluralRules("ru-RU");
 const projectNumberFormat = new Intl.NumberFormat("ru-RU");
+let projectDriveSnapshot = { owner: null, states: Object.create(null) };
 const projectPreviewCache = new Map();
 const projectPreviewSources = new WeakMap();
 const projectPreviewObserver = typeof IntersectionObserver === "function" ? new IntersectionObserver((entries, observer) => {
@@ -2128,6 +2136,28 @@ function projectCardButton(projectId, selector = ".project-card-open") {
   return card?.querySelector(selector);
 }
 
+function updateProjectStorageBadge(card, project, archived) {
+  const badge = card.querySelector(".project-card-storage");
+  if (!badge) return;
+  const owner = persistence.clientId;
+  const location = projectStorageInfo(project, {
+    owner, archived, state: projectDriveSnapshot.owner === owner ? projectDriveSnapshot.states[project.id] : null,
+  });
+  badge.dataset.storage = location.kind;
+  badge.title = location.description;
+  badge.parentElement.title = location.description;
+  badge.setAttribute("aria-label", location.description);
+  badge.innerHTML = cadIcon(location.kind);
+  card.querySelector("button.project-card-open")?.setAttribute("aria-label", `Открыть «${project.name || "Без названия"}». ${location.description}`);
+}
+
+function refreshProjectStorageBadge(id, owner) {
+  if (!nativeApkMode || persistence.clientId !== owner) return;
+  const project = (persistence.showingTrash ? persistence.trash : persistence.projects).find(project => project.id === id);
+  const card = [...projectList.children].find(card => card.dataset.projectId === id);
+  if (project && card) updateProjectStorageBadge(card, project, persistence.showingTrash);
+}
+
 function renderProjectList() {
   if (!projectList) return;
   const showingTrash = persistence.showingTrash;
@@ -2191,6 +2221,16 @@ function renderProjectList() {
     projectPreviewSources.set(preview, { project, archived: showingTrash, identity: projectIdentity(project.id) });
     previews.push(preview);
 
+    const media = document.createElement("span");
+    media.className = "project-card-media";
+    media.append(preview);
+    if (nativeApkMode) {
+      const storage = document.createElement("span");
+      storage.className = "project-card-storage";
+      storage.setAttribute("role", "img");
+      media.append(storage);
+    }
+
     const main = document.createElement("span");
     main.className = "project-card-main";
     const title = document.createElement("strong");
@@ -2204,7 +2244,7 @@ function renderProjectList() {
       meta.append(part);
     }
     main.append(title, meta);
-    open.append(preview, main);
+    open.append(media, main);
 
     const menu = document.createElement("button");
     menu.type = "button";
@@ -2216,6 +2256,7 @@ function renderProjectList() {
     menu.title = "Действия проекта";
     menu.innerHTML = cadIcon("more");
     card.append(open, menu);
+    updateProjectStorageBadge(card, project, showingTrash);
     cards.append(card);
   }
   projectList.replaceChildren(cards);
@@ -2960,7 +3001,13 @@ async function loadProjects() {
     }
     if (!response.ok) throw await projectRequestError(response, "Не удалось загрузить проекты");
     const payload = await response.json();
+    const states = nativeApkMode && /^google-\d{1,40}$/.test(clientId)
+      ? await googleProjectStates(clientId).catch(error => {
+        console.warn("Cannot read project cloud confirmations", error);
+        return Object.create(null);
+      }) : Object.create(null);
     if (!isCurrent()) return;
+    projectDriveSnapshot = { owner: clientId, states };
     if (showingTrash) persistence.trash = Array.isArray(payload.entries) ? payload.entries : [];
     else persistence.projects = Array.isArray(payload.projects) ? payload.projects : [];
     renderProjectList();
@@ -17532,7 +17579,7 @@ if (appUpdatesButton && window.ZamerAndroid?.showUpdates) {
   window.zamerUpdateAvailable = (version) => {
     const available = typeof version === "string" && version.length > 0;
     appUpdatesButton.toggleAttribute("data-update-available", available);
-    label.textContent = available ? `Обновить до ${version}` : "Обновления приложения";
+    label.textContent = available ? `Обновить до ${version}` : "Обновить приложение";
     status.textContent = available ? `Доступно обновление Zamer CAD ${version}` : "";
   };
   appUpdatesButton.firstElementChild.innerHTML = cadIcon("update");
@@ -17540,4 +17587,9 @@ if (appUpdatesButton && window.ZamerAndroid?.showUpdates) {
   appUpdatesButton.hidden = false;
   document.getElementById("projectHomeFooter").hidden = false;
   appUpdatesButton.addEventListener("click", () => window.ZamerAndroid.showUpdates());
+}
+const appUpdateSettingsButton = document.getElementById("appUpdateSettingsButton");
+if (appUpdateSettingsButton && window.ZamerAndroid?.showUpdateSettings) {
+  appUpdateSettingsButton.hidden = false;
+  appUpdateSettingsButton.addEventListener("click", () => window.ZamerAndroid.showUpdateSettings());
 }

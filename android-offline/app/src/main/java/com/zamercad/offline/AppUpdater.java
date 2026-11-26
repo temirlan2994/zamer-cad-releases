@@ -17,6 +17,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.URL;
@@ -36,8 +37,9 @@ final class AppUpdater {
     private final SharedPreferences preferences;
     private final Consumer<String> onAvailabilityChanged;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private final AtomicBoolean busy = new AtomicBoolean();
+    private final UpdateFlow flow = new UpdateFlow();
     private final AtomicBoolean cancelled = new AtomicBoolean();
+    private AlertDialog progress;
     private File pendingInstall;
     private boolean awaitingPermission;
     private volatile boolean closed;
@@ -67,27 +69,24 @@ final class AppUpdater {
         long elapsed = System.currentTimeMillis() - preferences.getLong("lastCheck", 0);
         boolean installationChanged = preferences.getLong("lastCheckedVersion", 0) != BuildConfig.VERSION_CODE;
         if (!repository().isEmpty() && preferences.getBoolean("automatic", true)
-            && (installationChanged || elapsed < 0 || elapsed >= CHECK_INTERVAL_MS)) check(true);
+            && (installationChanged || elapsed < 0 || elapsed >= CHECK_INTERVAL_MS)
+            && flow.startAutomaticCheck()) check();
     }
 
-    void showMenu() {
-        if (busy.get()) { toast("Проверка или загрузка уже выполняется"); return; }
-        Release update = availableUpdate;
-        if (update != null) {
-            showAvailableUpdate(update);
-            return;
-        }
-        String source = repository().isEmpty() ? "Источник пока не подключён" : "GitHub: " + repository();
-        new AlertDialog.Builder(activity).setTitle("Обновления · " + BuildConfig.VERSION_NAME)
-            .setMessage(source + "\nПроекты остаются на телефоне. Установку подтверждает Android.")
-            .setPositiveButton("Проверить", (dialog, which) -> {
-                if (repository().isEmpty()) configure(); else check(false);
-            })
-            .setNeutralButton("Настроить", (dialog, which) -> configure())
-            .setNegativeButton("Закрыть", null).show();
+    void startUpdate() {
+        if (closed) return;
+        if (flow.cancelling()) { toast("Загрузка отменяется…"); return; }
+        if (pendingInstall != null && pendingInstall.isFile()) { requestInstall(); return; }
+        if (repository().isEmpty()) { showSettings(); return; }
+        UpdateFlow.Action action = flow.request(availableUpdate != null);
+        showProgress(flow.downloading() ? "Подготовка обновления…" : "Проверяем наличие обновления…");
+        if (action == UpdateFlow.Action.CHECK) check();
+        else if (action == UpdateFlow.Action.DOWNLOAD) download(availableUpdate);
     }
 
-    private void configure() {
+    void showSettings() {
+        if (closed) return;
+        if (flow.busy()) { toast("Дождитесь завершения проверки или загрузки"); return; }
         EditText input = new EditText(activity);
         input.setSingleLine(true);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
@@ -102,8 +101,14 @@ final class AppUpdater {
         auto.setText("Проверять при запуске");
         auto.setChecked(preferences.getBoolean("automatic", true));
         form.addView(auto);
-        AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("Репозиторий обновлений")
-            .setMessage("Публичный GitHub-репозиторий. В последнем релизе должны быть APK и update.json.")
+        String description = "Установлена версия " + BuildConfig.VERSION_NAME + ". Источник — публичный GitHub-репозиторий.";
+        Release update = availableUpdate;
+        if (update != null) {
+            description += "\nДоступна версия " + update.version() + ".";
+            if (!update.notes().isBlank()) description += "\n\n" + update.notes();
+        }
+        AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("Настройки обновлений")
+            .setMessage(description)
             .setView(form).setPositiveButton("Сохранить", null).setNegativeButton("Отмена", null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
             final String repo;
@@ -113,18 +118,17 @@ final class AppUpdater {
             if (!repo.equals(repository())) {
                 changes.remove("availableUpdate").remove("lastCheck");
                 setAvailableUpdate(null);
+                pendingInstall = null;
             }
             changes.apply();
             dialog.dismiss();
-            check(false);
+            checkAutomatically();
         }));
         dialog.show();
     }
 
-    private void check(boolean silent) {
-        if (closed || !busy.compareAndSet(false, true)) return;
+    private void check() {
         String repo = repository();
-        if (!silent) toast("Проверяем GitHub Releases…");
         executor.execute(() -> {
             try {
                 JSONObject release = readJson("https://api.github.com/repos/" + repo + "/releases/latest");
@@ -145,15 +149,25 @@ final class AppUpdater {
                 changes.apply();
                 ui(() -> {
                     setAvailableUpdate(update);
-                    if (silent) return;
-                    if (update != null) showAvailableUpdate(update);
-                    else if (manifest.optLong("versionCode") > BuildConfig.VERSION_CODE) {
+                    boolean interactive = flow.interactive();
+                    if (flow.checked(update != null) == UpdateFlow.Action.DOWNLOAD) {
+                        download(update);
+                        return;
+                    }
+                    dismissProgress();
+                    if (!interactive) return;
+                    if (manifest.optLong("versionCode") > BuildConfig.VERSION_CODE) {
                         toast("Обновление требует более новой версии Android");
                     } else toast("Установлена актуальная версия " + BuildConfig.VERSION_NAME);
                 });
             } catch (Exception error) {
-                if (!silent) ui(() -> showError(error));
-            } finally { busy.set(false); }
+                ui(() -> {
+                    boolean interactive = flow.interactive();
+                    flow.finish();
+                    dismissProgress();
+                    if (interactive) showError(error);
+                });
+            }
         });
     }
 
@@ -178,68 +192,118 @@ final class AppUpdater {
         onAvailabilityChanged.accept(availableVersion());
     }
 
-    private void showAvailableUpdate(Release update) {
-        String message = "Доступна версия " + update.version() + ". Установлена " + BuildConfig.VERSION_NAME + ".";
-        if (!update.notes().isBlank()) message += "\n\n" + update.notes();
-        message += "\n\nЧертежи сохранятся. Установку подтверждает Android.";
-        new AlertDialog.Builder(activity).setTitle("Обновить Zamer CAD")
-            .setMessage(message).setPositiveButton("Обновить", (dialog, which) -> download(update.url(), update.sha256(), update.code()))
-            .setNeutralButton("Настроить", (dialog, which) -> configure())
-            .setNegativeButton("Позже", null).show();
+    private void showProgress(String message) {
+        if (progress != null) return;
+        progress = new AlertDialog.Builder(activity).setTitle("Обновление Zamer CAD")
+            .setMessage(message)
+            .setNegativeButton("Отмена", (dialog, which) -> cancelUpdate()).create();
+        progress.setCanceledOnTouchOutside(false);
+        progress.setOnCancelListener(dialog -> cancelUpdate());
+        progress.show();
     }
 
-    private void download(String url, String expectedHash, long versionCode) {
-        if (!busy.compareAndSet(false, true) || closed) return;
+    private void cancelUpdate() {
+        flow.cancel();
+        cancelled.set(true);
+        dismissProgress();
+    }
+
+    private void dismissProgress() {
+        if (progress != null) { progress.dismiss(); progress = null; }
+    }
+
+    private void download(Release update) {
         cancelled.set(false);
-        AlertDialog progress = new AlertDialog.Builder(activity).setTitle("Загрузка обновления")
-            .setMessage("Скачиваем APK и проверяем подпись…")
-            .setNegativeButton("Отмена", (dialog, which) -> cancelled.set(true)).create();
-        progress.setCanceledOnTouchOutside(false);
-        progress.setOnCancelListener(dialog -> cancelled.set(true));
-        progress.show();
+        if (progress != null) progress.setMessage("Скачиваем версию " + update.version() + "…");
         executor.execute(() -> {
             File temporary = null;
             try {
                 File directory = new File(activity.getCacheDir(), "updates");
                 if (!directory.isDirectory() && !directory.mkdirs()) throw new Exception("Не удалось создать папку обновления");
-                temporary = File.createTempFile("download-", ".part", directory);
-                MessageDigest digest = MessageDigest.getInstance("SHA-256");
-                HttpsURLConnection connection = connect(url);
-                try (InputStream input = connection.getInputStream(); FileOutputStream output = new FileOutputStream(temporary)) {
-                    byte[] buffer = new byte[32768];
-                    long total = 0;
-                    int count;
-                    while ((count = input.read(buffer)) != -1) {
-                        if (cancelled.get() || closed || Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                        total += count;
-                        if (total > 128L * 1024 * 1024) throw new Exception("APK превышает лимит 128 МБ");
-                        output.write(buffer, 0, count);
-                        digest.update(buffer, 0, count);
-                    }
-                    output.getFD().sync();
-                } finally { connection.disconnect(); }
-                String actualHash = hex(digest.digest());
-                if (!expectedHash.equals(actualHash)) throw new Exception("Контрольная сумма APK не совпала. Установка отменена");
-                validateApk(temporary, versionCode);
-                if (cancelled.get() || closed) throw new InterruptedException();
-                File ready = new File(directory, actualHash + ".apk");
-                if (ready.exists() && !ready.delete()) throw new Exception("Не удалось заменить файл обновления");
-                if (!temporary.renameTo(ready)) throw new Exception("Не удалось сохранить проверенное обновление");
-                temporary = null;
+                File ready = new File(directory, update.sha256() + ".apk");
+                if (ready.isFile() && !update.sha256().equals(hashOf(ready)) && !ready.delete()) {
+                    throw new Exception("Не удалось заменить файл обновления");
+                }
+                if (!ready.isFile()) {
+                    temporary = File.createTempFile("download-", ".part", directory);
+                    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                    HttpsURLConnection connection = connect(update.url());
+                    try (InputStream input = connection.getInputStream(); FileOutputStream output = new FileOutputStream(temporary)) {
+                        byte[] buffer = new byte[32768];
+                        long total = 0;
+                        long length = connection.getContentLengthLong();
+                        int lastPercent = -1;
+                        int count;
+                        while ((count = input.read(buffer)) != -1) {
+                            requireActiveDownload();
+                            total += count;
+                            if (total > 128L * 1024 * 1024) throw new Exception("APK превышает лимит 128 МБ");
+                            output.write(buffer, 0, count);
+                            digest.update(buffer, 0, count);
+                            int percent = length > 0 ? (int) Math.min(100, total * 100 / length) : -1;
+                            if (percent >= 0 && percent != lastPercent) {
+                                lastPercent = percent;
+                                ui(() -> {
+                                    if (progress != null && flow.downloading() && !cancelled.get()) {
+                                        progress.setMessage("Скачиваем версию " + update.version() + " · " + percent + "%");
+                                    }
+                                });
+                            }
+                        }
+                        output.getFD().sync();
+                    } finally { connection.disconnect(); }
+                    if (!update.sha256().equals(hex(digest.digest()))) throw new Exception("Контрольная сумма APK не совпала. Установка отменена");
+                    if (!temporary.renameTo(ready)) throw new Exception("Не удалось сохранить проверенное обновление");
+                    temporary = null;
+                }
+                requireActiveDownload();
+                ui(() -> { if (progress != null) progress.setMessage("Проверяем обновление…"); });
+                try { validateApk(ready, update.code()); }
+                catch (Exception error) {
+                    ready.delete();
+                    throw error;
+                }
+                requireActiveDownload();
                 ui(() -> {
-                    progress.dismiss();
-                    pendingInstall = ready;
-                    requestInstall();
+                    boolean install = flow.interactive() && !cancelled.get();
+                    flow.finish();
+                    dismissProgress();
+                    if (install) {
+                        pendingInstall = ready;
+                        requestInstall();
+                    }
                 });
             } catch (InterruptedException ignored) {
-                ui(progress::dismiss);
+                ui(() -> { flow.finish(); dismissProgress(); });
             } catch (Exception error) {
-                ui(() -> { progress.dismiss(); showError(error); });
+                ui(() -> {
+                    boolean interactive = flow.interactive();
+                    flow.finish();
+                    dismissProgress();
+                    if (interactive) showError(error);
+                });
             } finally {
                 if (temporary != null) temporary.delete();
-                busy.set(false);
             }
         });
+    }
+
+    private void requireActiveDownload() throws InterruptedException {
+        if (cancelled.get() || closed || Thread.currentThread().isInterrupted()) throw new InterruptedException();
+    }
+
+    private String hashOf(File apk) throws Exception {
+        if (apk.length() > 128L * 1024 * 1024) return "";
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream input = new FileInputStream(apk)) {
+            byte[] buffer = new byte[32768];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                requireActiveDownload();
+                digest.update(buffer, 0, count);
+            }
+        }
+        return hex(digest.digest());
     }
 
     private void validateApk(File apk, long expectedVersion) throws Exception {
@@ -259,14 +323,11 @@ final class AppUpdater {
     private void requestInstall() {
         if (pendingInstall == null || !pendingInstall.isFile()) return;
         if (!activity.getPackageManager().canRequestPackageInstalls()) {
-            new AlertDialog.Builder(activity).setTitle("Разрешить обновление")
-                .setMessage("В настройках Android разрешите установку из Zamer CAD, затем вернитесь сюда.")
-                .setPositiveButton("Открыть настройки", (dialog, which) -> {
-                    try {
-                        awaitingPermission = true;
-                        activity.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + activity.getPackageName())));
-                    } catch (Exception error) { awaitingPermission = false; showError(error); }
-                }).setNegativeButton("Позже", null).show();
+            try {
+                awaitingPermission = true;
+                toast("Разрешите установку из Zamer CAD и вернитесь. Обновление продолжится автоматически.");
+                activity.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + activity.getPackageName())));
+            } catch (Exception error) { awaitingPermission = false; showError(error); }
             return;
         }
         try {
@@ -339,9 +400,11 @@ final class AppUpdater {
     private void showError(Exception error) {
         new AlertDialog.Builder(activity).setTitle("Обновление не выполнено")
             .setMessage(error.getMessage() == null ? "Проверьте интернет и повторите попытку. Проекты не затронуты." : error.getMessage())
-            .setPositiveButton("Понятно", null).show();
+            .setPositiveButton("Повторить", (dialog, which) -> startUpdate())
+            .setNeutralButton("Настройки", (dialog, which) -> showSettings())
+            .setNegativeButton("Закрыть", null).show();
     }
     private void toast(String text) { Toast.makeText(activity, text, Toast.LENGTH_LONG).show(); }
     private void ui(Runnable action) { activity.runOnUiThread(() -> { if (!closed && !activity.isFinishing() && !activity.isDestroyed()) action.run(); }); }
-    void close() { closed = true; cancelled.set(true); executor.shutdownNow(); }
+    void close() { closed = true; cancelled.set(true); dismissProgress(); executor.shutdownNow(); }
 }
