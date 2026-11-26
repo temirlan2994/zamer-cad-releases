@@ -27,6 +27,7 @@
   --chip-paper: #f8fafd;
   --chip-grid: rgba(31, 117, 255, 0.07);
   --shadow: 0 10px 30px rgba(24, 32, 43, 0.12);
+  --white-plan-crosshair: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='25' height='25' viewBox='0 0 25 25'%3E%3Cpath d='M12 2v8m0 4v9M2 12h8m4 0h9' fill='none' stroke='%2318202b' stroke-width='4'/%3E%3Cpath d='M12 2v8m0 4v9M2 12h8m4 0h9' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E") 12 12, crosshair;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -57,6 +58,7 @@
     --chip-grid: rgba(45, 162, 255, 0.10);
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     color-scheme: dark;
+    --plan-crosshair: var(--white-plan-crosshair);
   }
 }
 
@@ -87,6 +89,7 @@
   --chip-grid: rgba(45, 162, 255, 0.10);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   color-scheme: dark;
+  --plan-crosshair: var(--white-plan-crosshair);
 }
 
 * { box-sizing: border-box; }
@@ -853,7 +856,10 @@ body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-circulation-canvas
   overflow: hidden;
 }
 .furniture-chip .chip-size { font-size: 9.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-#canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+#canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: var(--plan-crosshair, crosshair); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+/* Инструменты задают crosshair в inline-стиле: сохраняем цвет текущей темы.
+   Остальные курсоры (перемещение, ручки, текст) сохраняют свою форму. */
+#canvas[style*="cursor: crosshair"] { cursor: var(--plan-crosshair, crosshair) !important; }
 .canvas-wrap { -webkit-tap-highlight-color: transparent; }
 
 .canvas-hint {
