@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD</title>
-    <link rel="stylesheet" href="./styles.css?v=324" />
+    <link rel="stylesheet" href="./styles.css?v=325" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -42,57 +42,67 @@
 
       <section class="project-home" id="projectHome" aria-label="Проекты">
         <header class="project-home-head">
-          <div class="project-home-title">
-            <div class="brand-logo home-brand">
-              <img class="brand-logo-light" src="./icons/logo.svg" alt="Zamer CAD" width="1370" height="300" />
-              <img class="brand-logo-dark" src="./icons/logo-dark.svg" alt="Zamer CAD" width="1370" height="300" />
-            </div>
-            <h1>Проекты</h1>
-            <span class="account-badge" id="accountBadge" hidden></span>
-            <button class="subscription-badge" id="subscriptionButton" type="button" hidden></button>
+          <div class="brand-logo home-brand">
+            <img class="brand-logo-light" src="./icons/logo.svg" alt="Zamer CAD" width="1370" height="300" />
+            <img class="brand-logo-dark" src="./icons/logo-dark.svg" alt="Zamer CAD" width="1370" height="300" />
           </div>
           <div class="project-home-actions" role="group" aria-label="Действия на главном экране">
             <button class="icon-button" id="homeThemeButton" type="button" title="Включить тёмную тему" aria-label="Тёмная тема главного экрана" aria-pressed="false"><span aria-hidden="true">☾</span></button>
-            <button class="icon-button" id="projectImportButton" type="button" title="Открыть файл ZAMER, DWG или DXF" aria-label="Открыть файл ZAMER, DWG или DXF"></button>
-            <input id="projectImportInput" type="file" hidden />
-            <button class="icon-button" id="projectTrashButton" type="button" title="Корзина" aria-label="Корзина" aria-controls="projectList" aria-pressed="false" hidden>
-              <svg class="cad-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16m-13 0 1 13h8l1-13M9 7V4h6v3m-5 4v5m4-5v5"/></svg>
-            </button>
-            <button class="icon-button" id="installAppButton" type="button" title="Установить приложение" aria-label="Установить приложение" hidden>
-              <svg class="cad-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M12 7v7m-2-2 2 2 2-2m-3 4h2"/></svg>
-            </button>
-            <button class="icon-button" id="logoutButton" type="button" title="Выйти" aria-label="Выйти" hidden>⎋</button>
+            <button class="icon-button" id="homeMoreButton" type="button" title="Меню приложения" aria-label="Меню приложения" aria-controls="homeMenuSheet" aria-haspopup="dialog" aria-expanded="false"><span data-line-icon="more" aria-hidden="true"></span></button>
           </div>
         </header>
 
-        <div class="google-cloud-row" id="googleCloudRow" hidden>
-          <button class="project-create" id="googleSignInButton" type="button">Войти через Google</button>
-          <span id="googleCloudStatus" role="status"></span>
+        <div class="project-account">
+          <span class="account-badge" id="accountBadge" hidden></span>
+          <button class="subscription-badge" id="subscriptionButton" type="button" hidden></button>
+          <div class="google-cloud-row" id="googleCloudRow" hidden>
+            <button class="project-create" id="googleSignInButton" type="button">Войти через Google</button>
+            <span id="googleCloudStatus" role="status"></span>
+          </div>
         </div>
 
-        <div class="project-actions">
+        <div class="project-list-header">
+          <button id="projectTrashBack" class="project-trash-back" type="button" title="К проектам" aria-label="Вернуться к проектам" hidden><span data-line-icon="back" aria-hidden="true"></span></button>
+          <h1 class="project-list-heading" id="projectListHeading">Проекты</h1>
+          <span class="project-list-count" id="projectListCount"></span>
+        </div>
+        <div class="project-toolbar">
+          <div class="project-actions">
+            <button class="project-create" id="createBlankProjectButton" type="button">
+              <svg class="cad-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              <span>Новый проект</span>
+            </button>
+            <button class="project-import" id="projectImportButton" type="button" title="Открыть файл ZAMER, DWG или DXF" aria-label="Импорт файла ZAMER, DWG или DXF"><span aria-hidden="true"></span><span>Импорт</span></button>
+            <input id="projectImportInput" type="file" hidden />
+          </div>
           <label class="project-search">
             <svg class="cad-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg>
             <input id="projectSearchInput" type="search" placeholder="Поиск" aria-label="Поиск проекта" autocomplete="off" enterkeyhint="search" />
           </label>
-          <button class="project-create" id="createBlankProjectButton" type="button">
-            <svg class="cad-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            <span>Новый проект</span>
-          </button>
         </div>
 
-        <div class="project-list-header">
-          <h2 class="project-list-heading" id="projectListHeading">Недавние</h2>
+        <p class="project-home-status" id="projectHomeStatus" role="status" hidden></p>
+        <div class="project-list" id="projectList" aria-labelledby="projectListHeading" aria-live="polite" role="region">
+          <div class="project-empty">Загружаем проекты…</div>
+        </div>
+        <footer class="project-home-footer" id="projectHomeFooter" hidden>
           <button class="project-updates-button" id="appUpdatesButton" type="button" hidden>
             <span aria-hidden="true"></span>
             <span id="appUpdatesLabel">Обновления приложения</span>
           </button>
           <span class="app-update-status" id="appUpdateStatus" role="status"></span>
-        </div>
-        <p class="project-home-status" id="projectHomeStatus" role="status" hidden></p>
-        <div class="project-list" id="projectList" aria-labelledby="projectListHeading" aria-live="polite" role="region">
-          <div class="project-empty">Загружаем проекты…</div>
-        </div>
+        </footer>
+        <dialog class="project-action-menu" id="homeMenuSheet" aria-labelledby="homeMenuTitle">
+          <header class="project-action-menu-head">
+            <h2 id="homeMenuTitle">Приложение</h2>
+            <button class="icon-button" id="homeMenuClose" type="button" aria-label="Закрыть меню"><span data-line-icon="close" aria-hidden="true"></span></button>
+          </header>
+          <div class="project-action-menu-items">
+            <button class="project-menu-item" id="projectTrashButton" type="button" title="Корзина" aria-label="Корзина" aria-controls="projectList" aria-pressed="false" hidden><span data-home-action-icon aria-hidden="true"></span><span data-home-action-label>Корзина</span></button>
+            <button class="project-menu-item" id="installAppButton" type="button" title="Установить приложение" aria-label="Установить приложение" hidden><span aria-hidden="true"><svg class="cad-icon" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M12 7v7m-2-2 2 2 2-2m-3 4h2"/></svg></span><span data-home-action-label>Установить приложение</span></button>
+            <button class="project-menu-item" id="logoutButton" type="button" title="Выйти" aria-label="Выйти из аккаунта" hidden><span aria-hidden="true"></span><span>Выйти из аккаунта</span></button>
+          </div>
+        </dialog>
       </section>
 
       <header class="topbar">
@@ -713,7 +723,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=339"></script>
+    <script type="module" src="./app.js?v=340"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

@@ -61,7 +61,8 @@ public final class MainActivity extends Activity {
     private static final int MAX_EXPORT_BYTES = 32 * 1024 * 1024;
     private static final String SPEN_INSERT_ACTION = "com.samsung.pen.INSERT";
     private static final String HANDLE_BACK_SCRIPT =
-        "(function(){var home=document.getElementById('projectHome');" +
+        "(function(){var menu=document.getElementById('homeMenuSheet');" +
+        "if(menu&&menu.open){menu.close();return true;}var home=document.getElementById('projectHome');" +
         "if(home&&home.hidden){var back=document.getElementById('backToProjectsButton');" +
         "if(back&&!back.closest('[inert]')&&!document.querySelector('dialog[open]')){back.click();return true;}}return false;})()";
 
