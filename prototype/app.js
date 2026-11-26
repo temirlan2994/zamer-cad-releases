@@ -509,6 +509,12 @@ const projectHome = document.getElementById("projectHome");
 const projectList = document.getElementById("projectList");
 const projectSearchInput = document.getElementById("projectSearchInput");
 const homeThemeButton = document.getElementById("homeThemeButton");
+const homeMoreButton = document.getElementById("homeMoreButton");
+const homeMenuSheet = document.getElementById("homeMenuSheet");
+const homeMenuClose = document.getElementById("homeMenuClose");
+const projectTrashBack = document.getElementById("projectTrashBack");
+const projectListCount = document.getElementById("projectListCount");
+const homeProjectActions = projectHome.querySelector(".project-actions");
 const createBlankProjectButton = document.getElementById("createBlankProjectButton");
 const projectImportButton = document.getElementById("projectImportButton");
 const projectImportInput = document.getElementById("projectImportInput");
@@ -1517,9 +1523,16 @@ function syncInterfaceTheme() {
   window.ZamerAndroid?.setTheme?.(theme);
 }
 
+function closeHomeMenu() {
+  if (homeMenuSheet.open) homeMenuSheet.close();
+}
+
 function setProjectHomeVisible(visible) {
   if (!projectHome) return;
-  if (!visible) closeProjectActions();
+  if (!visible) {
+    closeProjectActions();
+    closeHomeMenu();
+  }
   if (visible && state.leaderInput) {
     state.drawing = null;
     closeLeaderInput();
@@ -1533,7 +1546,10 @@ function setProjectHomeVisible(visible) {
 
 function setAuthScreenVisible(visible) {
   if (!authScreen) return;
-  if (visible) closeProjectActions();
+  if (visible) {
+    closeProjectActions();
+    closeHomeMenu();
+  }
   authScreen.hidden = !visible;
   shell.classList.toggle("auth-open", visible);
   syncEditorAccessibility();
@@ -1785,6 +1801,7 @@ function renderAuthUi() {
   if (accountBadge) {
     accountBadge.hidden = !authState.user || (nativeApkMode && authState.user.id === apkDeviceUser.id);
     accountBadge.textContent = authState.user?.login || "";
+    accountBadge.title = authState.user?.login || "";
   }
   if (logoutButton) logoutButton.hidden = !authState.user || (nativeApkMode && authState.user.id === apkDeviceUser.id);
   if (googleBridgeAvailable) {
@@ -2017,6 +2034,7 @@ function projectDateLabel(value) {
 }
 
 const projectObjectPlural = new Intl.PluralRules("ru-RU");
+const projectNumberFormat = new Intl.NumberFormat("ru-RU");
 const projectPreviewCache = new Map();
 const projectPreviewSources = new WeakMap();
 const projectPreviewObserver = typeof IntersectionObserver === "function" ? new IntersectionObserver((entries, observer) => {
@@ -2027,11 +2045,11 @@ const projectPreviewObserver = typeof IntersectionObserver === "function" ? new 
   }
 }, { root: projectList, rootMargin: "96px" }) : null;
 
-function projectMetaLine(project, showingTrash) {
+function projectMetaParts(project, showingTrash) {
   const count = Number(project.entityCount) || 0;
   const unit = { one: "объект", few: "объекта", many: "объектов" }[projectObjectPlural.select(count)] || "объекта";
   const date = projectDateLabel(showingTrash ? project.deletedAt : project.updatedAt);
-  return [showingTrash && date ? `Удалён ${date}` : date, `${count} ${unit}`].filter(Boolean).join(" · ");
+  return [showingTrash && date ? `Удалён ${date}` : date, `${projectNumberFormat.format(count)} ${unit}`].filter(Boolean);
 }
 
 function filteredProjects() {
@@ -2112,20 +2130,29 @@ function projectCardButton(projectId, selector = ".project-card-open") {
 function renderProjectList() {
   if (!projectList) return;
   const showingTrash = persistence.showingTrash;
-  if (projectListHeading) projectListHeading.textContent = showingTrash ? "Корзина" : "Недавние";
+  if (projectListHeading) projectListHeading.textContent = showingTrash ? "Корзина" : "Проекты";
+  projectTrashBack.hidden = !showingTrash;
+  homeProjectActions.hidden = showingTrash;
+  projectSearchInput.placeholder = showingTrash ? "Поиск в корзине" : "Поиск проектов";
   if (projectTrashButton) {
     projectTrashButton.hidden = !nativeApkMode;
     projectTrashButton.setAttribute("aria-pressed", String(showingTrash));
     const label = showingTrash ? "Вернуться к проектам" : "Корзина";
     projectTrashButton.title = label;
     projectTrashButton.setAttribute("aria-label", label);
-    projectTrashButton.innerHTML = cadIcon(showingTrash ? "back" : "delete");
+    projectTrashButton.querySelector("[data-home-action-icon]").innerHTML = cadIcon(showingTrash ? "back" : "delete");
+    projectTrashButton.querySelector("[data-home-action-label]").textContent = label;
   }
   const focused = document.activeElement;
   const focusedCardId = projectList.contains(focused) ? focused.closest(".project-card")?.dataset.projectId : null;
   const focusSelector = focused?.matches(".project-card-menu") ? ".project-card-menu" : ".project-card-open";
   projectPreviewObserver?.disconnect();
   const projects = filteredProjects();
+  const total = (showingTrash ? persistence.trash : persistence.projects).length;
+  const unit = { one: "проект", few: "проекта", many: "проектов" }[projectObjectPlural.select(projects.length)] || "проекта";
+  projectListCount.textContent = projectSearchInput.value.trim()
+    ? `${projectNumberFormat.format(projects.length)} из ${projectNumberFormat.format(total)}`
+    : `${projectNumberFormat.format(projects.length)} ${unit}`;
   if (!projects.length) {
     const empty = document.createElement("div");
     empty.className = "project-empty";
@@ -2170,15 +2197,13 @@ function renderProjectList() {
     title.textContent = name;
     const meta = document.createElement("span");
     meta.className = "project-card-meta";
-    meta.textContent = projectMetaLine(project, showingTrash);
+    for (const text of projectMetaParts(project, showingTrash)) {
+      const part = document.createElement("span");
+      part.textContent = text;
+      meta.append(part);
+    }
     main.append(title, meta);
     open.append(preview, main);
-    if (!showingTrash) {
-      const icon = document.createElement("span");
-      icon.className = "project-card-open-icon";
-      icon.innerHTML = cadIcon("openFolder");
-      open.append(icon);
-    }
 
     const menu = document.createElement("button");
     menu.type = "button";
@@ -2578,6 +2603,7 @@ function updateInstallButton() {
   const label = installState.promptEvent ? "Установить приложение" : "Как установить приложение";
   installAppButton.title = label;
   installAppButton.setAttribute("aria-label", label);
+  installAppButton.querySelector("[data-home-action-label]").textContent = label;
 }
 
 function standaloneInstallHelpText() {
@@ -14257,13 +14283,44 @@ document.addEventListener("visibilitychange", () => {
 });
 projectSearchInput?.addEventListener("input", renderProjectList);
 projectSearchInput?.addEventListener("blur", () => window.setTimeout(updateViewportLock, 0));
-projectTrashButton?.addEventListener("click", () => {
+homeMoreButton.addEventListener("click", () => {
+  closeProjectActions();
+  homeMenuSheet.showModal();
+  homeMoreButton.setAttribute("aria-expanded", "true");
+});
+homeMenuClose.addEventListener("click", closeHomeMenu);
+homeMenuSheet.addEventListener("close", () => {
+  homeMoreButton.setAttribute("aria-expanded", "false");
+  if (!projectHome.hidden && authScreen.hidden) homeMoreButton.focus({ preventScroll: true });
+});
+homeMenuSheet.addEventListener("keydown", (event) => {
+  if (event.key !== "Tab") return;
+  const buttons = [...homeMenuSheet.querySelectorAll("button:not(:disabled)")].filter(button => button.getClientRects().length);
+  const first = buttons[0];
+  const last = buttons.at(-1);
+  if (first && ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last))) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  }
+});
+homeMenuSheet.addEventListener("click", (event) => {
+  if (event.target.closest(".project-menu-item")) closeHomeMenu();
+}, true);
+homeMenuSheet.addEventListener("click", (event) => {
+  if (event.target !== homeMenuSheet) return;
+  const bounds = homeMenuSheet.getBoundingClientRect();
+  if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) closeHomeMenu();
+});
+function toggleProjectTrash() {
   persistence.showingTrash = !persistence.showingTrash;
   if (projectSearchInput) projectSearchInput.value = "";
   showProjectMessage();
   renderProjectList();
   loadProjects();
-});
+  if (!persistence.showingTrash) homeMoreButton.focus({ preventScroll: true });
+}
+projectTrashButton?.addEventListener("click", toggleProjectTrash);
+projectTrashBack.addEventListener("click", toggleProjectTrash);
 createBlankProjectButton?.addEventListener("click", async () => {
   const name = await askProjectName("Название нового проекта", "Новый замер");
   if (!name) return;
@@ -17201,5 +17258,6 @@ if (appUpdatesButton && window.ZamerAndroid?.showUpdates) {
   appUpdatesButton.firstElementChild.innerHTML = cadIcon("update");
   window.zamerUpdateAvailable(window.ZamerAndroid.availableUpdateVersion?.());
   appUpdatesButton.hidden = false;
+  document.getElementById("projectHomeFooter").hidden = false;
   appUpdatesButton.addEventListener("click", () => window.ZamerAndroid.showUpdates());
 }
