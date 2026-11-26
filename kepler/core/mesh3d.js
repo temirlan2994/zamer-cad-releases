@@ -1589,19 +1589,19 @@ function faceNormal3d(points) {
   return v(n.x / length, n.y / length, n.z / length);
 }
 
-function rampComponentFaces(ramp) {
+function rampComponentFaces(ramp, color = ENTRANCE_COLOR) {
   const poly = ramp.polygon || [];
   if (poly.length !== 4 || !(ramp.run > 0.5)) return [];
   const topByIndex = poly.map((point, index) => v(point.x, point.y, index < 2 ? ramp.topZ : ramp.groundZ));
   const top = faceNormal3d(topByIndex).z < 0 ? [...topByIndex].reverse() : topByIndex;
   const baseZ = Math.min(ramp.groundZ - 100, ramp.topZ - 100);
   const bottom = [...poly].reverse().map((point) => v(point.x, point.y, baseZ));
-  const faces = [{ pts: top, normal: faceNormal3d(top), color: ENTRANCE_COLOR, kind: 'entrance', edges: [] },
-    { pts: bottom, normal: v(0, 0, -1), color: ENTRANCE_COLOR, kind: 'entrance', edges: [] }];
+  const faces = [{ pts: top, normal: faceNormal3d(top), color, kind: 'entrance', edges: [] },
+    { pts: bottom, normal: v(0, 0, -1), color, kind: 'entrance', edges: [] }];
   for (let i = 0; i < 4; i += 1) {
     const j = (i + 1) % 4;
     const side = [v(poly[i].x, poly[i].y, baseZ), v(poly[j].x, poly[j].y, baseZ), topByIndex[j], topByIndex[i]];
-    faces.push({ pts: side, normal: faceNormal3d(side), color: ENTRANCE_COLOR, kind: 'entrance', edges: [] });
+    faces.push({ pts: side, normal: faceNormal3d(side), color, kind: 'entrance', edges: [] });
   }
   faces[0].cutZ0 = baseZ;
   return faces;
@@ -1613,6 +1613,7 @@ export function entranceFaces(project, options = {}) {
   const faces = [];
   for (const entrance of deriveEntrances(project, options)) {
     if (entrance.status === 'pending') continue;
+    const color = entrance.color || ENTRANCE_COLOR;
     const tag = (source, component) => source.map((face) => ({
       ...face,
       entranceId: entrance.id,
@@ -1625,7 +1626,7 @@ export function entranceFaces(project, options = {}) {
     if (entrance.landing) {
       const landing = entrance.landing;
       const base = Math.min(landing.z - landing.thickness, landing.minGroundZ);
-      faces.push(...tag(polySlabFaces(landing.polygon, base, landing.z, ENTRANCE_COLOR, 'entrance', { bottom: true })
+      faces.push(...tag(polySlabFaces(landing.polygon, base, landing.z, color, 'entrance', { bottom: true })
         .map((face) => ({ ...face, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), landing));
     }
     if (entrance.steps?.enabled) {
@@ -1639,11 +1640,11 @@ export function entranceFaces(project, options = {}) {
         const polygon = entranceRect(center, steps.direction, steps.width, steps.tread);
         const top = steps.topZ - steps.riser * (index + 1);
         const component = { ...steps, id: `${steps.id}:${index + 1}`, kind: 'steps' };
-        faces.push(...tag(polySlabFaces(polygon, base, top, ENTRANCE_COLOR, 'stairs', { bottom: true })
+        faces.push(...tag(polySlabFaces(polygon, base, top, color, 'stairs', { bottom: true })
           .map((face) => ({ ...face, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), component));
       }
     }
-    if (entrance.ramp?.enabled) faces.push(...tag(rampComponentFaces(entrance.ramp), entrance.ramp));
+    if (entrance.ramp?.enabled) faces.push(...tag(rampComponentFaces(entrance.ramp, color), entrance.ramp));
   }
   return faces;
 }

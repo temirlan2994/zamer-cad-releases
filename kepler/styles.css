@@ -860,6 +860,7 @@ body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-circulation-canvas
 /* Инструменты задают crosshair в inline-стиле: сохраняем цвет текущей темы.
    Остальные курсоры (перемещение, ручки, текст) сохраняют свою форму. */
 #canvas[style*="cursor: crosshair"] { cursor: var(--plan-crosshair, crosshair) !important; }
+.porch-fields { align-items: end; }
 .canvas-wrap { -webkit-tap-highlight-color: transparent; }
 
 .canvas-hint {

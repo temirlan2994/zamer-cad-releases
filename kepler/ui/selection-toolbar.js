@@ -121,6 +121,7 @@ function contentForSelection(sel) {
       html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${button('rotate', '↻', 'Повернуть 90°', 'R')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
+  if (sel.type === 'entrance') return { label: 'Крыльцо и наружная лестница', html: button('delete', '⌫', 'Удалить', 'Del', 'class="danger"') };
   if (sel.type === 'roof') {
     const roof = visibleRoofById(sel.id);
     if (!roof) return null;

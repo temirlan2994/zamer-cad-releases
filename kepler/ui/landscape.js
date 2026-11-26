@@ -194,7 +194,7 @@ const PATH_PRESETS = {
   },
 };
 
-function startOutdoorStairs() {
+export function startOutdoorStairs() {
   setTool({ kind: 'ls-flight', lsKind: 'stairs-out', first: null, cursor: null, opts: { ...stairOptions }, ground: groundFn(state.project) }, STAIR_START);
   selectObject(null);
   renderLandscapeLibrary();
@@ -2023,7 +2023,7 @@ function renderFlightProps(panel) {
   const tool = state.tool;
   const o = tool.opts;
   panel.innerHTML = `
-    <h2>Лестница на участке</h2>
+    <h2>Наружная лестница</h2>
     <div class="prop-block">
       <div class="prop-grid">
         ${mmField('lsFlightWidth', 'Ширина марша, мм', o.width, 500, 12000, 50)}

@@ -26,6 +26,13 @@ export const ENTRANCE_DEFAULTS = Object.freeze({
   maxStraightRampRun: 12000,
 });
 
+export const ENTRANCE_MATERIALS = Object.freeze([
+  { id: 'concrete', title: 'Бетон', color: '#b7aea1' },
+  { id: 'graphite', title: 'Графит', color: '#4d5254' },
+  { id: 'stone', title: 'Камень', color: '#9a9890' },
+  { id: 'wood', title: 'Дерево', color: '#a8794b' },
+]);
+
 const MODES = new Set(['steps', 'ramp', 'both', 'none']);
 const ENTRY_ROLES = new Set(['main', 'service', 'terrace', 'none']);
 const ENTRY_ROOM_TYPES = new Set(['entrance', 'vestibule', 'hall']);
@@ -40,7 +47,7 @@ const bounded = (value, min, max, fallback) => {
   return number == null ? fallback : Math.min(max, Math.max(min, number));
 };
 
-function entranceSettings(project, opening) {
+export function entranceSettings(project, opening) {
   const global = project?.envelope?.entrance;
   const local = opening?.entrance;
   const source = {
@@ -49,8 +56,11 @@ function entranceSettings(project, opening) {
   };
   return {
     enabled: source.enabled !== false,
+    width: bounded(source.width, 600, 12000, 0),
+    stepCount: Math.round(bounded(source.stepCount, 0, 100, 0)),
+    material: ENTRANCE_MATERIALS.find((m) => m.id === source.material)?.id || 'concrete',
     mode: MODES.has(source.mode) ? source.mode : ENTRANCE_DEFAULTS.mode,
-    landingDepth: bounded(source.landingDepth, 600, 4000, ENTRANCE_DEFAULTS.landingDepth),
+    landingDepth: bounded(source.landingDepth, 600, 6000, ENTRANCE_DEFAULTS.landingDepth),
     landingThickness: bounded(source.landingThickness, 80, 600, ENTRANCE_DEFAULTS.landingThickness),
     landingExtraWidth: bounded(
       source.landingExtraWidth ?? (finite(source.sideClearance) == null ? null : Number(source.sideClearance) * 2),
@@ -219,7 +229,7 @@ function stepMetrics(start, direction, lateral, topZ, groundAt, settings) {
   let groundZ = groundAt(moved(start, direction, run, lateral));
   for (let iteration = 0; iteration < 4; iteration += 1) {
     const rise = Math.max(0, topZ - groundZ);
-    const count = rise > settings.minimumRise ? Math.max(1, Math.ceil(rise / settings.maxRiser)) : 0;
+    const count = rise > settings.minimumRise ? (settings.stepCount || Math.max(1, Math.ceil(rise / settings.maxRiser))) : 0;
     const nextRun = count * settings.tread;
     const nextGround = groundAt(moved(start, direction, nextRun, lateral));
     if (Math.abs(nextRun - run) < 0.5 && Math.abs(nextGround - groundZ) < 0.5) break;
@@ -228,7 +238,7 @@ function stepMetrics(start, direction, lateral, topZ, groundAt, settings) {
   }
   const rawRise = topZ - groundZ;
   const rise = Math.max(0, rawRise);
-  const count = rise > settings.minimumRise ? Math.max(1, Math.ceil(rise / settings.maxRiser)) : 0;
+  const count = rise > settings.minimumRise ? (settings.stepCount || Math.max(1, Math.ceil(rise / settings.maxRiser))) : 0;
   run = count * settings.tread;
   return { count, run, groundZ, rawRise, rise, riser: count ? rise / count : 0 };
 }
@@ -275,6 +285,8 @@ function pendingEntrance(level, selection, settings) {
     outward: { ...chosen.outward },
     threshold: { ...chosen.threshold, z: Number(level.elevation) || 0 },
     mode: settings.mode,
+    material: settings.material,
+    color: ENTRANCE_MATERIALS.find((m) => m.id === settings.material).color,
     landing: null,
     steps: null,
     ramp: null,
@@ -288,7 +300,7 @@ function readyEntrance(project, level, selection, groundAt, settings) {
   const topZ = Number(level.elevation) || 0;
   const stepsOn = settings.mode === 'steps' || settings.mode === 'both';
   const rampOn = settings.mode === 'ramp' || settings.mode === 'both';
-  const baseWidth = Math.max(settings.stepMinWidth, chosen.opening.width + settings.landingExtraWidth);
+  const baseWidth = settings.width || Math.max(settings.stepMinWidth, chosen.opening.width + settings.landingExtraWidth);
   const landingWidth = settings.mode === 'both'
     ? baseWidth + settings.routeGap + settings.rampWidth
     : Math.max(baseWidth, rampOn ? settings.rampWidth : 0);
@@ -379,6 +391,8 @@ function readyEntrance(project, level, selection, groundAt, settings) {
     outward: { ...chosen.outward },
     threshold: { ...chosen.threshold, z: topZ },
     mode: settings.mode,
+    material: settings.material,
+    color: ENTRANCE_MATERIALS.find((m) => m.id === settings.material).color,
     landing,
     steps,
     ramp,

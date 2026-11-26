@@ -189,6 +189,7 @@ function faceColor(face) {
   if (face.landscapeId && state.selection?.type === 'landscape' && state.selection.ids?.includes(face.landscapeId)) {
     return mixHex(face.color, '#66d39a', 0.58);
   }
+  if (face.entranceId && state.selection?.type === 'entrance' && state.selection.id === face.openingId) return mixHex(face.color, '#66d39a', 0.58);
   if (face.roofId && state.selection?.type === 'roof' && state.selection.id === face.roofId) return mixHex(face.color, SEL_FILL, 0.5);
   if (face.kind === 'mass') {
     const sel = state.selection?.type === 'mass' && state.selection.id === face.massId;
@@ -211,6 +212,7 @@ function faceColor(face) {
     const hot = (objectHover.type === 'room' && face.kind === 'floor' && face.roomId === objectHover.id)
       || (objectHover.type === 'item' && face.itemId === objectHover.id)
       || (objectHover.type === 'opening' && face.openingId === objectHover.id)
+      || (objectHover.type === 'entrance' && face.entranceId && face.openingId === objectHover.id)
       || (objectHover.type === 'landscape' && face.landscapeId === objectHover.id)
       || (objectHover.type === 'roof' && face.roofId === objectHover.id)
       || (objectHover.type === 'mass' && face.massId === objectHover.id)
@@ -1217,7 +1219,7 @@ function updateHover(e) {
 
 // Выбор кликом/тапом: стена, помещение, проём, предмет (пусто — снять
 // выбор). Объект другого этажа делает его активным.
-const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing', 'slab', 'mass', 'roof', 'landscape', 'site']);
+const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing', 'slab', 'mass', 'roof', 'landscape', 'site', 'entrance']);
 
 function clickSelect(hit) {
   if (!wallsEditable()) return;

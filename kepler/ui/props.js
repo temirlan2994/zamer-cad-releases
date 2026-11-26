@@ -4,6 +4,8 @@ import { elevationView, isElevationOpen, refreshElevationView } from './elevatio
 import { findView } from '../core/views.js';
 import { floorAnalyticalViewById } from '../core/analytical-views.js';
 import { renderAnalyticalProps } from './props-analytical.js';
+import { deriveEntrances } from '../core/entrance.js';
+import { renderEntranceProps } from './entrance-props.js';
 import { renderEntryToolOptions } from './site-entry-menu.js';
 import { renderSectionProps } from './plan-section.js';
 import { renderSlabProps } from './slab-ui.js';
@@ -167,6 +169,7 @@ export function renderProps() {
   if (sel.type === 'room') { renderRoomProps(panel, roomById(state.project, sel.id)); return; }
   if (sel.type === 'wall') { renderWallProps(panel, findWall(sel.key, sel.from)); return; }
   if (sel.type === 'railing' && renderRailingProps(panel)) return;
+  if (sel.type === 'entrance') { renderEntranceProps(panel, sel.id); return; }
   if (sel.type === 'opening') { renderOpeningProps(panel, state.project.openings.find((o) => o.id === sel.id)); return; }
   if (sel.type === 'item') { renderItemProps(panel, state.project.items.find((i) => i.id === sel.id)); return; }
   if (sel.type === 'multi') { renderMultiProps(panel, sel); return; }
@@ -1054,6 +1057,7 @@ function renderOpeningProps(panel, opening) {
       ${isDoor || assembly ? '' : `<label class="prop-field"><span>Снизу от пола, мм</span>
         <input id="openSill" type="number" step="50" min="0" value="${effectiveSill}" ${opening.heightMode === 'level' ? 'disabled' : ''}></label>`}
     </div>
+    ${isDoor && (deriveEntrances(state.project).some((entry) => entry.openingId === opening.id) || opening.entrance || opening.entryRole === 'main') ? '<button type="button" id="editEntrance">Крыльцо и наружная лестница</button>' : ''}
     <h3>Положение на стене</h3>
     <div class="prop-block">
       <div class="prop-grid">
@@ -1066,6 +1070,7 @@ function renderOpeningProps(panel, opening) {
         <input id="openOff" type="number" step="50" value="${Math.round(openingPos(opening))}"></label>
     </div>`;
 
+  panel.querySelector('#editEntrance')?.addEventListener('click', () => selectObject({ type: 'entrance', id: opening.id }));
   const commitOpening = (fn) => {
     const before = structuredClone(opening);
     mutate(() => {
