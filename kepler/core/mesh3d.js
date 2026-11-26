@@ -33,7 +33,7 @@ import { stairAppearance, stairBuild, stairLayout } from './stairs.js';
 import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
 import { atriumRails } from './atrium.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
-import { MASS_COLOR_3D, massBox } from './masses.js';
+import { MASS_COLOR_3D, massBox, clipMassBoxZ } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
 import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
 import { clipLinkedRoofFaces, convexStrips, freeDrainageEdges, slopedRoofFaces } from './linked-roof.js';
@@ -2088,11 +2088,22 @@ export function shownLevelIds(project, mode = 'all') {
   return mode === 'only' ? [levels[k].id] : levels.slice(0, k + 1).map((l) => l.id);
 }
 
+// Фасад может пересекать несколько этажей. Отбор по пересечению недостаточен:
+// в ограниченном виде режем его по верху показанного этажа и низу текущего.
+// У нижнего этажа сохраняется цоколь ниже ±0.000.
+export function facadeLevelBounds(project, mode = 'all') {
+  if (mode !== 'only' && mode !== 'upto') return null;
+  const levels = sortedLevels(project);
+  const index = Math.max(0, levels.findIndex((l) => l.id === project.activeLevel));
+  const level = levels[index];
+  return level ? { z0: mode === 'only' && index > 0 ? level.elevation : -Infinity, z1: level.elevation + level.height } : null;
+}
+
 // Массы (core/masses.js) — боксы с контурами (обычные — непрозрачные белые;
 // прозрачной становится только выбранная, см. faceAlpha в ui/view3d.js): 6 граней kind
 // 'mass' с massId и face ('top' | 'bottom' | 'px' | 'nx' | 'py' | 'ny').
 // Только для окна 3D (опция masses у buildHouseMesh).
-export function massFaces(masses, { alpha = 1, voids = [], apertures = [] } = {}) {
+export function massFaces(masses, { alpha = 1, voids = [], apertures = [], facadeClip = null } = {}) {
   const out = [];
   for (const m of masses || []) {
     const b = massBox(m);
@@ -2113,7 +2124,9 @@ export function massFaces(masses, { alpha = 1, voids = [], apertures = [] } = {}
             y0: alongX ? b.y0 : r.y, y1: alongX ? b.y1 : r.y + r.h, z0: hole.z0, z1: hole.z1 });
         }
       }
-      for (const part of facadeParts(m)) {
+      for (const original of facadeParts(m)) {
+        const part = clipMassBoxZ(original, facadeClip);
+        if (!part) continue;
         const meta = () => ({ massId: m.id, facadeKind: m.facadeKind, alpha, flat: m.facadeKind === 'light' });
         const relevant = cuts.filter((cut) => boxOverlap3d(part, cut));
         if (relevant.length) out.push(...orthoCutFaces([part], relevant, { color: part.color, kind: 'mass', meta }));
@@ -2209,12 +2222,12 @@ export function buildHouseMesh(project, {
   // Благоустройство (core/mesh3d-landscape.js): деревья, покрытия, вода, постройки.
   if (site && landscape) faces.push(...landscapeFaces(project, terrainHeightFn(project, terrainScale), { evening }));
   if (masses || facades) {
-    const list = (project.masses || []).filter((m) => m.facadeKind ? facades && (levelMode === 'all' || levels.some((l) =>
-      shown.has(l.id) && m.z0 < l.elevation + l.height && m.z0 + m.h > l.elevation)) : masses);
-    faces.push(...massFaces(list, { voids: project.massVoids || [], apertures: facadeApertures }));
+    const facadeClip = facadeLevelBounds(project, levelMode);
+    const list = (project.masses || []).filter((m) => m.facadeKind ? facades && clipMassBoxZ(massBox(m), facadeClip) : masses);
+    faces.push(...massFaces(list, { voids: project.massVoids || [], apertures: facadeApertures, facadeClip }));
   }
   // Часть масс под землёй (рельеф и слой «Участок») — бледно сквозь землю.
-  if (masses && site && project.masses?.length) faces.push(...massGroundFaces(project.masses, terrainHeightFn(project, terrainScale)));
+  if (masses && site && project.masses?.length) faces.push(...massGroundFaces(project.masses, terrainHeightFn(project, terrainScale), { facadeClip: facadeLevelBounds(project, levelMode) }));
   return faces;
 }
 

@@ -23,7 +23,7 @@
 import { W, LIGHT, EDGE_KINDS, createSceneGL, dot, drawSceneGL, hexRgb, polyNormal, sceneBuffers, sub } from './scene-gl.js';
 import { GRID_STEP, isStructural } from '../core/catalog.js';
 import {
-  boxFaces, buildHouseMesh, buildLevelWalls, furnitureFaces, massFaces, massVoidFaces, shownLevelIds, terrainHeightFn,
+  boxFaces, buildHouseMesh, buildLevelWalls, furnitureFaces, massFaces, massVoidFaces, shownLevelIds, facadeLevelBounds, terrainHeightFn,
 } from '../core/mesh3d.js';
 import { massGroundFaces } from '../core/mass-ground.js';
 import { activeLevel, levelProject, LEVEL_KEYS, sortedLevels } from '../core/model.js';
@@ -863,13 +863,12 @@ function syncMassControl() {
 // Подземная часть (рельеф и «Участок») пересобирается вместе с ними.
 const MASS_KINDS = new Set(['mass', 'massUnder', 'massLine']);
 function rebuildMasses() {
-  const shown = new Set(shownLevelIds(state.project, opts.levels));
-  const list = state.project?.masses?.filter((m) => !m.facadeKind || opts.levels === 'all' || state.project.levels.some((l) =>
-    shown.has(l.id) && m.z0 < l.elevation + l.height && m.z0 + m.h > l.elevation));
+  const facadeClip = facadeLevelBounds(state.project, opts.levels);
+  const list = state.project?.masses || [];
   sets = null;
   const hz = opts.masses && opts.site && list?.length ? terrainHeightFn(state.project, opts.terrainScale) : null;
   faces = faces.filter((f) => !MASS_KINDS.has(f.kind))
-    .concat(opts.masses ? massFaces(list, { voids: state.project?.massVoids || [], apertures: facadeApertures }) : [], hz ? massGroundFaces(list, hz) : []);
+    .concat(opts.masses ? massFaces(list, { voids: state.project?.massVoids || [], apertures: facadeApertures, facadeClip }) : [], hz ? massGroundFaces(list, hz, { facadeClip }) : []);
 }
 
 // Полая масса влияет не только на слой масс, но и на стены, полы и плиты,
@@ -1844,6 +1843,7 @@ export function bind3d() {
     project: (p) => debug3dScreen(p),
   });
   initMass3d({
+    facadeClip: () => facadeLevelBounds(state.project, opts.levels),
     ray: rayAt,
     axisDelta: (axis, dx, dy) => axisDelta(cam, canvas.clientWidth || 1, canvas.clientHeight || 1, axis, dx, dy),
     worldPerPx: () => worldPerPixel(canvas.clientWidth || 1, canvas.clientHeight || 1),

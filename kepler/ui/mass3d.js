@@ -36,7 +36,7 @@
 // те же ручки с увеличенной зоной попадания.
 
 import {
-  FACE_NORMAL, MASS_H_DEFAULT, MASS_MIN, massMinimum, createMass, createMassVoid, faceSize, floorsLabel, massBox,
+  FACE_NORMAL, MASS_H_DEFAULT, MASS_MIN, massMinimum, clipMassBoxZ, createMass, createMassVoid, faceSize, floorsLabel, massBox,
   massStep, setFaceSize,
 } from '../core/masses.js';
 import {
@@ -76,7 +76,10 @@ export const massDragging = () => Boolean(drag);
 export const massHover = () => hover;
 
 export function massBoxes() {
-  return solidMassList().map((m) => ({ id: m.id, ...(m.facadeKind ? { facadeKind: m.facadeKind } : {}), ...massBox(m) }));
+  return solidMassList().flatMap((m) => {
+    const box = visibleBox(m);
+    return box ? [{ id: m.id, ...(m.facadeKind ? { facadeKind: m.facadeKind } : {}), ...box }] : [];
+  });
 }
 
 // Отдельно для 3D-pick: cutter не считается опорой, но его каркас можно
@@ -414,6 +417,15 @@ function selectedMass() {
   return state.selection?.type === 'mass' ? massById(state.selection.id) : null;
 }
 
+function visibleBox(m) {
+  return m.facadeKind ? clipMassBoxZ(massBox(m), env?.facadeClip?.()) : massBox(m);
+}
+function visibleHandles(m, box) {
+  const original = massBox(m);
+  return MASS_HANDLES.map((h) => ({ h, p: handlePoint(original, h.s) }))
+    .filter(({ p }) => p.z >= box.z0 - .01 && p.z <= box.z1 + .01);
+}
+
 const add = (p, a, s) => ({ x: p.x + a.x * s, y: p.y + a.y * s, z: p.z + a.z * s });
 const vcross = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
 const vnorm = (a) => { const l = Math.hypot(a.x, a.y, a.z); return l > 1e-9 ? { x: a.x / l, y: a.y / l, z: a.z / l } : null; };
@@ -433,7 +445,8 @@ function disc(p, rad, B, n = 12) {
 function gripOverlay(m, k) {
   const out = [];
   const B = env.basis();
-  const box = massBox(m);
+  const box = visibleBox(m);
+  if (!box) return [];
   const top = { kind: 'overlay', onTop: true, flat: true, twoSided: true, normal: { x: 0, y: 0, z: 1 } };
   // Лёгкий каркас куба поверх сцены: виден, даже когда масса частично
   // спрятана внутри соседней.
@@ -447,7 +460,7 @@ function gripOverlay(m, k) {
   const voidMode = massIsVoid(m.id);
   out.push({ ...top, pts: [C(0, 0, 0), C(1, 0, 0), C(1, 1, 0)], color: '#ffffff', alpha: 0, edges: wire, edgeRgba: voidMode ? [0.94, 0.31, 0.08, 0.9] : [0.24, 0.5, 0.88, 0.55] });
   // Точки размера (сначала невидимые стороны — ниже в стопке).
-  const list = MASS_HANDLES.map((h) => ({ h, p: handlePoint(box, h.s), front: handleFacing(h.s, B.f) }))
+  const list = visibleHandles(m, box).map(({ h, p }) => ({ h, p, front: handleFacing(h.s, B.f) }))
     .sort((a, b) => Number(a.front) - Number(b.front));
   for (const { h, p, front } of list) {
     const hot = isHot(m.id, h.id);
@@ -489,7 +502,8 @@ function gripOverlay(m, k) {
 // Гизмо и точки выбранной массы в пикселях клиента (для попадания).
 function gripScreen(m) {
   const k = env.worldPerPx();
-  const box = massBox(m);
+  const box = visibleBox(m);
+  if (!box) return null;
   const B = env.basis();
   const O = gizmoOrigin(box);
   const [s0, s1] = GIZMO_PLANE_PX.map((v) => v * k);
@@ -501,7 +515,7 @@ function gripScreen(m) {
       tips: { x: env.project(add(O, X, L)), y: env.project(add(O, Y, L)), z: env.project(add(O, GIZMO_AXES.z, L)) },
       plane: [add(add(O, X, s0), Y, s0), add(add(O, X, s1), Y, s0), add(add(O, X, s1), Y, s1), add(add(O, X, s0), Y, s1)].map(env.project),
     },
-    handles: MASS_HANDLES.map((h) => ({ id: h.id, p: env.project(handlePoint(box, h.s)), back: !handleFacing(h.s, B.f) })),
+    handles: visibleHandles(m, box).map(({ h, p }) => ({ id: h.id, p: env.project(p), back: !handleFacing(h.s, B.f) })),
   };
 }
 
@@ -515,6 +529,7 @@ export function massPartAt(e) {
   const hit = e?.pointerType === 'touch' || e?.pointerType === 'pen' ? HIT.touch : HIT.mouse;
   const p = { x: e.clientX, y: e.clientY };
   const scr = gripScreen(m);
+  if (!scr) return null;
   const front = handlePick(scr.handles.filter((h) => !h.back), p, hit.handle);
   if (front) return { id: m.id, part: front };
   const g = gizmoPick(scr.gizmo, p, hit.axis);
@@ -547,7 +562,8 @@ export function clearMassHover() {
 export function selectedMassHit(ray) {
   const sel = selectedMass();
   if (!sel) return null;
-  return pickMass([{ id: sel.id, ...massBox(sel) }], ray);
+  const box = visibleBox(sel);
+  return box ? pickMass([{ id: sel.id, ...box }], ray) : null;
 }
 
 // Начало жеста по гизмо или точке выбранной массы. true — жест начат.
@@ -565,7 +581,7 @@ export function startMassDrag(e, at = massPartAt(e)) {
   };
   // Перенос по плоскости и углы — по горизонтальной плоскости.
   if (at.part === 'gxy' || (handle && !handle.face)) {
-    drag.planeZ = at.part === 'gxy' ? gizmoOrigin(box).z : handlePoint(box, handle.s).z;
+    drag.planeZ = at.part === 'gxy' ? gizmoOrigin(visibleBox(m) || box).z : handlePoint(box, handle.s).z;
     drag.p0 = rayPlaneZ(env.ray(e), drag.planeZ);
   }
   hover = { id: m.id, part: at.part, face: handle?.face || null };

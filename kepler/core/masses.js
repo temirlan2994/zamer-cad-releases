@@ -467,3 +467,10 @@ export function copyMass(m, masses, offset = null) {
   delete copy.canopyId;
   return copy;
 }
+
+// Ограничение габарита секущими плоскостями вида; исходный объект не меняется.
+export function clipMassBoxZ(box, range = null) {
+  if (!range) return box;
+  const z0 = Math.max(box.z0, range.z0); const z1 = Math.min(box.z1, range.z1);
+  return z1 > z0 + 1e-6 ? { ...box, z0, z1 } : null;
+}
