@@ -161,8 +161,8 @@ function selectedInfo() {
   const half = opening.width / 2;
   const effectiveSill = openingSill(opening, level);
   const z0 = level.elevation + effectiveSill;
-  const spanTop = opening.span && windowSpanTop(state.project, level.id, opening);
-  const z1 = spanTop ? level.elevation + spanTop : z0 + openingHeight(opening, level);
+  const spanTop = windowSpanTop(state.project, level.id, opening);
+  const z1 = level.elevation + (spanTop ?? Math.min(wallRange.z1, effectiveSill + openingHeight(opening, level)));
   const point = (a, z) => (wall.orient === 'h' ? { x: a, y: cross, z } : { x: cross, y: a, z });
   const handles = [
     { id: 'from', point: point(along - half, (z0 + z1) / 2) },
@@ -407,7 +407,7 @@ export function moveOpeningResize(event) {
   }
   resize.moved = true;
   const sill = openingSill(opening, resize.level);
-  const top = opening.span && windowSpanTop(state.project, resize.level.id, opening);
+  const top = windowSpanTop(state.project, resize.level.id, opening);
   const height = top ? top - sill : openingHeight(opening, resize.level);
   const width = opening.corner ? `${opening.width} + ${opening.corner.returnWidth}` : opening.width;
   const size = `${width} × ${Math.round(height)} мм${opening.kind === 'window' ? ` · подоконник ${sill}` : ''}`;

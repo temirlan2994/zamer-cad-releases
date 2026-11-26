@@ -1003,7 +1003,7 @@ function renderOpeningProps(panel, opening) {
   const hasUpperFloor = !isDoor && !assembly && state.project.levels.some((candidate) => candidate.elevation > level.elevation);
   const spanOption = hasUpperFloor && nextWindowSpan(state.project, level.id, opening);
   const upper = spanOption && state.project.levels.find((l) => l.id === spanOption.targetLevelId);
-  const spanTop = opening.span && windowSpanTop(state.project, level.id, opening);
+  const spanTop = windowSpanTop(state.project, level.id, opening);
   const effectiveSill = openingSill(opening, level);
   const effectiveHeight = spanTop ? spanTop - effectiveSill : openingHeight(opening, level);
   const walls = state.walls;
@@ -1041,7 +1041,7 @@ function renderOpeningProps(panel, opening) {
         <label class="prop-field"><span>${assembly ? 'Ширина блока' : 'Ширина'}, мм</span>
           <input id="openW" type="number" step="50" min="300" value="${opening.width}"></label>
         <label class="prop-field"><span>${assembly ? 'Высота блока' : 'Высота'}, мм</span>
-          <input id="openH" type="number" step="50" min="300" value="${effectiveHeight}" ${assembly || (!isDoor && (opening.heightMode === 'level' || spanTop)) ? 'disabled' : ''}></label>
+          <input id="openH" type="number" step="50" min="300" value="${effectiveHeight}" ${assembly || (!isDoor && opening.heightMode === 'level') ? 'disabled' : ''}></label>
       </div>
       ${glazedOpeningFields(opening, 'open')}
       ${isDoor || assembly ? '' : `<label class="check-row"><input id="openHeightLinked" type="checkbox" ${opening.heightMode === 'level' ? 'checked' : ''}>
@@ -1097,7 +1097,7 @@ function renderOpeningProps(panel, opening) {
   panel.querySelector('#openTopLevel')?.addEventListener('change', (e) => {
     const target = e.target.value;
     commitOpening(() => {
-      if (!target) clearWindowSpan(opening);
+      if (!target) clearWindowSpan(opening, level);
       else if (spanOption && target === spanOption.targetLevelId) {
         setWindowSpan(state.project, level.id, opening, spanOption.maxTop);
       }
@@ -1158,6 +1158,16 @@ function renderOpeningProps(panel, opening) {
     commitOpening(() => {
       opening.height = Math.max(300, Number(e.target.value) || opening.height);
       if (!isDoor) opening.heightMode = 'custom';
+      if (!isDoor && !assembly) {
+        delete opening.span;
+        const top = openingSill(opening, level) + opening.height;
+        const span = nextWindowSpan(state.project, level.id, opening);
+        if (span && top >= span.minTop) setWindowSpan(state.project, level.id, opening, Math.min(top, span.maxTop));
+        else if (placed && top > wallZRange(state.project, placed.wall, level.height).z1) {
+          opening.height = Math.max(300, wallZRange(state.project, placed.wall, level.height).z1-openingSill(opening, level));
+          toast('Чтобы поднять окно выше, нужна свободная наружная стена этажом выше', true);
+        }
+      }
     });
   });
   panel.querySelector('#openHeightLinked')?.addEventListener('change', (e) => {

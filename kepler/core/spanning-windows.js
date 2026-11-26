@@ -1,9 +1,9 @@
 // Двухэтажный витраж хранится на нижнем этаже как один проём. Для верхнего
 // этажа по геометрии находим вторую стену. Высоты — мм от пола нижнего этажа.
 import { cornerWindowProjections } from './corner-windows.js';
-import { glazedOpeningProjections } from './glazed-openings.js';
+import { glazedOpeningProjections, isGlazedAssembly } from './glazed-openings.js';
 import { activeLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
-import { openingSill } from './opening-preset.js';
+import { openingHeight, openingSill } from './opening-preset.js';
 import { EDGE_MARGIN, fitOpeningOffset } from './opening-spacing.js';
 import { deriveWalls, hostOpeningRoom, openingPos, openingRect, wallsEngine } from './walls.js';
 import { wallZRange } from './wall-z-range.js';
@@ -51,7 +51,7 @@ function targetOpening(opening, wall, project, center) {
 }
 
 function spanHost(project, levelId, opening, wallsByLevel = new Map()) {
-  if (opening?.corner) return null;
+  if (opening?.corner || isGlazedAssembly(opening)) return null;
   if (opening?.kind !== 'window' || opening.orphan || !(opening.width > 0)) return null;
   const levels = sortedLevels(project);
   const i = levels.findIndex((level) => level.id === levelId);
@@ -71,7 +71,10 @@ function spanHost(project, levelId, opening, wallsByLevel = new Map()) {
   const lowerWall = placed.wall;
   const lowerZ = wallZRange(lp, lowerWall, base.height);
   const sill = openingSill(opening, base);
-  if (delta <= sill || lowerZ.z1 < delta - 1 || lowerZ.z0 > sill) return null;
+  // Индивидуальный потолок может заканчиваться под перекрытием. Это
+  // непрерывный фасад: плиту между стенами тоже прорезает витраж.
+  const slabBottom = delta - Math.max(0, Number(upper.slabThickness) || 0);
+  if (delta <= sill || lowerZ.z1 < slabBottom - 1 || lowerZ.z0 > sill) return null;
   const from = placed.absCenter - opening.width / 2;
   const to = placed.absCenter + opening.width / 2;
   if (lowerWall.from > from || lowerWall.to < to) return null;
@@ -141,19 +144,35 @@ export function setWindowSpan(project, levelId, opening, topMm) {
   return true;
 }
 
-export function clearWindowSpan(opening) {
+export function clearWindowSpan(opening, level = null) {
   delete opening.span;
+  if (level && opening.heightMode !== 'level') {
+    opening.height = Math.min(openingHeight(opening, level), Math.max(300, level.height-openingSill(opening, level)));
+  }
 }
 
 function topOf(host, opening) {
-  if (!host || host.targetLevelId !== opening.span?.levelId) return null;
+  if (!host) return null;
+  if (!opening.span) return Math.min(host.maxTop, host.sill + openingHeight(opening));
+  if (host.targetLevelId !== opening.span.levelId) return null;
   const gap = Number(opening.span.topGap);
   if (!Number.isFinite(gap) || gap < 0) return null;
   return Math.max(host.minTop, host.maxTop - gap);
 }
 
 export function windowSpanTop(project, levelId, opening) {
-  return opening?.span ? topOf(spanHost(project, levelId, opening), opening) : null;
+  const levels = sortedLevels(project), index = levels.findIndex((level) => level.id === levelId);
+  return requestsSpan(opening, levels[index], levels[index+1]) ? topOf(spanHost(project, levelId, opening), opening) : null;
+}
+
+// Старые файлы и ввод высоты числом могут содержать высокий проём без span.
+// Его размер должен задавать тот же витраж, что и верхняя ручка. Разрешение
+// остаётся только для чтения: просмотр не создаёт копий или скрытых правок.
+function requestsSpan(opening, base, upper) {
+  if (!opening || !base || !upper) return false;
+  if (opening.span) return opening.span.levelId === upper.id;
+  return opening.kind === 'window' && !opening.corner && !isGlazedAssembly(opening) && opening.heightMode !== 'level'
+    && openingSill(opening, base) + openingHeight(opening, base) > upper.elevation-base.elevation;
 }
 
 // Проекции только для чтения. Файл и история хранят исходные проёмы.
@@ -165,19 +184,22 @@ export function levelWindowOpenings(project, walls = null) {
   if (!current || project.levels.length < 2) return originals;
   const levels = sortedLevels(project);
   const below = levels[levels.indexOf(current) - 1];
-  const incoming = below?.openings?.some((o) => o.span?.levelId === current.id);
-  if (!incoming && !originals.some((o) => o.span)) return originals;
+  const above = levels[levels.indexOf(current) + 1];
+  const incoming = below?.openings?.some((o) => requestsSpan(o, below, current));
+  if (!incoming && !originals.some((o) => requestsSpan(o, current, above))) return originals;
   const candidates = incoming ? [current, below] : [current];
   const wallsByLevel = new Map(walls ? [[current.id, walls]] : []);
   const slices = new Map();
   const projected = [];
   for (const level of candidates) {
+    const upper = levels[levels.indexOf(level) + 1];
     for (const opening of level.openings || []) {
-      if (!opening.span || (level.id !== current.id && opening.span.levelId !== current.id)) continue;
+      if (!requestsSpan(opening, level, upper)) continue;
       const host = spanHost(project, level.id, opening, wallsByLevel);
       const top = topOf(host, opening);
       if (top == null) continue;
-      const props = { heightMode: 'custom', spanOwnerLevelId: level.id, spanTop: top,
+      const props = { span: opening.span || { levelId: host.targetLevelId, topGap: host.maxTop-top },
+        heightMode: 'custom', spanOwnerLevelId: level.id, spanTop: top,
         spanTargetRoomId: host.targetRoomId, spanTargetRoomIds: [...new Set(host.targets.map((part) => part.roomId))],
         spanFrameBand: host.frameBand, spanOutward: host.outward, spanAlongFrom: host.from, spanAlongTo: host.to };
       if (level.id === current.id) {

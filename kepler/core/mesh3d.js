@@ -352,7 +352,7 @@ export function levelWallSolids(lp, walls, height) {
     const level = (lp.levels || []).find((l) => l.id === lp.activeLevel);
     const wallTop = ri >= 0 ? recs[ri].z1 : height;
     const bottom = openingSill(o, level);
-    const top = Math.min(wallTop, bottom + openingHeight(o, level));
+    const top = o.spanPart === 'lower' ? bottom + openingHeight(o, level) : Math.min(wallTop, bottom + openingHeight(o, level));
     if (top <= bottom || r.w < 0.5 || r.h < 0.5) continue;
     if (o.cornerJunction) voids.push({ r: o.cornerJunction, bottom, top, kind: 'corner-junction', wall: null, rec: -1 });
     voids.push({ r, bottom, top, kind: o.kind, wall: placed.wall, rec: ri, id: o.id, opening: o });
@@ -1266,7 +1266,7 @@ function levelFootprint(lp, offset) {
 // перекрытии верхнего (над лестницами — авто, ручные; core/slab-openings.js).
 function slabCuts(lower, upper) {
   const cuts = [];
-  if (lower.openings.some((opening) => opening.span?.levelId === upper.activeLevel)) {
+  if (lower.openings.some((opening) => opening.kind === 'window')) {
     const walls = deriveWalls(upper);
     for (const opening of levelWindowOpenings(upper, walls)) {
       if (opening.spanPart !== 'upper') continue;

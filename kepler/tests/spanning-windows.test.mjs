@@ -104,6 +104,39 @@ function fixture() {
   return { project, base, upper, opening };
 }
 
+test('сохранённая числовая высота на два этажа даёт настоящее стекло, вырез и экспорт', () => {
+  const { project, base, upper, opening } = fixture();
+  opening.heightMode = 'custom'; opening.sill = 100; opening.height = 5900;
+  const saved = serializeProject(project);
+  const copy = deserializeProject(saved), window = copy.openings[0];
+  assert.equal(windowSpanTop(copy, base.id, window), 6000);
+  const mesh = buildHouseMesh(copy);
+  const glass = mesh.filter((f) => f.kind === 'glass' && f.openingId === opening.id);
+  assert.deepEqual(glass.map((f) => [f.pts[0].z, f.pts[2].z]), [[600, 3500], [3500, 6500]]);
+  const hit = pickWall(pickBoxes(copy).walls, { o: { x: 3500, y: -1000, z: 5000 }, d: { x: 0, y: 1, z: 0 } });
+  assert.ok(hit.point.y >= 5000, 'верхняя наружная стена вырезана');
+  const slab = mesh.filter((f) => f.slabRole === 'interfloor' && f.normal.z > .5);
+  assert.ok(!slab.some((f) => 3500 > Math.min(...f.pts.map((p) => p.x)) && 3500 < Math.max(...f.pts.map((p) => p.x))
+    && -125 > Math.min(...f.pts.map((p) => p.y)) && -125 < Math.max(...f.pts.map((p) => p.y))));
+  assert.equal(buildIfc(copy).counts.windows, 1);
+  assert.equal(buildStructuredExport(copy).levels[1].openings[0].top_level, upper.id);
+  assert.equal(serializeProject(copy), saved, 'просмотр не переписывает файл');
+  clearWindowSpan(window, copy.levels[0]);
+  assert.equal(windowSpanTop(copy, base.id, window), null);
+  assert.equal(levelWindowOpenings(levelProject(copy, upper.id)).length, 0);
+});
+
+test('витраж проходит через перекрытие над комнатой с индивидуальным потолком', () => {
+  const { project, base, upper, opening } = fixture();
+  base.rooms[0].ceiling = 2700;
+  assert.ok(setWindowSpan(project, base.id, opening, 6000));
+  assert.equal(levelWindowOpenings(levelProject(project, upper.id))[0].height, 3000);
+  const glass = buildHouseMesh(project).filter((f) => f.kind === 'glass' && f.openingId === opening.id);
+  assert.deepEqual(glass.map((f) => [f.pts[0].z, f.pts[2].z]), [[600, 3500], [3500, 6500]], 'стекло непрерывно в зоне перекрытия');
+  base.rooms[0].ceiling = 2400;
+  assert.equal(nextWindowSpan(project, base.id, opening), null, 'реальный вертикальный разрыв фасада сохраняется');
+});
+
 test('одно окно следует за потолком и своей нижней отметкой после открытия v7', () => {
   const { project, base, upper, opening } = fixture();
   assert.deepEqual(nextWindowSpan(project, base.id, opening), { targetLevelId: upper.id, minTop: 3001, maxTop: 6100 });
