@@ -259,9 +259,9 @@ export function pickFaces(faces) {
     else if (f.roofSource === 'linked' && f.roofId) pick = { type: 'roof', id: f.roofId, levelId: f.level };
     else if (f.roofId && (f.kind === 'roof' || f.kind === 'parapet' || f.kind === 'fascia')) pick = { type: 'roof', id: f.roofId, levelId: f.level };
     else if (f.facadeKind && f.massId) pick = { type: 'mass', id: f.massId, normal: f.normal };
-    else if (f.entranceId && f.openingId) pick = { type: 'entrance', id: f.openingId, levelId: f.level };
+    else if (f.entranceId && f.openingId) pick = { type: 'entrance', id: f.openingId, levelId: f.level, ...(f.stairPart && f.stairPart !== 'landing' ? { part: f.stairPart } : {}) };
     else if (f.siteEntryId) pick = { type: 'site', kind: 'entry', id: f.siteEntryId };
-    else if (f.landscapeId) pick = { type: 'landscape', id: f.landscapeId };
+    else if (f.landscapeId) pick = { type: 'landscape', id: f.landscapeId, ...(f.stairPart ? { part: f.stairPart } : {}) };
     else if (!OCCLUDERS.has(f.kind)) continue;
     const P = f.pts;
     if (!P || P.length < 3) continue;

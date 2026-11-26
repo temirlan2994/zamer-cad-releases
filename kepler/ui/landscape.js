@@ -3,6 +3,7 @@
 // и шаблоны сада. Данные — project.site.landscape.objects (core/landscape.js),
 // координаты участка (съёмки).
 
+import { bindStairShapeFields, stairShapeFields } from './stair-shape.js';
 import {
   LANDSCAPE_CATEGORIES, LANDSCAPE_VIS, TREE_HOUSE_MIN, clampWidth, createLandscapeObject,
   hitEdge, hitLandscape, hitVertex, insertVertex, isPathShape, landscapeByCategory, landscapeDef,
@@ -1909,6 +1910,7 @@ export function renderLandscapeProps(panel) {
     </div>` : ''}` : '';
   panel.innerHTML = `
     <h2>${escapeHtml(def.title)}</h2>
+    ${o.kind === 'stairs-out' ? stairShapeFields() : ''}
     <div class="prop-block">
       <div class="prop-row"><span>${escapeHtml(def.group)}</span><span>${def.tall ? 'высокий' : def.cover ? 'покрытие' : ''}</span></div>
       ${variants}
@@ -1931,6 +1933,7 @@ export function renderLandscapeProps(panel) {
     ${planterFillHtml(o)}
     ${plantFillHtml(o)}`;
   bindCommon(panel);
+  if (o.kind === 'stairs-out') bindStairShapeFields(panel);
   bindPathProps(panel, o);
   bindBuildProps(panel, o);
   bindOutdoorLights(panel, o);

@@ -3,6 +3,7 @@
 // записывает в project: дверь, рельеф или ±0.000 меняются — результат при
 // следующем вызове строится заново с теми же стабильными id.
 
+import { stairRect, stairRectPolygon } from './stair-shape.js';
 import { toWorld } from './building.js';
 import { isOpenRoom } from './catalog.js';
 import { resolvedZeroAboveGround } from './envelope.js';
@@ -56,6 +57,7 @@ export function entranceSettings(project, opening) {
   };
   return {
     enabled: source.enabled !== false,
+    shapeEdits: source.shapeEdits && typeof source.shapeEdits === 'object' ? source.shapeEdits : {},
     width: bounded(source.width, 600, 12000, 0),
     stepCount: Math.round(bounded(source.stepCount, 0, 100, 0)),
     material: ENTRANCE_MATERIALS.find((m) => m.id === source.material)?.id || 'concrete',
@@ -285,6 +287,7 @@ function pendingEntrance(level, selection, settings) {
     outward: { ...chosen.outward },
     threshold: { ...chosen.threshold, z: Number(level.elevation) || 0 },
     mode: settings.mode,
+    shapeEdits: settings.shapeEdits,
     material: settings.material,
     color: ENTRANCE_MATERIALS.find((m) => m.id === settings.material).color,
     landing: null,
@@ -309,7 +312,9 @@ function readyEntrance(project, level, selection, groundAt, settings) {
   const landingOuter = moved(chosen.threshold, chosen.outward, settings.landingDepth);
   const stepData = stepMetrics(landingOuter, chosen.outward, stepsOffset, topZ, groundAt, settings);
   const rampData = rampMetrics(landingOuter, chosen.outward, rampOffset, topZ, groundAt, settings);
-  const landingPolygon = stripPolygon(chosen.threshold, chosen.outward, landingWidth, settings.landingDepth);
+  const landingRect = stairRect({ left: -landingWidth / 2, right: landingWidth / 2, back: 0, front: settings.landingDepth }, settings.shapeEdits.landing);
+  const landingPolygon = stairRectPolygon(landingRect, chosen.threshold,
+    { x: -chosen.outward.y, y: chosen.outward.x }, chosen.outward);
   const landingGround = landingPolygon.map(groundAt);
   const landing = {
     id: `${id}:landing`,
@@ -391,6 +396,7 @@ function readyEntrance(project, level, selection, groundAt, settings) {
     outward: { ...chosen.outward },
     threshold: { ...chosen.threshold, z: topZ },
     mode: settings.mode,
+    shapeEdits: settings.shapeEdits,
     material: settings.material,
     color: ENTRANCE_MATERIALS.find((m) => m.id === settings.material).color,
     landing,
@@ -413,4 +419,25 @@ export function deriveEntrances(project, { wallsByLevel = null } = {}) {
   const ground = groundSampler(project);
   if (!ground.at) return [pendingEntrance(level, selection, settings)];
   return [readyEntrance(project, level, selection, ground.at, settings)];
+}
+
+// Площадка и каждая проступь имеют свой прямоугольник и стабильный ключ.
+export function entranceParts(entry) {
+  if (!entry?.landing) return [];
+  const yAxis = entry.outward;
+  const xAxis = { x: -yAxis.y, y: yAxis.x };
+  const make = (key, title, origin, base, z) => {
+    const rect = stairRect(base, entry.shapeEdits?.[key]);
+    return { key, title, origin, xAxis, yAxis, base, rect, z,
+      polygon: stairRectPolygon(rect, origin, xAxis, yAxis) };
+  };
+  const parts = [make('landing', 'Площадка', entry.threshold,
+    { left: -entry.landing.width / 2, right: entry.landing.width / 2, back: 0, front: entry.landing.depth }, entry.topZ)];
+  const steps = entry.steps;
+  if (steps?.enabled) for (let i = 0; i < steps.count; i += 1) {
+    parts.push(make(`step-${i + 1}`, `Ступень ${i + 1} (от верха)`, steps.topCenter,
+      { left: -steps.width / 2, right: steps.width / 2, back: i * steps.tread, front: (i + 1) * steps.tread },
+      steps.topZ - steps.riser * (i + 1)));
+  }
+  return parts;
 }

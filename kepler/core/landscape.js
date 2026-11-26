@@ -25,6 +25,7 @@
 //   'line'   — линейный (дорожка, ограждение по ломаной);
 //   'poly'   — площадной (газон, гравий, плитка, пруд произвольной формы).
 
+import { stairRect } from './stair-shape.js';
 import { pointInPolygon, pointToSegmentDistance } from './zamer/geometry.js';
 import { CORNER_IDS, areaOf, layoutBoards, layoutSlabs, pathLayout } from './path-geometry.js';
 import {
@@ -567,7 +568,10 @@ export function stairTreads(o, info = stairsInfo(o)) {
   const middle = Math.floor(steps / 2) - 1;
   return Array.from({ length: steps }, (_, i) => {
     const bottom = o.h / 2 - i * depth - (i > middle ? extra : 0);
-    return { bottom, top: bottom - depth - (i === middle ? extra : 0), z: (i + 1) * riser };
+    const key = `step-${steps - i}`;
+    const base = { left: -info.flight / 2, right: info.flight / 2, back: bottom - depth - (i === middle ? extra : 0), front: bottom };
+    const rect = stairRect(base, o.meta?.shapeEdits?.[key]);
+    return { key, base, left: rect.left, right: rect.right, bottom: rect.front, top: rect.back, z: (i + 1) * riser };
   });
 }
 

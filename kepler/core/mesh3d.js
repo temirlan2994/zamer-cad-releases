@@ -40,7 +40,7 @@ import { clipLinkedRoofFaces, convexStrips, freeDrainageEdges, slopedRoofFaces }
 import { gridOutline, gridRoofRects, linkedRoofRegions } from './linked-roof-regions.js';
 export { linkedRoofRegions };
 import { deriveFoundation } from './foundation-system.js';
-import { deriveEntrances } from './entrance.js';
+import { deriveEntrances, entranceParts } from './entrance.js';
 import {
   EDGE_HEIGHT, FASCIA_T, PARAPET_THICK, edgeSide, expandRects, gridEdges, materialColor, offsetOutline, outlineNormals, ringSpec,
   roofCutRects, roofIsSlanted, roofRects, roofSlabOutline, roofZ, sideDist, triangulate,
@@ -1566,19 +1566,6 @@ export function foundationFaces(project) {
 
 const ENTRANCE_COLOR = '#b7aea1';
 
-function entranceRect(center, direction, width, depth, offset = 0) {
-  const side = { x: -direction.y, y: direction.x };
-  const start = { x: center.x + side.x * offset, y: center.y + side.y * offset };
-  const end = { x: start.x + direction.x * depth, y: start.y + direction.y * depth };
-  const half = width / 2;
-  return [
-    { x: start.x - side.x * half, y: start.y - side.y * half },
-    { x: start.x + side.x * half, y: start.y + side.y * half },
-    { x: end.x + side.x * half, y: end.y + side.y * half },
-    { x: end.x - side.x * half, y: end.y - side.y * half },
-  ];
-}
-
 function faceNormal3d(points) {
   if (points.length < 3) return v(0, 0, 1);
   const a = points[0]; const b = points[1]; const c = points[2];
@@ -1623,26 +1610,13 @@ export function entranceFaces(project, options = {}) {
       level: entrance.levelId,
       entranceSource: 'linked',
     }));
-    if (entrance.landing) {
-      const landing = entrance.landing;
-      const base = Math.min(landing.z - landing.thickness, landing.minGroundZ);
-      faces.push(...tag(polySlabFaces(landing.polygon, base, landing.z, color, 'entrance', { bottom: true })
-        .map((face) => ({ ...face, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), landing));
-    }
-    if (entrance.steps?.enabled) {
-      const steps = entrance.steps;
-      const base = Math.min(steps.groundZ - 100, steps.topZ - steps.rise - 100);
-      for (let index = 0; index < steps.count; index += 1) {
-        const center = {
-          x: steps.topCenter.x + steps.direction.x * index * steps.tread,
-          y: steps.topCenter.y + steps.direction.y * index * steps.tread,
-        };
-        const polygon = entranceRect(center, steps.direction, steps.width, steps.tread);
-        const top = steps.topZ - steps.riser * (index + 1);
-        const component = { ...steps, id: `${steps.id}:${index + 1}`, kind: 'steps' };
-        faces.push(...tag(polySlabFaces(polygon, base, top, color, 'stairs', { bottom: true })
-          .map((face) => ({ ...face, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), component));
-      }
+    for (const part of entranceParts(entrance)) {
+      const landing = part.key === 'landing';
+      const base = landing ? Math.min(part.z - entrance.landing.thickness, entrance.landing.minGroundZ)
+        : Math.min(entrance.steps.groundZ - 100, entrance.steps.topZ - entrance.steps.rise - 100);
+      const component = { id: landing ? entrance.landing.id : `${entrance.steps.id}:${part.key.slice(5)}`, kind: landing ? 'landing' : 'steps' };
+      faces.push(...tag(polySlabFaces(part.polygon, base, part.z, color, landing ? 'entrance' : 'stairs', { bottom: true })
+        .map((face) => ({ ...face, stairPart: part.key, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), component));
     }
     if (entrance.ramp?.enabled) faces.push(...tag(rampComponentFaces(entrance.ramp, color), entrance.ramp));
   }

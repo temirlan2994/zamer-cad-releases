@@ -1,5 +1,6 @@
 // Связанное крыльцо редактируется отдельно от двери: удаление не затрагивает проём.
 import { deriveEntrances, entranceSettings, ENTRANCE_MATERIALS } from '../core/entrance.js';
+import { bindStairShapeFields, stairShapeFields } from './stair-shape.js';
 import { escapeHtml, toast } from './dom.js';
 import { deleteSelection } from './plan-actions.js';
 import { state } from './state.js';
@@ -12,7 +13,7 @@ const FIELDS = [
   ['tread', 'Глубина ступени, мм', 200, 800, 10],
   ['maxRiser', 'Высота ступени до, мм', 80, 250, 5],
 ];
-const KEYS = ['enabled', 'mode', 'material', 'stepCount', ...FIELDS.map(([key]) => key)];
+const KEYS = ['shapeEdits', 'enabled', 'mode', 'material', 'stepCount', ...FIELDS.map(([key]) => key)];
 
 export function renderEntranceProps(panel, openingId) {
   const opening = state.project.openings.find((o) => o.id === openingId);
@@ -23,6 +24,7 @@ export function renderEntranceProps(panel, openingId) {
   const steps = entry?.steps;
   panel.innerHTML = `<h2>Крыльцо и наружная лестница</h2>
     <p class="subtitle">Площадка следует за входной дверью. Верх — на отметке пола, низ — по рельефу.</p>
+    ${stairShapeFields()}
     <div class="prop-block">
       <label class="check-row"><input id="porchEnabled" type="checkbox" ${settings.enabled ? 'checked' : ''}><span>Показывать крыльцо</span></label>
       <label class="prop-field"><span>Подъём</span><select id="porchMode">${[['steps', 'Ступени'], ['ramp', 'Пандус'], ['both', 'Ступени + пандус'], ['none', 'Только площадка']].map(([id, title]) => `<option value="${id}" ${settings.mode === id ? 'selected' : ''}>${title}</option>`).join('')}</select></label>
@@ -34,6 +36,7 @@ export function renderEntranceProps(panel, openingId) {
       ${entry?.status === 'pending' ? '<p class="hint">Задайте высоту пола над землёй в настройках дома, чтобы построить лестницу.</p>' : ''}
     </div>
     <div class="prop-actions"><button type="button" id="porchDoor">К двери</button><button type="button" id="porchReset">Сбросить настройки</button><button type="button" id="porchDelete">Удалить крыльцо</button></div>`;
+  bindStairShapeFields(panel);
   const set = (patch) => mutate(() => { opening.entrance = { ...opening.entrance, ...patch }; });
   panel.querySelector('#porchEnabled').addEventListener('change', (e) => set({ enabled: e.target.checked }));
   panel.querySelector('#porchMode').addEventListener('change', (e) => set({ mode: e.target.value }));

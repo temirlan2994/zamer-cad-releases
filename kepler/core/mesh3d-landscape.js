@@ -309,13 +309,12 @@ function objectFaces(o, def, outline, path, hz, dryOutlines) {
   // --- Наружная лестница: ступени-блоки реальной высоты, борта по бокам.
   if (look === 'stairs') {
     const st = stairsInfo(o);
-    const fw = Math.max(100, st.flight);
     const at2 = (lx, ly) => ({ x: o.x + lx * Math.cos(rot) - ly * Math.sin(rot), y: o.y + lx * Math.sin(rot) + ly * Math.cos(rot) });
-    for (const { bottom, top, z: zTop } of stairTreads(o, st)) {
+    for (const { key, left, right, bottom, top, z: zTop } of stairTreads(o, st)) {
       const ly = (bottom + top) / 2;
       const t = bottom - top;
-      const c = at2(0, ly);
-      faces.push(...prism(rectPoly(c.x, c.y, fw, t, rot), 0, zTop, C[0], hz, { side: C[1] }));
+      const c = at2((left + right) / 2, ly);
+      faces.push(...prism(rectPoly(c.x, c.y, right - left, t, rot), 0, zTop, C[0], hz, { side: C[1] }).map((face) => ({ ...face, stairPart: key })));
       if (st.cheek > 0) {
         for (const sx of [-1, 1]) {
           const cc = at2(sx * (o.w / 2 - st.cheek / 2), ly);

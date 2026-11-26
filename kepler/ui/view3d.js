@@ -74,6 +74,8 @@ import {
   visibleObjectGizmoAxes,
 } from './object-gizmo3d.js';
 
+import { cancelStairShapeDrag, initStairShape3d, stairShapeDragging, updateStairShapeHandles } from './stair-shape.js';
+
 // dist — масштаб ортографического вида; eyeDist — физическое расстояние до
 // камеры. Их нельзя связывать: при сильном приближении камера иначе входит в
 // дом, и ближняя плоскость начинает срезать стены.
@@ -187,9 +189,9 @@ function faceColor(face) {
     return mixHex(face.color, '#66d39a', 0.58);
   }
   if (face.landscapeId && state.selection?.type === 'landscape' && state.selection.ids?.includes(face.landscapeId)) {
-    return mixHex(face.color, '#66d39a', 0.58);
+    return mixHex(face.color, '#66d39a', !state.selection.part || face.stairPart === state.selection.part ? 0.58 : 0.18);
   }
-  if (face.entranceId && state.selection?.type === 'entrance' && state.selection.id === face.openingId) return mixHex(face.color, '#66d39a', 0.58);
+  if (face.entranceId && state.selection?.type === 'entrance' && state.selection.id === face.openingId) return mixHex(face.color, '#66d39a', !state.selection.part || face.stairPart === state.selection.part ? 0.58 : 0.18);
   if (face.roofId && state.selection?.type === 'roof' && state.selection.id === face.roofId) return mixHex(face.color, SEL_FILL, 0.5);
   if (face.kind === 'mass') {
     const sel = state.selection?.type === 'mass' && state.selection.id === face.massId;
@@ -250,6 +252,7 @@ function render() {
   else if (gl && (['mass', 'roof', 'opening', 'item', 'landscape'].includes(state.selection?.type) || openingToolOn())) uploadOverlay(); // гизмо, призраки и точки — к камере
   if (gl) renderGl(canvas); else render2d(canvas);
   updateMassDims();
+  updateStairShapeHandles();
 }
 
 // Размеры верхних рёбер и площадь верха выбранной массы (вертикальные — нет).
@@ -731,6 +734,7 @@ function setHint(text) {
       ? 'Связанная крыша · Форма и удаление в свойствах · Для работы внутри скройте слой «Крыша»' : HINT_ROOF;
     else if (state.selection?.type === 'mass') text = touchUsed ? HINT_MASS_TOUCH : HINT_MASS;
     else if (state.selection?.type === 'opening') text = openingSelectionHint();
+    else if (state.selection?.type === 'entrance' || (state.selection?.type === 'landscape' && state.selection.part)) text = 'Выберите ступень · круглые ручки — края · Shift — без шага · Esc — отменить';
     else if (frontFacade && (!state.selection || selectedRef())) text = 'Выберите окно или отделку для правки · Тяните фон, чтобы сдвинуть вид';
     else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
     else if (state.selection?.type === 'item' || state.selection?.type === 'landscape') text = objectGizmoHint();
@@ -764,6 +768,7 @@ export function refresh3dSelection() {
 // выбор; true — Esc поглощён, иначе (выбора нет) вид можно закрыть.
 export function escape3d() {
   if (!active) return false;
+  if (stairShapeDragging()) { cancelStairShapeDrag(); return true; }
   if (numTarget) { hideNumber(); setHint(); return true; }
   if (massNumOpen()) { closeMassNum(); setHint(); return true; }
   if (roofNumOpen()) { closeRoofNum(); setHint(); return true; }
@@ -955,6 +960,7 @@ export function open3d() {
 }
 
 export function close3d() {
+  cancelStairShapeDrag();
   if (!active) return;
   if (choosingFacadeWall()) cancelTool();
   leaveFacade();
@@ -1233,7 +1239,8 @@ function clickSelect(hit) {
       if (hit.levelId && hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId, { planView: false });
       if (hit.type === 'mass') selectObject({ type: 'mass', id: hit.id });
       else if (hit.type === 'roof') selectObject({ type: 'roof', id: hit.id });
-      else if (hit.type === 'landscape') selectObject({ type: 'landscape', ids: [hit.id] });
+      else if (hit.type === 'landscape') selectObject({ type: 'landscape', ids: [hit.id], ...(hit.part ? { part: hit.part } : {}) });
+      else if (hit.type === 'entrance') selectObject({ type: 'entrance', id: hit.id, ...(hit.part ? { part: hit.part } : {}) });
       else if (hit.type === 'site') selectObject({ type: 'site', kind: 'entry', id: hit.id });
       else if (hit.type === 'wall') selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
       else if (hit.type === 'slab') selectObject({ type: 'slab', levelId: hit.levelId, id: hit.id });
@@ -1864,6 +1871,12 @@ export function bind3d() {
     },
     ground: () => (opts.site ? terrainHeightFn(state.project, opts.terrainScale) : null),
   });
+  initStairShape3d({
+    canvas: () => canvas, faces: () => faces, ray: rayAt, rayPlaneZ,
+    project: (p) => debug3dScreen(p),
+    rebuild: () => { rebuildScene(); uploadGeometry(); requestRender(); },
+    hint: (text) => setHint(text),
+  });
   initObjectGizmo3d({
     faces: () => faces,
     ray: rayAt,
@@ -2063,7 +2076,7 @@ export function debug3dPick(x, y) {
   if (hit.type === 'mass') return { type: 'mass', id: hit.id, face: hit.face };
   return hit.type === 'wall'
     ? { type: 'wall', key: hit.key, face: hit.face, levelId: hit.levelId }
-    : { type: hit.type, id: hit.id, levelId: hit.levelId };
+    : { type: hit.type, id: hit.id, levelId: hit.levelId, ...(hit.part ? { part: hit.part } : {}) };
 }
 
 // Для автотестов: точка в осях дома → экранные координаты (clientX/Y).
