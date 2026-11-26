@@ -23,7 +23,7 @@ export function renderEntranceProps(panel, openingId) {
   const width = entry?.steps?.width || entry?.landing?.width || Math.max(1200, opening.width + settings.landingExtraWidth);
   const steps = entry?.steps;
   panel.innerHTML = `<h2>Крыльцо и наружная лестница</h2>
-    <p class="subtitle">Площадка следует за входной дверью. Верх — на отметке пола, низ — по рельефу.</p>
+    <p class="subtitle">Площадка следует за входной дверью. По умолчанию верх — на отметке пола, низ — по рельефу. Грани каждой ступени можно изменить отдельно.</p>
     ${stairShapeFields()}
     <div class="prop-block">
       <label class="check-row"><input id="porchEnabled" type="checkbox" ${settings.enabled ? 'checked' : ''}><span>Показывать крыльцо</span></label>

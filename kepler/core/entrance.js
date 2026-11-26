@@ -3,7 +3,7 @@
 // записывает в project: дверь, рельеф или ±0.000 меняются — результат при
 // следующем вызове строится заново с теми же стабильными id.
 
-import { stairRect, stairRectPolygon } from './stair-shape.js';
+import { stairHeights, stairRect, stairRectPolygon } from './stair-shape.js';
 import { toWorld } from './building.js';
 import { isOpenRoom } from './catalog.js';
 import { resolvedZeroAboveGround } from './envelope.js';
@@ -426,18 +426,21 @@ export function entranceParts(entry) {
   if (!entry?.landing) return [];
   const yAxis = entry.outward;
   const xAxis = { x: -yAxis.y, y: yAxis.x };
-  const make = (key, title, origin, base, z) => {
+  const make = (key, title, origin, base, z, z0) => {
     const rect = stairRect(base, entry.shapeEdits?.[key]);
-    return { key, title, origin, xAxis, yAxis, base, rect, z,
+    const baseZ = { lower: z0, upper: z };
+    const height = stairHeights(baseZ, entry.shapeEdits?.[key]);
+    return { key, title, origin, xAxis, yAxis, base, rect, baseZ, z: height.upper, z0: height.lower,
       polygon: stairRectPolygon(rect, origin, xAxis, yAxis) };
   };
   const parts = [make('landing', 'Площадка', entry.threshold,
-    { left: -entry.landing.width / 2, right: entry.landing.width / 2, back: 0, front: entry.landing.depth }, entry.topZ)];
+    { left: -entry.landing.width / 2, right: entry.landing.width / 2, back: 0, front: entry.landing.depth }, entry.topZ,
+    Math.min(entry.topZ - entry.landing.thickness, entry.landing.minGroundZ))];
   const steps = entry.steps;
   if (steps?.enabled) for (let i = 0; i < steps.count; i += 1) {
     parts.push(make(`step-${i + 1}`, `Ступень ${i + 1} (от верха)`, steps.topCenter,
       { left: -steps.width / 2, right: steps.width / 2, back: i * steps.tread, front: (i + 1) * steps.tread },
-      steps.topZ - steps.riser * (i + 1)));
+      steps.topZ - steps.riser * (i + 1), Math.min(steps.groundZ - 100, steps.topZ - steps.rise - 100)));
   }
   return parts;
 }

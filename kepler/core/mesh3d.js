@@ -1612,8 +1612,7 @@ export function entranceFaces(project, options = {}) {
     }));
     for (const part of entranceParts(entrance)) {
       const landing = part.key === 'landing';
-      const base = landing ? Math.min(part.z - entrance.landing.thickness, entrance.landing.minGroundZ)
-        : Math.min(entrance.steps.groundZ - 100, entrance.steps.topZ - entrance.steps.rise - 100);
+      const base = part.z0;
       const component = { id: landing ? entrance.landing.id : `${entrance.steps.id}:${part.key.slice(5)}`, kind: landing ? 'landing' : 'steps' };
       faces.push(...tag(polySlabFaces(part.polygon, base, part.z, color, landing ? 'entrance' : 'stairs', { bottom: true })
         .map((face) => ({ ...face, stairPart: part.key, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), component));

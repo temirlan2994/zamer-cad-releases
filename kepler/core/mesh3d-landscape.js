@@ -85,8 +85,9 @@ function terrainPathFaces(poly, o, z, color, hz) {
 }
 
 // Призма: верх (треугольниками) и бока; низ — по земле.
-function prism(poly, z0, z1, color, hz, { side = color, top = true, bottomAt } = {}) {
+function prism(poly, z0, z1, color, hz, { side = color, top = true, bottom = false, bottomAt } = {}) {
   const faces = top ? flat(poly, z1, color, hz) : [];
+  if (bottom) faces.push(...flat(poly, z0, color, hz).map((f) => ({ ...f, pts: [...f.pts].reverse(), normal: v(0, 0, -1) })));
   const cx = poly.reduce((t, p) => t + p.x, 0) / poly.length;
   const cy = poly.reduce((t, p) => t + p.y, 0) / poly.length;
   for (let i = 0; i < poly.length; i += 1) {
@@ -310,11 +311,11 @@ function objectFaces(o, def, outline, path, hz, dryOutlines) {
   if (look === 'stairs') {
     const st = stairsInfo(o);
     const at2 = (lx, ly) => ({ x: o.x + lx * Math.cos(rot) - ly * Math.sin(rot), y: o.y + lx * Math.sin(rot) + ly * Math.cos(rot) });
-    for (const { key, left, right, bottom, top, z: zTop } of stairTreads(o, st)) {
+    for (const { key, left, right, bottom, top, z: zTop, z0: zBottom } of stairTreads(o, st)) {
       const ly = (bottom + top) / 2;
       const t = bottom - top;
       const c = at2((left + right) / 2, ly);
-      faces.push(...prism(rectPoly(c.x, c.y, right - left, t, rot), 0, zTop, C[0], hz, { side: C[1] }).map((face) => ({ ...face, stairPart: key })));
+      faces.push(...prism(rectPoly(c.x, c.y, right - left, t, rot), zBottom, zTop, C[0], hz, { side: C[1], bottom: true }).map((face) => ({ ...face, stairPart: key })));
       if (st.cheek > 0) {
         for (const sx of [-1, 1]) {
           const cc = at2(sx * (o.w / 2 - st.cheek / 2), ly);
