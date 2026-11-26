@@ -150,9 +150,9 @@ body[data-tool-context="drawing"] .ls-section { left: 0; }
 .v3-facade-panel { padding: 6px; gap: 2px; min-width: 208px; }
 .editing-facade :is(.v3-projection, .v3-views, [data-facade-front]) { display: none !important; }
 .view3d-bar #v3ExitFacade { white-space: nowrap; }
-.view3d-bar [data-facade-front] { font-weight: 650; }
-.view3d-bar .v3-facade-panel button { display: flex; width: 100%; justify-content: flex-start; align-items: center; gap: 9px; height: 36px; padding: 0 9px; background: transparent; border: 0; text-align: left; }
-.view3d-bar .v3-facade-panel button:hover, .view3d-bar .v3-facade-panel button:focus-visible { background: var(--surface-2); }
+.v3-facade-panel [data-facade-front] { font-weight: 650; }
+.v3-facade-panel button { display: flex; width: 100%; justify-content: flex-start; align-items: center; gap: 9px; height: 36px; padding: 0 9px; border-radius: 8px; background: transparent; border: 0; text-align: left; }
+.v3-facade-panel button:hover, .v3-facade-panel button:focus-visible { background: var(--surface-2); }
 .v3-facade-panel .swatch { display: block; flex: 0 0 21px; height: 17px; border-radius: 3px; background: var(--finish); border: 1px solid var(--border); }
 .v3-facade-panel [data-facade-kind="slats"] .swatch { background: repeating-linear-gradient(90deg, var(--finish) 0 3px, #554337 3px 4px); }
 .v3-facade-panel [data-facade-kind="stone"] .swatch { background: repeating-linear-gradient(0deg, var(--finish) 0 6px, #7a776d 6px 7px); }
@@ -160,9 +160,26 @@ body[data-tool-context="drawing"] .ls-section { left: 0; }
 .v3-facade-panel [data-facade-kind="band"] .swatch { height: 7px; }
 .v3-facade-panel [data-facade-kind="light"] .swatch { height: 4px; }
 @media (max-width: 640px) {
-  .view3d-bar .v3-facade { position: static; }
-  .view3d-bar .v3-facade-panel { left: 50%; max-width: calc(100% - 12px); top: calc(100% + 4px); }
-  .view3d-bar .v3-facade-panel button { height: 42px; }
+  .v3-facade-panel button { min-height: 42px; }
+}
+
+#modelTools { display: none; }
+body.v3-open #modelTools { display: flex; }
+body.v3-open .toolstrip:has(#v3Facade[open]) { z-index: 60; }
+#v3Facade > summary { width: 36px; height: 36px; min-height: 36px; padding: 0; list-style: none; }
+#v3Facade > summary::-webkit-details-marker { display: none; }
+#v3Facade > summary::after { content: none; }
+#v3Facade[open] > summary, #v3Facade.placing > summary { color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+#v3Facade .v3-facade-panel { left: calc(100% + 10px); top: 0; transform: none; width: 236px; max-width: calc(100vw - 70px); }
+body:has(#view3d.editing-facade) #v3Facade [data-facade-front] { display: none; }
+body:has(#view3d.editing-interior) :is(#modelTools, #v3Facade), body:is(.v3-walking, .v3-walk-choosing) :is(#modelTools, #v3Facade) { display: none; }
+@media (pointer: coarse) {
+  #v3Facade > summary { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+}
+@media (max-width: 640px) {
+  #v3Facade { position: absolute; left: 8px; top: 72px; z-index: 4; }
+  #v3Facade > summary { width: 44px; height: 44px; min-height: 44px; border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--surface); box-shadow: var(--shadow); }
+  #v3Facade .v3-facade-panel { left: 0; top: calc(100% + 8px); max-height: min(60dvh, 450px); }
 }
 
 .v3-facade-group { border-top: 1px solid var(--border); margin-top: 4px; padding: 7px 9px 2px; font-size: 12px; color: var(--muted); }

@@ -767,7 +767,7 @@ function setHint(text) {
     else if (selectedObject()) text = HINT_OBJ;
     else text = HINT_IDLE;
   }
-  const menu = el('view3d').querySelector('.v3-facade');
+  const menu = el('v3Facade');
   const frontAction = menu.querySelector('[data-facade-front]');
   frontAction.textContent = choosingFacadeWall() ? 'Отменить выбор стены' : 'Редактировать фасад';
   menu.classList.toggle('placing', facadeToolOn() || composingFacade());
@@ -941,7 +941,7 @@ function startWalkAt(event) {
     setHint('В этом месте недостаточно пространства для персонажа. Выберите другую точку · Esc — отменить'); return;
   }
   walkPlacement = null; el('v3WalkStart').hidden = true;
-  for (const details of el('view3d').querySelectorAll('details')) details.open = false;
+  for (const details of [el('v3Facade'), ...el('view3d').querySelectorAll('details')]) details.open = false;
   walk.start(world, start);
   el('canvas3d').style.cursor = '';
   syncLayerControls(); syncCameraControls(); uploadGeometry(); requestRender(); setHint();
@@ -965,7 +965,7 @@ function enterWalk() {
   walkPrevious = { cam: { ...cam, target: { ...cam.target } }, opts, interior, frontFacade };
   opts = { ...opts, site: true };
   rebuildScene();
-  for (const details of el('view3d').querySelectorAll('details')) details.open = false;
+  for (const details of [el('v3Facade'), ...el('view3d').querySelectorAll('details')]) details.open = false;
   walk.choose(); updateWalkPlacementScene();
   el('canvas3d').style.cursor = 'crosshair';
   syncLayerControls(); syncCameraControls(); uploadGeometry(); requestRender(); setHint();
@@ -1079,7 +1079,7 @@ export function close3d() {
   if (facadeToolOn() || composingFacade() || state.tool?.kind === 'place-furniture') cancelTool();
   facadePreview = null;
   composer?.reset();
-  el('view3d').querySelector('.v3-facade').open = false;
+  el('v3Facade').open = false;
   hideNumber();
   active = false;
   hover = null;
@@ -1838,8 +1838,19 @@ export function bind3d() {
   el('v3Walk').addEventListener('touchend', (event) => {
     event.preventDefault(); enterWalk();
   }, { passive: false });
-  const facade = el('view3d').querySelector('.v3-facade');
+  const facade = el('v3Facade');
   const panel = facade.querySelector('.v3-facade-panel');
+  const positionFacadeMenu = () => {
+    if (!facade.open) return;
+    const anchor = facade.getBoundingClientRect(), menu = panel.getBoundingClientRect();
+    const mobile = window.innerWidth <= 640;
+    const left = Math.max(8, Math.min(mobile ? anchor.left : anchor.right+10, window.innerWidth-menu.width-8));
+    const top = Math.max(8, Math.min(mobile ? anchor.bottom+8 : anchor.top, window.innerHeight-menu.height-8));
+    panel.style.left = `${left-anchor.left}px`;
+    panel.style.top = `${top-anchor.top}px`;
+  };
+  facade.addEventListener('toggle', () => { if (facade.open) requestAnimationFrame(positionFacadeMenu); });
+  window.addEventListener('resize', positionFacadeMenu);
   composer = facadeComposer({ pick: compositionSurface, ray: rayAt, hint: setHint,
     repaint: () => { uploadOverlay(); requestRender(); },
     switchFloor: (id) => switchLevel(id, { planView: false }) });
@@ -1899,6 +1910,8 @@ export function bind3d() {
   const arrangeCameraControls = () => {
     if (phone.matches) views.querySelector('.v3-views-panel').prepend(projection);
     else bar.prepend(projection);
+    facade.open = false;
+    (phone.matches ? el('view3d') : el('modelTools')).append(facade);
   };
   arrangeCameraControls();
   phone.addEventListener('change', arrangeCameraControls);
