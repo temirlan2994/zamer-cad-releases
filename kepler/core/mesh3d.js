@@ -1250,11 +1250,14 @@ export const ROOF_T = 250;
 export const SLAB_T = 300;
 const SLAB_OUTSET = 20; // торец перекрытия чуть выступает из стены (без мерцания)
 
-// Пятно этажа: прямоугольники комнат (с частями Г/outline) с наружной стеной.
+// Пятно плиты: закрытые комнаты со стеной и балконы до их наружного края.
+// Балкон объединяется с перекрытием, чтобы у примыкания не было второго торца.
 function levelFootprint(lp, offset) {
-  return lp.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r))
-    .flatMap(roomRects)
-    .map((p) => ({ x0: p.x - offset, y0: p.y - offset, x1: p.x + p.w + offset, y1: p.y + p.h + offset }));
+  return lp.rooms.filter((r) => r.type === 'balcony' || (!r.parentId && !isOpenRoom(r) && !isShaft(r)))
+    .flatMap((room) => {
+      const margin = isOpenRoom(room) ? 0 : offset;
+      return roomRects(room).map((p) => ({ x0: p.x - margin, y0: p.y - margin, x1: p.x + p.w + margin, y1: p.y + p.h + margin }));
+    });
 }
 
 // Проём в перекрытии: лестничные помещения и шахты обоих этажей и проёмы в
