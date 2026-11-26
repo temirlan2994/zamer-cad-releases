@@ -1,4 +1,4 @@
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, resolvePolarSnap, selectionFilterForProject, shouldDelayTapZoom, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=234";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, resolvePolarSnap, selectionFilterForProject, shouldDelayTapZoom, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=235";
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildBlockPreview } from "./core/block-preview.js";
@@ -33,7 +33,7 @@ import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatPr
   fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
 import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planAnnotationSnapGeometry, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, totalPlanAreaM2, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
 import { planRegionAtPoint } from "./core/plan-region.js";
-import { nativeSpenClientPoint, normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed, spenModeActive } from "./core/spen.js";
+import { isSpenPointer, nativeSpenClientPoint, normalizeSpenSettings, shouldRejectSpenPalmTouch, spenBarrelButtonPressed, spenInputScreen, spenModeActive } from "./core/spen.js?v=2";
 import { ANNOTATION_LINE_SPACING, ANNOTATION_SCALE_PRESETS, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./core/annotation-text.js";
 
 
@@ -672,6 +672,7 @@ const statusChip = document.getElementById("statusChip");
 const dimensionAssist = document.getElementById("dimensionAssist");
 const cornerMetrics = document.getElementById("cornerMetrics");
 const linePointAssist = document.getElementById("linePointAssist");
+const lineLengthEntryToggle = document.getElementById("lineLengthEntryToggle");
 const polylineArcMode = document.getElementById("polylineArcMode");
 const lengthMetricName = document.getElementById("lengthMetricName");
 const topLengthName = document.getElementById("topLengthName");
@@ -890,8 +891,10 @@ const spenRuntime = {
   active: false,
   hovering: false,
   nativeHover: false,
+  nativeHoverSeen: typeof window.ZamerAndroid?.spenState === "function",
   contactId: null,
   point: null,
+  worldPoint: null,
   lastHover: -Infinity,
   barrelDown: false,
   hoverExitAt: -Infinity,
@@ -919,6 +922,7 @@ const state = {
   annotationScale: 1,
   measurementSettings: normalizeMeasurementSettings(),
   tapZoomEnabled: true,
+  lineLengthEntry: apkReadJson("zamer.line.length-entry.v1", false) === true,
   selectTool: "select",
   selectionFilter: "all",
 
@@ -1000,11 +1004,23 @@ function spenModeEnabled() {
 }
 
 function spenCursorActive() {
-  return spenModeEnabled() && (spenRuntime.contactId !== null || (spenSettings.hoverCursor && spenRuntime.hovering)) && Boolean(spenRuntime.point);
+  return Boolean(spenInputScreen(spenSettings, spenRuntime, state.view));
+}
+
+function isPenPointerEvent(event) {
+  return isSpenPointer(spenSettings, spenRuntime, event.pointerType);
+}
+
+function updateSpenPoint(point) {
+  spenRuntime.point = point;
+  spenRuntime.worldPoint = screenToWorld(point);
 }
 
 function inputCursorScreen() {
-  return spenCursorActive() ? spenRuntime.point : centerScreen();
+  const pen = spenInputScreen(spenSettings, spenRuntime, state.view);
+  if (pen) return pen;
+  if (spenModeEnabled() && isLinePoint(state.drawing?.end)) return worldToScreen(state.drawing.end);
+  return centerScreen();
 }
 
 function saveSpenSettings() {
@@ -1013,6 +1029,7 @@ function saveSpenSettings() {
 
 function syncSpenMode({ announce = false } = {}) {
   const active = spenModeEnabled();
+  window.ZamerAndroid?.setSpenButtonHandling?.(active && spenSettings.sideButton);
   shell.classList.toggle("spen-mode", active);
   shell.classList.toggle("spen-compact-ui", active && spenSettings.compactUi);
   shell.dataset.inputMode = spenSettings.mode;
@@ -1031,6 +1048,7 @@ function syncSpenMode({ announce = false } = {}) {
     spenRuntime.hovering = false;
     spenRuntime.nativeHover = false;
     spenRuntime.point = null;
+    spenRuntime.worldPoint = null;
     spenRuntime.barrelDown = false;
   }
   if (announce && projectHome.hidden) {
@@ -1057,11 +1075,12 @@ function activateSpenMode() {
 }
 
 function activateSpenFromPointer(event) {
-  if (event.pointerType !== "pen") return false;
+  if (!isPenPointerEvent(event)) return false;
   window.clearTimeout(spenRuntime.hoverExitTimer);
   activateSpenMode();
-  spenRuntime.hovering = true;
-  spenRuntime.point = getPointer(event);
+  const contact = spenRuntime.contactId !== null || event.type === "pointerdown" || event.type === "pointerup" || Boolean(event.buttons & 1);
+  spenRuntime.hovering = spenSettings.hoverCursor || contact;
+  if (spenSettings.hoverCursor || contact) updateSpenPoint(getPointer(event));
   spenRuntime.lastHover = performance.now();
   return true;
 }
@@ -3170,6 +3189,9 @@ function restoreProject(project) {
     tapZoom = null;
     state.pointer = null;
     state.lastAnnotationTap = null;
+    spenRuntime.point = spenRuntime.worldPoint = null;
+    spenRuntime.hovering = spenRuntime.nativeHover = false;
+    spenRuntime.contactId = null;
     state.pinch = null;
     state.inlineEdit = null;
     state.numericEdit = null;
@@ -3496,7 +3518,7 @@ function rawCursorWorld() {
 }
 
 function syncViewportCoordinates(rect) {
-  const { x, y } = screenToWorld(spenCursorActive() ? spenRuntime.point : { x: rect.width / 2, y: rect.height / 2 });
+  const { x, y } = screenToWorld(inputCursorScreen());
   const settings = state.measurementSettings;
   const xLabel = `X ${formatProjectLength(x, settings, { suffix: false })}`;
   const yLabel = `Y ${formatProjectLength(-y, settings, { suffix: false })}`;
@@ -3814,7 +3836,7 @@ function sameCursorPreviewContext(context) {
 function displayedSnapForPress(event, screen) {
   const preview = state.lastCursorPreview;
   if (!preview || !sameCursorPreviewContext(preview.context)) return null;
-  const pen = event.pointerType === "pen" && spenModeEnabled();
+  const pen = isPenPointerEvent(event) && spenModeEnabled();
   if (pen !== preview.pen) return null;
   if (pen && ((!spenCursorActive() && performance.now() - spenRuntime.hoverExitAt > 300) || pointDistance(screen, preview.screen) > 24)) return null;
   return preview;
@@ -3833,6 +3855,11 @@ function cursorSnapResolved() {
     state.snapTracking.active = confirmed.tracking;
     state.polarSnapGuide = confirmed.polar;
     return confirmed.resolved;
+  }
+  if (spenCursorActive() && !spenRuntime.hovering && spenRuntime.contactId === null && isLinePoint(spenRuntime.worldPoint)) {
+    state.snapTracking.active = null;
+    state.polarSnapGuide = null;
+    return { point: spenRuntime.worldPoint, snap: null };
   }
   const raw = rawCursorWorld();
   if (surveyPointPicker) return resolveDimensionPointSnap(raw, { start: null });
@@ -4876,13 +4903,16 @@ function drawGrid(rect, c) {
 }
 
 function drawCanvasCenterCursor(rect) {
+  canvas.dataset.cursorSource = spenModeEnabled() ? spenCursorActive() ? "pen" : "pen-wait" : "center";
+  if (spenModeEnabled() && !spenCursorActive()) return;
   const navigating = canvas.matches(":focus-visible");
   const visible =
     navigating || spenCursorActive() || state.tool !== "select" || lineEditPlacesPoint() ||
     Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.selectedFigureGrip || state.dimensionAttach || surveyPointPicker);
   if (!visible) return;
   const pen = spenCursorActive();
-  const center = pen ? spenRuntime.point : { x: rect.width / 2, y: rect.height / 2 };
+  if (pen && !spenSettings.hoverCursor && spenRuntime.contactId === null) return;
+  const center = pen ? inputCursorScreen() : { x: rect.width / 2, y: rect.height / 2 };
   const arm = pen ? 14 : 36;
   const red = state.theme === "dark" ? "#ff9a9a" : "#a3282d";
   ctx.save();
@@ -6660,9 +6690,8 @@ function drawSegmentMetricLabels(start, end, angleAnchor, c, viewport) {
   const to = worldToScreen(end);
   const middle = midpoint(from, to);
   const lengthAnchor = drawDraftLengthDimension(from, to, c, viewport) ?? { x: middle.x, y: middle.y - 32 };
-  const angleLabel = angleAnchor ?? { x: to.x, y: to.y + 32 };
-  updateDraftMetricLabels(lengthAnchor, angleLabel, distanceWorld(start, end), activeAngleInfo(start, end), viewport,
-    { canvasColors: state.drawing ? undefined : c });
+  updateDraftMetricLabels(lengthAnchor, angleAnchor, distanceWorld(start, end), activeAngleInfo(start, end), viewport,
+    { canvasColors: state.drawing ? undefined : c, passiveAngleColors: c });
 }
 
 function drawEditableSegment(start, end, c, options = {}) {
@@ -6841,7 +6870,7 @@ function updateFigureMetricInput(input) {
 function figureMetricPreview(key) {
   const edit = state.numericEdit?.figureMetric;
   if (!edit || edit.key !== key) return null;
-  return isLinePoint(edit.point) ? edit.point : edit.lockedBySpen ? edit.end : null;
+  return isLinePoint(edit.point) ? edit.point : edit.lockedDirection ? edit.end : null;
 }
 
 function confirmFigureMetricInput(input, edit) {
@@ -6914,7 +6943,7 @@ function draftMetricPosition(point, { halfWidth, halfHeight }, viewport, placed 
 }
 
 function updateDraftMetricLabels(lengthAnchor, angleAnchor, length, angleInfo, viewport,
-  { names, symbols = ["↔", "∠"], paired = false, canvasColors } = {}) {
+  { names, symbols = ["↔", "∠"], paired = false, canvasColors, passiveAngleColors } = {}) {
   draftMetricLabels.hidden = false;
   draftLengthInput.setAttribute("aria-label", names?.[0] ?? "Длина линии на чертеже");
   draftAngleInput.setAttribute("aria-label", names?.[1] ?? "Угол линии на чертеже");
@@ -6948,6 +6977,12 @@ function updateDraftMetricLabels(lengthAnchor, angleAnchor, length, angleInfo, v
   let placed = null;
   for (const [input, anchor] of entries) {
     const field = input.parentElement;
+    if (input === draftAngleInput && passiveAngleColors) {
+      // A drawing aid must not become a hit target for the second point.
+      field.hidden = true;
+      if (anchor) drawDraftAngleReadout(anchor, angleInfo, passiveAngleColors, viewport);
+      continue;
+    }
     const pinned = input === activeInput || pressedMetricFields.has(field);
     const lastX = field.style.getPropertyValue("--metric-x");
     const previous = lastX && !field.hidden ? { x: parseFloat(lastX), y: parseFloat(field.style.getPropertyValue("--metric-y")) } : null;
@@ -6962,6 +6997,24 @@ function updateDraftMetricLabels(lengthAnchor, angleAnchor, length, angleInfo, v
     placed = { x, y, ...size };
     if (canvasColors && document.activeElement !== input) drawCanvasMetricReadout(field, placed, canvasColors);
   }
+}
+
+function drawDraftAngleReadout({ x, y }, angleInfo, c, viewport) {
+  const text = formatProjectAngle(angleInfo.degrees, state.measurementSettings, { wrap: angleInfo.cadAngle });
+  ctx.save();
+  ctx.font = "700 12px Inter, Arial, sans-serif";
+  const halfWidth = ctx.measureText(text).width / 2;
+  if (x - halfWidth >= 4 && x + halfWidth <= viewport.width - 4 && y >= 12 && y <= viewport.height - 12) {
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = c.surface;
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = c.accent;
+    ctx.fillText(text, x, y);
+  }
+  ctx.restore();
 }
 
 function drawCanvasMetricReadout(field, { x, y, halfWidth }, c) {
@@ -7351,43 +7404,42 @@ function drawAngleArc(origin, target, angleInfo, c) {
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
   const screenLength = Math.hypot(dx, dy);
-  if (screenLength < (state.tool === "line" ? 14 : 34)) return null;
+  if (screenLength < 48) return null;
 
-  const ux = dx / screenLength;
-  const uy = dy / screenLength;
-  const followsCursor = screenLength > auxiliaryPx(150);
-  const centerOffset = followsCursor ? Math.min(screenLength * 0.42, auxiliaryPx(118)) : 0;
-  const arcOrigin = followsCursor
-    ? { x: target.x - ux * centerOffset, y: target.y - uy * centerOffset }
-    : origin;
-  const radius = Math.min(auxiliaryPx(54), Math.max(auxiliaryPx(32), screenLength * 0.32));
+  // Keep the protractor at the first point. Following the endpoint puts its
+  // readout under the pen, precisely where the next contact needs to land.
+  const arcOrigin = origin;
+  const radius = Math.min(52, Math.max(28, screenLength * 0.3));
   const startRad = angleInfo.referenceRad;
-  const endRad = angleInfo.referenceRad + angleInfo.deltaRad;
+  const sweep = angleInfo.cadAngle ? -angleInfo.degrees * Math.PI / 180 : angleInfo.deltaRad;
+  const endRad = startRad + sweep;
 
   ctx.save();
   ctx.strokeStyle = c.accent;
   ctx.fillStyle = c.accent;
   ctx.lineCap = "round";
   ctx.globalAlpha = 0.28;
-  ctx.lineWidth = auxiliaryPx(0.65);
-  ctx.setLineDash([1, 6]);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 4]);
   linePath(
     arcOrigin.x,
     arcOrigin.y,
-    arcOrigin.x + Math.cos(startRad) * (radius + auxiliaryPx(14)),
-    arcOrigin.y + Math.sin(startRad) * (radius + auxiliaryPx(14)),
+    arcOrigin.x + Math.cos(startRad) * (radius + 8),
+    arcOrigin.y + Math.sin(startRad) * (radius + 8),
   );
-  ctx.globalAlpha = 0.34;
-  ctx.lineWidth = auxiliaryPx(0.65);
-  ctx.setLineDash([1, 5]);
+  ctx.globalAlpha = 0.6;
+  ctx.setLineDash([]);
   ctx.beginPath();
-  ctx.arc(arcOrigin.x, arcOrigin.y, radius, startRad, endRad, angleInfo.deltaRad < 0);
+  ctx.arc(arcOrigin.x, arcOrigin.y, radius, startRad, endRad, sweep < 0);
   ctx.stroke();
   ctx.setLineDash([]);
 
   ctx.restore();
-  const labelRad = startRad + angleInfo.deltaRad / 2;
-  return { x: arcOrigin.x + Math.cos(labelRad) * (radius + 15), y: arcOrigin.y + Math.sin(labelRad) * (radius + 15) };
+  const labelRad = startRad + sweep / 2;
+  const labelRadius = radius * 0.56;
+  const nearAxis = Math.abs(Math.sin(sweep / 2)) < 0.12;
+  return { x: arcOrigin.x + Math.cos(labelRad) * labelRadius,
+    y: arcOrigin.y + Math.sin(labelRad) * labelRadius - (nearAxis ? 16 : 0) };
 }
 
 function projectLength(mm) {
@@ -7587,7 +7639,7 @@ function lineMetricContext() {
 function lineMetricPreview(key) {
   const edit = state.numericEdit?.lineMetric;
   if (!edit || edit.key !== key) return null;
-  return isLinePoint(edit.point) ? edit.point : edit.lockedBySpen ? edit.end : null;
+  return isLinePoint(edit.point) ? edit.point : edit.lockedDirection ? edit.end : null;
 }
 
 function clearLineMetricEdit() {
@@ -7625,6 +7677,9 @@ function updateLineMetricInput(input) {
   edit[kind] = kind === "length" && !(value > 0) ? null : value;
   input.removeAttribute("aria-invalid");
   updateLineMetricPreview(edit);
+  if (edit.lockedDirection && isLinePoint(edit.point) && distanceWorld(edit.start, edit.point) > linePointEpsilon) {
+    statusChip.textContent = "Направление зафиксировано · введите размер и нажмите ✓";
+  }
   draw();
 }
 
@@ -8523,6 +8578,7 @@ function canUsePrePointTracking() {
 }
 
 function canCaptureSnapTrackingNow() {
+  if (spenModeEnabled() && !spenRuntime.hovering && spenRuntime.contactId === null) return false;
   if (state.pinch) return false;
   if (!state.pointer) return true;
   return state.pointer.mode === "pan" || state.pointer.mode === "move-command" || state.pointer.mode === "endpoint-place";
@@ -8760,7 +8816,10 @@ function nearbyExtensionTrackingGuides(point, threshold) {
 function nearestCompoundTrackingSnap(point, start) {
   const threshold = objectSnapThreshold();
   const locked = state.snapTracking.compoundLock;
-  if (locked && distanceWorld(point, locked) * state.view.scale <= 32) {
+  const lockedPolar = locked?.guides.find(guide => guide.isPolar);
+  const heldDirection = lockedPolar && resolvePolarSnap(point, start, state.polarStep, lockedPolar.angle, state.view.scale);
+  const holdsPolar = !lockedPolar || heldDirection.snapped && samePolarDirection(heldDirection.angle, lockedPolar.angle);
+  if (locked && holdsPolar && distanceWorld(point, locked) * state.view.scale <= (lockedPolar ? 18 : 32)) {
     const visibleGuides = locked.guides.filter(guide => !guide.isPolar);
     state.snapTracking.active = visibleGuides.length ? { trackingType: "intersection", guides: visibleGuides } : null;
     const polarGuide = locked.guides.find(guide => guide.isPolar);
@@ -8771,7 +8830,9 @@ function nearestCompoundTrackingSnap(point, start) {
     return locked;
   }
   state.snapTracking.compoundLock = null;
-  const polarGuides = start && snapEnabled("polar") ? polarRayGuides(start, state.polarStep) : [];
+  const direction = start && snapEnabled("polar") && snapPolar(point, start);
+  const polarGuides = direction?.snapped ? polarRayGuides(start, state.polarStep)
+    .filter(guide => samePolarDirection(direction.angle, guide.angle)) : [];
   const trackingGuides = canSnapToTrackingGuides() ? snapTrackingGuides() : [];
   const extensionGuides = nearbyExtensionTrackingGuides(point, threshold);
   const pairs = [];
@@ -8782,7 +8843,7 @@ function nearestCompoundTrackingSnap(point, start) {
     for (const extension of extensionGuides) pairs.push([tracking, extension]);
   }
 
-  const crossing = nearestCompoundGuideIntersection(point, pairs, threshold);
+  const crossing = nearestCompoundGuideIntersection(point, pairs, threshold, 12 / state.view.scale);
   if (!crossing) return null;
   const snap = {
     ...crossing,
@@ -8800,6 +8861,10 @@ function nearestCompoundTrackingSnap(point, start) {
     state.polarSnapGuide = { point: start, angle: selectedPolar.angle, degrees };
   }
   return snap;
+}
+
+function samePolarDirection(first, second) {
+  return Math.abs(Math.atan2(Math.sin(first - second), Math.cos(first - second))) < 1e-6;
 }
 
 function drawSnapTracking(c) {
@@ -8864,8 +8929,9 @@ function drawCursorSnap(c) {
   const chooseAxis = state.dimensionTool === "linear" && dimensionStage === "offset";
   const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.selectedFigureGrip && !state.dimensionAttach &&
     !surveyPointPicker && !lineEditPlacesPoint() && !state.blockPlacement && !state.quickMeasure;
-  const resolved = selectOnly || state.leaderInput ? null : cursorSnapResolved();
-  if (spenCursorActive() || !spenModeEnabled()) {
+  const waitingForPen = spenModeEnabled() && !spenCursorActive();
+  const resolved = waitingForPen || selectOnly || state.leaderInput ? null : cursorSnapResolved();
+  if ((spenCursorActive() && (spenRuntime.hovering || spenRuntime.contactId !== null)) || !spenModeEnabled()) {
     state.lastCursorPreview = resolved?.snap && !state.snapsMuted ? {
       resolved: { ...resolved, point: { ...resolved.point }, snap: { ...resolved.snap } },
       screen: { ...inputCursorScreen() }, pen: spenCursorActive(), context: cursorPreviewContext(),
@@ -9478,6 +9544,10 @@ function viewportIsSelecting() {
 }
 
 function placeAtViewportCenter() {
+  if (spenModeEnabled() && !spenCursorActive()) {
+    statusChip.textContent = "Укажите точку пером на чертеже";
+    return;
+  }
   if (surveyPointPicker) {
     commitSurveyPoint();
   } else if (state.lineEdit) {
@@ -10031,7 +10101,7 @@ function blockCorners(entity) {
 function snapPolar(point, start, { remember = false } = {}) {
   const lock = state.polarSnapLock;
   const lockedAngle = lock?.step === state.polarStep && lock.x === start.x && lock.y === start.y ? lock.angle : null;
-  const result = resolvePolarSnap(point, start, state.polarStep, lockedAngle);
+  const result = resolvePolarSnap(point, start, state.polarStep, lockedAngle, state.view.scale);
   if (remember) state.polarSnapLock = result.snapped ? { x: start.x, y: start.y, step: state.polarStep, angle: result.angle } : null;
   return result;
 }
@@ -10696,9 +10766,11 @@ function syncLineControls() {
   const input = numericConfirmInput();
   const choosingDirection = !surveyPointPicker && draft && state.numericEdit?.lineMetric?.lockedAngle === undefined &&
     (lineMetricKinds.get(input) === "length" || draft.metricConstraint?.length !== undefined);
+  lineLengthEntryToggle.hidden = !["line", "polyline"].includes(state.tool) || Boolean(surveyPointPicker || input || drawing?.arcPhase);
+  lineLengthEntryToggle.setAttribute("aria-pressed", String(state.lineLengthEntry));
   polylineArcMode.hidden = !drawing || Boolean(surveyPointPicker) || Boolean(input);
   polylineArcMode.setAttribute("aria-pressed", String(Boolean(drawing?.arcPhase)));
-  linePointAssist.hidden = !choosingDirection && polylineArcMode.hidden;
+  linePointAssist.hidden = !choosingDirection && polylineArcMode.hidden && lineLengthEntryToggle.hidden;
   cornerMetrics.hidden = inlineEditors.hidden && drawMetrics.hidden && linePointAssist.hidden;
   lineDirection.hidden = !choosingDirection;
   if (choosingDirection && lineDirection.value !== (draft.metricDirection || "")) lineDirection.value = draft.metricDirection || "";
@@ -11802,6 +11874,10 @@ function selectLineEndpoint(endpoint) {
 
 function commitCursorPoint(screen = inputCursorScreen(), exactPoint = null) {
   if (state.leaderInput) return;
+  if (spenModeEnabled() && !spenCursorActive() && !exactPoint) {
+    statusChip.textContent = "Укажите точку пером на чертеже";
+    return;
+  }
   if (state.quickMeasure) {
     commitQuickMeasurePoint();
     return;
@@ -11941,7 +12017,13 @@ function commitCursorPoint(screen = inputCursorScreen(), exactPoint = null) {
     return;
   }
   if (state.tool === "line" || state.tool === "polyline") {
-    commitLinePoint(state.drawing?.lockedEnd ? state.drawing.end : world);
+    const point = state.drawing?.lockedEnd ? state.drawing.end : world;
+    if (state.lineLengthEntry && state.drawing && !state.drawing.arcPhase && !exactPoint &&
+        !isLayerLocked(state.drawing.layer) && isValidLine({ x1: state.drawing.start.x, y1: state.drawing.start.y, x2: point.x, y2: point.y })) {
+      beginDraftLengthInput(point);
+      return;
+    }
+    commitLinePoint(point);
     return;
   }
   if (state.tool === "circle" && state.circleMode !== "center") {
@@ -12185,15 +12267,19 @@ function selectedEndPoint() {
 }
 
 function beginSpenLengthInput() {
+  return beginDraftLengthInput();
+}
+
+function beginDraftLengthInput(exactEnd = null) {
   const draft = state.drawing;
   if (!draft || state.leaderInput || surveyPointPicker || state.quickMeasure) return false;
   const lineDraft = ["line", "polyline"].includes(state.tool) && !draft.arcPhase;
-  const end = lineMetricPreview(draft.start) ?? figureMetricPreview(draft) ?? (draft.lockedEnd ? draft.end : cursorWorld());
+  const end = exactEnd ?? lineMetricPreview(draft.start) ?? figureMetricPreview(draft) ?? (draft.lockedEnd ? draft.end : cursorWorld());
   const figure = draftFigureReference(end);
   if (!lineDraft && !figure) return false;
   const input = lineDraft || figure.type === "circle" ? lengthInput : topLengthInput;
   const current = state.numericEdit?.lineMetric || state.numericEdit?.figureMetric;
-  if (current?.lockedBySpen && current.key === (lineDraft ? draft.start : draft)) {
+  if (current?.lockedDirection && current.key === (lineDraft ? draft.start : draft)) {
     input.focus({ preventScroll: true });
     window.ZamerAndroid?.showKeyboard?.();
     return true;
@@ -12201,7 +12287,7 @@ function beginSpenLengthInput() {
   const arc = figure?.arcEnd && draftArcFromBend(draft.start, figure.arcEnd, end)?.arc;
   const length = lineDraft ? distanceWorld(draft.start, end) : figureMetrics(figure, arc).values[0];
   if (!isLinePoint(end) || !(length > linePointEpsilon)) {
-    statusChip.textContent = "Сначала укажите направление пером";
+    statusChip.textContent = "Сначала укажите направление";
     return true;
   }
   // Capture the resolved point before focus/IME changes the viewport or the
@@ -12213,7 +12299,7 @@ function beginSpenLengthInput() {
   if (!edit) return true;
   edit.end = { ...end };
   edit.point = { ...end };
-  edit.lockedBySpen = true;
+  edit.lockedDirection = true;
   if (lineDraft) {
     edit.length = length;
     edit.lockedAngle = -radToDeg(angleBetweenPoints(draft.start, end));
@@ -12242,9 +12328,9 @@ function updateSpenBarrel(event, { allowContact = false } = {}) {
 
 function clearSpenHover({ preservePreview = false } = {}) {
   window.clearTimeout(spenRuntime.hoverExitTimer);
+  if (spenCursorActive()) spenRuntime.worldPoint = { ...cursorWorld() };
   spenRuntime.hovering = false;
   spenRuntime.nativeHover = false;
-  spenRuntime.point = null;
   spenRuntime.barrelDown = false;
   if (preservePreview) {
     // HOVER_EXIT also precedes tip contact on Android. Keep the displayed
@@ -12266,7 +12352,7 @@ function clearSpenHover({ preservePreview = false } = {}) {
 function updateSpenHover(event) {
   // The native stream owns hover on Android. Ignore WebView's duplicate DOM
   // events, which can be reported as either a mouse or pen depending on version.
-  if (spenRuntime.nativeHover || !activateSpenFromPointer(event)) return;
+  if (spenRuntime.nativeHover || (spenRuntime.nativeHoverSeen && spenRuntime.contactId === null) || !activateSpenFromPointer(event)) return;
   updateSpenBarrel(event);
   draw();
 }
@@ -12281,37 +12367,56 @@ window.addEventListener("zamer-spen-hover", (event) => {
   if (!client || detail.hovering !== true) return;
   window.clearTimeout(spenRuntime.hoverExitTimer);
   activateSpenMode();
-  spenRuntime.nativeHover = true;
-  spenRuntime.hovering = true;
-  spenRuntime.lastHover = performance.now();
+  spenRuntime.nativeHoverSeen = true;
   const rect = canvas.getBoundingClientRect();
   const onCanvas = !document.hidden && projectHome.hidden && authScreen.hidden &&
     document.elementFromPoint(client.x, client.y) === canvas;
-  spenRuntime.point = onCanvas ? { x: client.x - rect.left, y: client.y - rect.top } : null;
-  if (onCanvas) updateSpenBarrel({ buttons: detail.buttons || 0 });
-  else {
-    spenRuntime.barrelDown = false;
-    resetSnapTracking();
+  if (!onCanvas) {
+    clearSpenHover({ preservePreview: true });
+    return;
   }
+  spenRuntime.nativeHover = true;
+  spenRuntime.hovering = spenSettings.hoverCursor;
+  spenRuntime.lastHover = performance.now();
+  if (spenSettings.hoverCursor || spenRuntime.contactId !== null) updateSpenPoint({ x: client.x - rect.left, y: client.y - rect.top });
+  updateSpenBarrel({ buttons: detail.buttons || 0 });
   draw();
 });
 window.addEventListener("blur", () => {
+  endInterruptedCanvasInput();
   spenRuntime.contactId = null;
   clearSpenHover();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
+    endInterruptedCanvasInput();
     spenRuntime.contactId = null;
     clearSpenHover();
   }
 });
 
+function endInterruptedCanvasInput() {
+  const pointer = state.pointer;
+  window.clearTimeout(pointer?.selectionHoldTimer);
+  cancelPendingCanvasTap();
+  tapZoom = null;
+  finishPointerMoveUndo();
+  state.pointer = null;
+  state.activePointers.clear();
+  state.pinch = null;
+  state.gestureSuppressTap = false;
+  state.lastAnnotationTap = null;
+  state.openEditMenuAfterPointer = false;
+  clearSelectionDrag();
+  if (pointer) releaseCanvasPointer({ pointerId: pointer.id });
+}
+
 canvas.addEventListener("pointerover", updateSpenHover);
 canvas.addEventListener("pointermove", (event) => {
-  if (event.pointerType === "pen") updateSpenHover(event);
+  if (isPenPointerEvent(event)) updateSpenHover(event);
 });
 canvas.addEventListener("pointerleave", (event) => {
-  if (event.pointerType === "pen" && !spenRuntime.nativeHover) clearSpenHover({ preservePreview: true });
+  if (isPenPointerEvent(event) && !spenRuntime.nativeHover) clearSpenHover({ preservePreview: true });
 });
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -12325,7 +12430,7 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   const screen = getPointer(event);
   const displayedSnap = displayedSnapForPress(event, screen);
-  if (event.pointerType === "pen") {
+  if (isPenPointerEvent(event)) {
     activateSpenFromPointer(event);
     if (spenModeEnabled() && state.activePointers.size > 0) return;
     spenRuntime.nativeHover = false;
@@ -12465,7 +12570,7 @@ function startCanvasPointerAction(event, screen) {
     dimensionControl = hitDimensionControl(screen);
     const controlEntity = dimensionControl?.entity;
     const hitId = controlEntity?.id || pickEntity(screen);
-    if (spenModeEnabled() && event.pointerType === "pen" && state.selectTool === "select" && viewportIsSelecting() && !dimensionControl) {
+    if (spenModeEnabled() && isPenPointerEvent(event) && state.selectTool === "select" && viewportIsSelecting() && !dimensionControl) {
       state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false,
         mode: "select-only", tapCandidateId: hitId, penWindowCandidate: true };
       return;
@@ -12685,7 +12790,7 @@ canvas.addEventListener("pointermove", (event) => {
   if (state.pinch || state.gestureSuppressTap || !state.pointer || state.pointer.id !== event.pointerId) return;
   const isDragging = Boolean(event.buttons & 1) || event.pointerType === "touch";
   if (!isDragging) return;
-  const penGesture = spenModeEnabled() && event.pointerType === "pen";
+  const penGesture = spenModeEnabled() && isPenPointerEvent(event);
   const penPlacesPoint = penGesture && (["survey-point", "dimension-attach", "line-edit", "endpoint-place", "move-command", "offset-command"].includes(state.pointer.mode) ||
     (state.pointer.mode === "pan" && state.tool !== "select" && !state.leaderInput));
   if (penPlacesPoint) {
@@ -12825,14 +12930,17 @@ canvas.addEventListener("lostpointercapture", (event) => {
   if (state.activePointers.has(event.pointerId)) finishCanvasPointer(event, true);
 });
 canvas.addEventListener("contextmenu", (event) => {
-  if (event.pointerType === "touch" || event.pointerType === "pen" || event.sourceCapabilities?.firesTouchEvents) event.preventDefault();
+  if (event.pointerType === "touch" || isPenPointerEvent(event) || event.sourceCapabilities?.firesTouchEvents) event.preventDefault();
 });
 
 function finishCanvasPointer(event, canceled = false) {
   try {
     finishCanvasPointerEvent(event, canceled);
   } finally {
-    if (spenRuntime.contactId === event.pointerId) spenRuntime.contactId = null;
+    if (spenRuntime.contactId === event.pointerId) {
+      spenRuntime.contactId = null;
+      spenRuntime.hovering = spenRuntime.nativeHover;
+    }
   }
 }
 
@@ -12841,7 +12949,7 @@ function finishCanvasPointerEvent(event, canceled = false) {
   if (state.pointer?.id === event.pointerId && pointDistance(getPointer(event), state.pointer.startScreen) > TAP_MOVE_TOLERANCE) {
     state.pointer.confirmedSnap = null;
   }
-  if (event.pointerType === "pen") {
+  if (isPenPointerEvent(event)) {
     if (canceled) clearSpenHover();
     else {
       activateSpenFromPointer(event);
@@ -12902,7 +13010,7 @@ function finishCanvasPointerEvent(event, canceled = false) {
 
 function finishCanvasPointerAction(event) {
   const touchPan = state.pointer?.mode === "touch-pan";
-  const penGesture = spenModeEnabled() && event.pointerType === "pen";
+  const penGesture = spenModeEnabled() && isPenPointerEvent(event);
   const overlap = touchPan ? null : overlappingSelectionForTap(event, state.pointer);
   state.selectionPickCycle = null;
   const annotation = touchPan || overlap ? null : annotationForDoubleTap(event, state.pointer);
@@ -14729,6 +14837,14 @@ keyboardConfirmButton.addEventListener("blur", (event) => {
   }
 });
 bindPointAction(polylineArcMode, togglePolylineArcMode);
+bindPointAction(lineLengthEntryToggle, () => {
+  state.lineLengthEntry = !state.lineLengthEntry;
+  try { localStorage.setItem("zamer.line.length-entry.v1", JSON.stringify(state.lineLengthEntry)); } catch { /* Optional device preference. */ }
+  statusChip.textContent = state.lineLengthEntry
+    ? "Ввод длины · укажите две точки, затем введите размер"
+    : "Свободное черчение · укажите две точки";
+  draw();
+});
 bindPointAction(quickMirrorTool, () => {
   if (state.lineEdit?.mode === "mirror") endLineEdit("Отражение отменено");
   else startSelectionAction("mirror");
@@ -15040,6 +15156,9 @@ const projectSpenFields = {
   palmRejection: projectSettingsSheet.querySelector("#projectSpenPalm"),
   compactUi: projectSettingsSheet.querySelector("#projectSpenCompact"),
 };
+const projectSpenSystemSettings = projectSettingsSheet.querySelector("#projectSpenSystemSettings");
+projectSpenSystemSettings.hidden = typeof window.ZamerAndroid?.openSpenSettings !== "function";
+projectSpenSystemSettings.addEventListener("click", () => window.ZamerAndroid?.openSpenSettings?.());
 
 for (const [mode, appearance] of Object.entries(spenInputModes)) {
   const button = document.createElement("button");
