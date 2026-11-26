@@ -1,6 +1,7 @@
 // Прогулка: миллиметры и оси модели (Y вниз). Камера и проект здесь не меняются.
 import { toLocal } from './building.js';
 import { entryParts, siteEntries } from './site-entries.js';
+import { rayFace, rayPlaneZ } from './pick3d.js';
 export const WALK_HEIGHT = 1700;
 export const WALK_EYE = 1600;
 export const WALK_RADIUS = 200;
@@ -60,6 +61,40 @@ function normal(pts) {
 function surfaceZ(e, x, y) {
   const a = e.pts[0];
   return a.z - (e.n.x * (x - a.x) + e.n.y * (y - a.y)) / e.n.z;
+}
+
+// Для выбора точки учитываем и поверхности под ногами, и видимые преграды.
+export function walkPickFaces(faces) {
+  return faces.filter((f) => f.pts?.length >= 3 && !['massUnder', 'massLine', 'massVoid', 'boundary', 'landscape-light'].includes(f.kind)).map((face) => {
+    const pts = face.pts, n = normal(pts);
+    const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+    const drop = az >= ax && az >= ay ? 'z' : ax >= ay ? 'x' : 'y';
+    const box = { x0: Math.min(...pts.map((p) => p.x)), x1: Math.max(...pts.map((p) => p.x)), y0: Math.min(...pts.map((p) => p.y)), y1: Math.max(...pts.map((p) => p.y)), z0: Math.min(...pts.map((p) => p.z)), z1: Math.max(...pts.map((p) => p.z)) };
+    const surface = ['ground', 'floor', 'slab', 'entrance', 'stairs'].includes(face.kind)
+      || (face.kind === 'landscape' && (face.stairPart || ['path', 'deck-area', 'paving', 'stairs-out', 'slab'].includes(face.landscapeKind)));
+    const walkable = surface && (face.normal?.z ?? n.z) > .5 && !face.noCut && !['rail', 'post', 'stringer'].includes(face.part);
+    return { pts, n, d: n.x*pts[0].x + n.y*pts[0].y + n.z*pts[0].z, drop, box, walkable };
+  });
+}
+
+export function walkSpawnAt(world, prepared, ray, yaw = 0) {
+  let nearest = null;
+  for (const face of prepared) {
+    const t = rayFace(ray, face);
+    if (t !== null && (!nearest || t < nearest.t)) nearest = { t, face };
+  }
+  if (nearest && !nearest.face.walkable) return null;
+  let p = nearest ? {
+    x: ray.o.x + ray.d.x*nearest.t, y: ray.o.y + ray.d.y*nearest.t, z: ray.o.z + ray.d.z*nearest.t,
+  } : null;
+  // У пустого проекта ещё нет сетки участка, но плоскость земли доступна.
+  if (!p && ray.d.z < -.01) {
+    p = rayPlaneZ(ray, world.ground(ray.o.x, ray.o.y));
+    for (let i = 0; p && i < 8; i++) p = rayPlaneZ(ray, world.ground(p.x, p.y));
+  }
+  if (!p || !Number.isFinite(p.x+p.y+p.z) || Math.hypot(p.x-ray.o.x, p.y-ray.o.y, p.z-ray.o.z) > 2e6) return null;
+  if (world.blocked(p.x, p.y, p.z)) return null;
+  return { ...p, viewZ: p.z, velocityZ: 0, yaw };
 }
 
 // Индекс собирается один раз на сцену, а не при каждом кадре движения.

@@ -8,10 +8,41 @@ import { toLocal, toWorld } from '../core/building.js';
 import { entryAt } from '../core/site-entries.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import { cameraBasis } from '../core/pick3d.js';
-import { smoothWalkHeight, stepWalk, walkCamera, walkDirection, walkStart, walkWorld, WALK_EYE, WALK_HEIGHT } from '../core/walk3d.js';
+import { smoothWalkHeight, stepWalk, walkCamera, walkDirection, walkPickFaces, walkSpawnAt, walkStart, walkWorld, WALK_EYE, WALK_HEIGHT } from '../core/walk3d.js';
 
 const box = (x0, y0, x1, y1, z0, z1, kind = 'wall') => boxFaces(x0, y0, x1, y1, z0, z1, '#fff', kind);
 const player = (x = 0, y = 0, z = 0) => ({ x, y, z, velocityZ: 0 });
+const surface = (x, y, w, h, z, kind = 'floor') => ({ pts: [{ x, y, z }, { x: x+w, y, z }, { x: x+w, y: y+h, z }, { x, y: y+h, z }], normal: { x: 0, y: 0, z: 1 }, kind });
+
+test('точка старта выбирается лучом на земле, полу, балконе и проступи с точной высотой', () => {
+  const faces = [surface(-5000, -5000, 10000, 10000, -1000, 'ground'), surface(-1000, -1000, 2000, 2000, 0), surface(2000, -1000, 2000, 2000, 3000), ...box(-2000, 2000, 0, 3000, 0, 180, 'stairs')];
+  const world = walkWorld(faces, () => -1000), prepared = walkPickFaces(faces);
+  for (const [x, y, z] of [[-4000, 0, -1000], [0, 0, 0], [3000, 0, 3000], [-1000, 2500, 180]]) {
+    const start = walkSpawnAt(world, prepared, { o: { x, y, z: 10000 }, d: { x: 0, y: 0, z: -1 } }, .7);
+    assert.ok(start); assert.equal(start.x, x); assert.equal(start.y, y); assert.equal(start.z, z);
+    assert.equal(start.viewZ, z); assert.equal(start.yaw, .7);
+  }
+});
+
+test('выбор точки не проходит сквозь стену и не ставит персонажа на крышу или мебель', () => {
+  const floor = surface(-4000, -4000, 8000, 8000, 0);
+  const wall = [...box(-1200, -1000, -1000, 1000, 0, 3000), floor];
+  const ray = { o: { x: -2000, y: 0, z: 1000 }, d: { x: 1, y: 0, z: -.5 } };
+  assert.equal(walkSpawnAt(walkWorld(wall), walkPickFaces(wall), ray), null);
+  for (const kind of ['roof', 'furniture']) {
+    const faces = [floor, ...box(-1000, -1000, 1000, 1000, 500, 1000, kind)];
+    assert.equal(walkSpawnAt(walkWorld(faces), walkPickFaces(faces), { o: { x: 0, y: 0, z: 5000 }, d: { x: 0, y: 0, z: -1 } }), null);
+  }
+});
+
+test('выбор точки учитывает ширину и рост персонажа; в пустом проекте доступна земля', () => {
+  const faces = [surface(-2000, -2000, 4000, 4000, 0), ...box(100, -1000, 400, 1000, 0, 3000)];
+  const down = { o: { x: 0, y: 0, z: 5000 }, d: { x: 0, y: 0, z: -1 } };
+  assert.equal(walkSpawnAt(walkWorld(faces), walkPickFaces(faces), down), null);
+  const start = walkSpawnAt(walkWorld([], () => -750), [], down);
+  assert.equal(start.z, -750);
+  assert.equal(walkSpawnAt(walkWorld([]), [], { ...down, d: { x: 0, y: 0, z: 1 } }), null);
+});
 
 test('WASD относительно взгляда; диагональ не ускоряет персонажа', () => {
   assert.deepEqual(walkDirection(0, 1, 0), { x: -1, y: 0 });

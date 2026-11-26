@@ -4,9 +4,15 @@ const MOVE = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'A
 
 // Управление камерой отдельно от инструментов редактирования модели.
 export function createWalkController({ canvas, cam, repaint, exit }) {
-  let active = false, world, player, lastFrame = null, drag = null, paused = false;
+  let active = false, choosing = false, world, player, lastFrame = null, drag = null, paused = false;
   let hadLock = false;
   const keys = new Set(), touchKeys = new Map(), inertBefore = new Map();
+  const lockEditors = () => {
+    for (const element of document.querySelectorAll('#toolStrip, .library, #propsPanel, #projectRoute, .level-dock, #selectionToolbar, #mobileCat, .topbar, #v3Atrium, .v3-facade, #v3EnterInterior, #v3InteriorControls')) {
+      if (!inertBefore.has(element)) inertBefore.set(element, element.inert);
+      element.inert = true;
+    }
+  };
   const hint = document.getElementById('v3WalkHelp');
   const settings = document.getElementById('v3WalkSettings');
   const sensitivityInput = document.getElementById('v3WalkSensitivity');
@@ -44,6 +50,12 @@ export function createWalkController({ canvas, cam, repaint, exit }) {
     try { canvas.requestPointerLock?.()?.catch(() => {}); } catch { /* Перетаскивание работает и без Pointer Lock. */ }
   };
   window.addEventListener('keydown', (e) => {
+    if (choosing) {
+      e.stopImmediatePropagation();
+      if (e.code === 'Escape') { e.preventDefault(); exit(); }
+      else if (!['Tab', 'Enter', 'Space'].includes(e.code) && !e.target.closest?.('.view3d-bar')) e.preventDefault();
+      return;
+    }
     if (!active) return;
     if (e.code === 'Escape' && settings.open) {
       e.preventDefault(); e.stopImmediatePropagation(); settings.open = false; canvas.focus({ preventScroll: true }); return;
@@ -121,15 +133,23 @@ export function createWalkController({ canvas, cam, repaint, exit }) {
   }
   return {
     get active() { return active; },
+    get choosing() { return choosing; },
+    choose() {
+      choosing = true; clear(); lockEditors();
+      document.body.classList.add('v3-walk-choosing');
+      const button = document.getElementById('v3Walk');
+      button.setAttribute('aria-label', 'Отменить выбор точки прогулки'); button.title = 'Отменить выбор точки · Esc';
+      button.setAttribute('aria-pressed', 'true');
+      canvas.focus({ preventScroll: true });
+    },
     start(scene, start) {
-      world = scene; player = start; active = true; hadLock = false; paused = false; clear();
+      world = scene; player = start; active = true; choosing = false; hadLock = false; paused = false; clear();
       settings.open = false;
       cam.pitch = 0; cam.yaw = start.yaw ?? cam.yaw;
       walkCamera(cam, player);
       document.body.classList.add('v3-walking');
-      for (const element of document.querySelectorAll('#toolStrip, .library, #propsPanel, #projectRoute, .level-dock, #selectionToolbar, #mobileCat, .topbar')) {
-        inertBefore.set(element, element.inert); element.inert = true;
-      }
+      document.body.classList.remove('v3-walk-choosing');
+      lockEditors();
       document.getElementById('v3WalkHud').hidden = false;
       const button = document.getElementById('v3Walk');
       button.setAttribute('aria-label', 'Выйти из прогулки'); button.title = 'Выйти из прогулки · Esc';
@@ -137,11 +157,12 @@ export function createWalkController({ canvas, cam, repaint, exit }) {
       updateHelp(); canvas.focus({ preventScroll: true }); repaint();
     },
     stop() {
-      if (!active) return;
-      active = false; clear();
+      if (!active && !choosing) return;
+      active = false; choosing = false; clear();
       settings.open = false;
       if (locked()) document.exitPointerLock();
       document.body.classList.remove('v3-walking');
+      document.body.classList.remove('v3-walk-choosing');
       for (const [element, inert] of inertBefore) element.inert = inert;
       inertBefore.clear();
       document.getElementById('v3WalkHud').hidden = true;

@@ -35,7 +35,7 @@ import {
 } from '../core/wall-edit3d.js';
 import { el, toast } from './dom.js';
 import { PROJECT_REPLACED_EVENT } from './files.js';
-import { walkStart, walkWorld } from '../core/walk3d.js';
+import { walkPickFaces, walkSpawnAt, walkWorld } from '../core/walk3d.js';
 import { createWalkController } from './walk3d.js';
 import { syncLibraryOpen } from './library.js';
 import { closeLibrarySheet } from './mobile.js';
@@ -91,6 +91,7 @@ let opts = layerPreferences;
 let interior = null;
 let walk = null;
 let walkPrevious = null;
+let walkPlacement = null;
 const LAYERS_KEY = 'kepler-3d-layers'; // запомненные слои: мебель, этажи, массы
 const LEVEL_MODES = new Set(['all', 'upto', 'only']);
 let frontFacade = null;
@@ -110,7 +111,7 @@ function loadLayers() {
 }
 
 function saveLayers() {
-  if (interior || walk?.active) return; // временные настройки ракурса не меняют предпочтения пользователя
+  if (interior || walk?.active || walk?.choosing) return; // временные настройки ракурса не меняют предпочтения пользователя
   try {
     const prev = JSON.parse(localStorage.getItem(LAYERS_KEY) || 'null') || {}; // и флажок «Магнит масс» (ui/mass3d.js)
     localStorage.setItem(LAYERS_KEY, JSON.stringify({
@@ -744,6 +745,7 @@ function setHint(text) {
   const hint = el('v3Hint');
   if (!hint) return;
   if (walk?.active) { hint.textContent = ''; return; }
+  if (walk?.choosing && text === undefined) text = 'Нажмите на землю, пол, балкон или ступень — начать прогулку здесь · Тяните для поворота вида · Esc — отменить';
   if (text === undefined) {
     if (choosingFacadeWall()) text = 'Нажмите на наружную стену или её окно, чтобы открыть фасад';
     else if (!wallsEditable()) text = HINT_SITE;
@@ -792,7 +794,7 @@ export function refresh3dSelection() {
 // выбор; true — Esc поглощён, иначе (выбора нет) вид можно закрыть.
 export function escape3d() {
   if (!active) return false;
-  if (walk?.active) { leaveWalk(); return true; }
+  if (walk?.active || walk?.choosing) { leaveWalk(); return true; }
   if (stairShapeDragging()) { cancelStairShapeDrag(); return true; }
   if (numTarget) { hideNumber(); setHint(); return true; }
   if (massNumOpen()) { closeMassNum(); setHint(); return true; }
@@ -904,10 +906,49 @@ function rebuildScene() {
   sets = null;
   rebuildStats.full += 1;
   if (walk?.active) walk.scene(walkWorld(faces, terrainHeightFn(state.project, opts.terrainScale)));
+  if (walk?.choosing) updateWalkPlacementScene();
+}
+
+function updateWalkPlacementScene() {
+  walkPlacement = { world: walkWorld(faces, terrainHeightFn(state.project, opts.terrainScale)), faces: walkPickFaces(faces) };
+  el('v3WalkStart').hidden = true;
+}
+
+function previewWalkPlacement(event) {
+  if (!walk?.choosing || !walkPlacement) return null;
+  const start = walkSpawnAt(walkPlacement.world, walkPlacement.faces, rayAt(event), cam.yaw);
+  const marker = el('v3WalkStart');
+  marker.hidden = !start;
+  if (start) {
+    setHint();
+    const p = debug3dScreen(start), rect = el('view3d').getBoundingClientRect();
+    marker.style.left = `${p.x-rect.left}px`; marker.style.top = `${p.y-rect.top}px`;
+  }
+  el('canvas3d').style.cursor = start ? 'crosshair' : 'not-allowed';
+  return start;
+}
+
+function startWalkAt(event) {
+  const start = previewWalkPlacement(event);
+  if (!start) { setHint('Здесь нельзя встать. Выберите свободное место на земле, полу, балконе или ступени · Esc — отменить'); return; }
+  const previous = { opts, interior, frontFacade };
+  interior = null; frontFacade = null;
+  opts = { ...opts, levels: 'all', roof: true, site: true, landscape: true, furniture: true, masses: true };
+  rebuildScene();
+  const world = walkWorld(faces, terrainHeightFn(state.project, opts.terrainScale));
+  if (world.blocked(start.x, start.y, start.z)) {
+    ({ opts, interior, frontFacade } = previous); rebuildScene(); uploadGeometry(); requestRender();
+    setHint('В этом месте недостаточно пространства для персонажа. Выберите другую точку · Esc — отменить'); return;
+  }
+  walkPlacement = null; el('v3WalkStart').hidden = true;
+  for (const details of el('view3d').querySelectorAll('details')) details.open = false;
+  walk.start(world, start);
+  el('canvas3d').style.cursor = '';
+  syncLayerControls(); syncCameraControls(); uploadGeometry(); requestRender(); setHint();
 }
 
 function enterWalk() {
-  if (walk.active) { leaveWalk(); return; }
+  if (walk.active || walk.choosing) { leaveWalk(); return; }
   cancelStairShapeDrag();
   if (edit) cancelEdit();
   if (massDragging()) cancelMassDrag();
@@ -922,24 +963,19 @@ function enterWalk() {
   hover = null; objectHover = null; facadePreview = null; massVoidHoverId = null;
   setMassLabel(null);
   walkPrevious = { cam: { ...cam, target: { ...cam.target } }, opts, interior, frontFacade };
-  interior = null; frontFacade = null;
-  opts = { ...opts, levels: 'all', roof: true, site: true, landscape: true, furniture: true, masses: true };
+  opts = { ...opts, site: true };
   rebuildScene();
-  const world = walkWorld(faces, terrainHeightFn(state.project, opts.terrainScale));
-  const start = walkStart(world, state.project);
-  if (!start) {
-    ({ opts, interior, frontFacade } = walkPrevious); walkPrevious = null;
-    refresh3d(); toast('Не удалось найти свободное место для прогулки'); return;
-  }
   for (const details of el('view3d').querySelectorAll('details')) details.open = false;
-  walk.start(world, start);
-  el('canvas3d').style.cursor = '';
+  walk.choose(); updateWalkPlacementScene();
+  el('canvas3d').style.cursor = 'crosshair';
   syncLayerControls(); syncCameraControls(); uploadGeometry(); requestRender(); setHint();
 }
 
 function leaveWalk({ focus = true } = {}) {
-  if (!walk?.active) return;
+  if (!walk?.active && !walk?.choosing) return;
   walk.stop();
+  walkPlacement = null; el('v3WalkStart').hidden = true;
+  gesture = null; pointers.clear(); el('canvas3d').style.cursor = '';
   Object.assign(cam, walkPrevious.cam);
   ({ opts, interior, frontFacade } = walkPrevious); walkPrevious = null;
   syncLayerControls(); refresh3d();
@@ -1234,6 +1270,7 @@ function gripAt(hit, e) {
 const GRIP_CURSOR = { height: 'ns-resize', move: 'move', thickness: 'col-resize', length: 'ew-resize' };
 
 function updateHover(e) {
+  if (walk?.choosing) { previewWalkPlacement(e); return; }
   const openingHandle = wallsEditable() ? openingHandleAt(e) : null;
   if (openingHandle) {
     const changed = massVoidHoverId !== null;
@@ -1475,6 +1512,10 @@ function onDown(e) {
     };
     return;
   }
+  if (walk?.choosing) {
+    gesture = { kind: pan ? 'pan' : 'orbit', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, click: e.button === 0 && !pan, walkStart: true };
+    return;
+  }
   const openingHandle = wallsEditable() && e.button === 0 && pointers.size === 1 ? openingHandleAt(e) : null;
   if (choosingFacadeWall() && e.button === 0 && !pan) {
     gesture = { kind: 'orbit', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, click: true, chooseFacade: true };
@@ -1576,6 +1617,10 @@ function panBy(dx, dy) {
 
 function onMove(e) {
   if (walk?.active) return;
+  if (walk?.choosing) {
+    if (!gesture) { previewWalkPlacement(e); return; }
+    el('v3WalkStart').hidden = true;
+  }
   if (!pointers.has(e.pointerId) || !gesture) {
     if (e.pointerType === 'mouse' && !gesture && active) {
       if (composingFacade() && wallsEditable()) {
@@ -1646,6 +1691,11 @@ function onUp(e) {
   if (walk?.active) return;
   const g = gesture;
   pointers.delete(e.pointerId);
+  if (walk?.choosing && g?.walkStart && !pointers.size) {
+    gesture = null;
+    if (g.click) startWalkAt(e); else previewWalkPlacement(e);
+    return;
+  }
   if (g?.kind === 'composition') {
     gesture = null;
     if (composingFacade() && wallsEditable() && (!g.moved || composer.started())) composer.click(e);
@@ -1772,7 +1822,7 @@ function onCancel(e) {
 }
 
 function onDblClick(e) {
-  if (walk?.active) return;
+  if (walk?.active || walk?.choosing) return;
   if (!massToolOn() && wallsEditable() && massDblClick(e)) return;
   if (wallsEditable() && roofDblClick(e)) return;
   const hit = pickAt(e);
@@ -2050,7 +2100,7 @@ export function bind3d() {
     e.dataTransfer.dropEffect = 'copy';
   });
   canvas.addEventListener('drop', (e) => {
-    if (walk?.active) { e.preventDefault(); return; }
+    if (walk?.active || walk?.choosing) { e.preventDefault(); return; }
     const kind = e.dataTransfer?.getData('application/x-kepler-furn');
     if (!kind) return;
     e.preventDefault();
@@ -2061,6 +2111,7 @@ export function bind3d() {
   canvas.addEventListener('pointerup', onUp);
   canvas.addEventListener('pointercancel', onCancel);
   canvas.addEventListener('pointerleave', () => {
+    if (walk?.choosing) { el('v3WalkStart').hidden = true; return; }
     if (facadePreview) { facadePreview = null; uploadOverlay(); requestRender(); }
     const hadMass = !gesture && clearMassHover();
     const hadObject = !gesture && clearObjectGizmoHover();
@@ -2088,7 +2139,8 @@ export function bind3d() {
     const key = cam.projection === 'perspective' ? 'eyeDist' : 'dist';
     cam[key] = Math.min(400000, Math.max(3000, cam[key] * Math.exp(e.deltaY * 0.0012)));
     if (['mass', 'opening', 'item', 'landscape'].includes(state.selection?.type) || massToolOn() || openingToolOn()) uploadOverlay(); // ручки и призраки — в пикселях экрана
-    updateHover(e); // камера изменилась — заново проверяем cutter под курсором
+    if (walk?.choosing) previewWalkPlacement(e);
+    else updateHover(e); // камера изменилась — заново проверяем cutter под курсором
     requestRender();
   }, { passive: false });
   new ResizeObserver(() => requestRender()).observe(canvas);
@@ -2112,6 +2164,7 @@ export function debug3d() {
   return {
     active, faces: faces.length, webgl: Boolean(gl), cam: { ...cam, target: { ...cam.target } },
     walk: walk?.debug() ?? null,
+    walkChoosing: Boolean(walk?.choosing),
     rebuilds: { ...rebuildStats },
     selectedKey: selectedRef()?.key ?? null, editing: Boolean(edit),
     hovered: objectHover ? { type: objectHover.type, id: objectHover.id ?? null, key: objectHover.key ?? null } : null,

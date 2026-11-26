@@ -1124,6 +1124,8 @@ body.v3-open .level-dock { z-index: 46; }
 .v3-walk-reticle { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: white; box-shadow: 0 0 0 1px #253546, 0 0 4px #253546; }
 .v3-walk-help { position: absolute; bottom: 74px; left: 50%; transform: translateX(-50%); margin: 0; padding: 8px 14px; width: max-content; max-width: calc(100% - 24px); border-radius: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow); font-size: 12px; text-align: center; }
 .v3-walk-pad { display: none; }
+.v3-walk-start { position: absolute; width: 24px; height: 24px; margin: -12px; border: 3px solid white; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--accent), 0 2px 10px #15223855; pointer-events: none; }
+.v3-walk-start[hidden] { display: none; }
 #v3Walk { position: absolute; top: 10px; right: 12px; z-index: 3; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 #v3Walk:hover { background: var(--surface-2); }
 #v3Walk svg { pointer-events: none; }
@@ -1137,9 +1139,9 @@ body.v3-walking .v3-walk-settings { display: block; }
 .v3-walk-settings-panel label { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
 .v3-walk-settings-panel input { width: 100%; min-height: 28px; accent-color: var(--accent); }
 .v3-walk-settings-panel span { font-size: 12px; color: var(--muted); }
-body.v3-walking #v3Walk { background: var(--accent); color: white; }
-body.v3-walking :is(#toolStrip, .library, #propsPanel) { opacity: 0.45; }
-body.v3-walking :is(#selectionToolbar, #projectRoute, .level-dock, #mobileCat) { visibility: hidden; }
+body:is(.v3-walking, .v3-walk-choosing) #v3Walk { background: var(--accent); color: white; }
+body:is(.v3-walking, .v3-walk-choosing) :is(#toolStrip, .library, #propsPanel) { opacity: 0.45; }
+body:is(.v3-walking, .v3-walk-choosing) :is(#selectionToolbar, #projectRoute, .level-dock, #mobileCat) { visibility: hidden; }
 @media (pointer: coarse) {
   .view3d-bar #v3Close { min-height: 44px; }
   .v3-walk-settings summary { min-height: 44px; display: flex; align-items: center; }
