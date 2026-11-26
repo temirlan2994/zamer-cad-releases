@@ -1,8 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boxFaces } from '../core/mesh3d.js';
+import { boxFaces, buildHouseMesh, terrainHeightFn } from '../core/mesh3d.js';
+import { createItem, createOpening, createProject, createRoom } from '../core/model.js';
+import { deriveEntrances } from '../core/entrance.js';
+import { applyStairPreset } from '../core/stairs.js';
+import { toLocal, toWorld } from '../core/building.js';
+import { entryAt } from '../core/site-entries.js';
+import { pointInPolygon } from '../core/zamer/geometry.js';
 import { cameraBasis } from '../core/pick3d.js';
-import { stepWalk, walkCamera, walkDirection, walkStart, walkWorld, WALK_EYE, WALK_HEIGHT } from '../core/walk3d.js';
+import { smoothWalkHeight, stepWalk, walkCamera, walkDirection, walkStart, walkWorld, WALK_EYE, WALK_HEIGHT } from '../core/walk3d.js';
 
 const box = (x0, y0, x1, y1, z0, z1, kind = 'wall') => boxFaces(x0, y0, x1, y1, z0, z1, '#fff', kind);
 const player = (x = 0, y = 0, z = 0) => ({ x, y, z, velocityZ: 0 });
@@ -48,17 +54,104 @@ test('подъём по ступеням, остановка перед высо
   assert.ok(q.x <= 2300); assert.equal(q.z, 0);
 });
 
-test('потолок учитывает рост; старт на активном этаже выбирает свободное место', () => {
+test('потолок учитывает рост; без границы старт снаружи дома на земле', () => {
   const floor = (level, z) => ({ pts: [{ x: 0, y: 0, z }, { x: 4000, y: 0, z }, { x: 4000, y: 4000, z }, { x: 0, y: 4000, z }], normal: { x: 0, y: 0, z: 1 }, kind: 'floor', level, roomId: level });
   const faces = [floor('ground', 0), floor('up', 3000), ...box(1400, 1400, 2600, 2600, 3000, 4000, 'furniture')];
   const world = walkWorld(faces);
-  const p = walkStart(world, { level: 'up' });
-  assert.equal(p.z, 3000);
+  const p = walkStart(world);
+  assert.equal(p.z, 0);
   assert.equal(world.blocked(p.x, p.y, p.z), false);
-  assert.ok(p.x < 1200 || p.x > 2800 || p.y < 1200 || p.y > 2800);
+  assert.ok(p.y > 4000);
   const ceiling = walkWorld(box(-1000, -1000, 1000, 1000, 1300, 1500, 'slab'));
   assert.equal(ceiling.blocked(0, 0, 0), true);
   assert.equal(walkStart(walkWorld([])).z, 0);
+});
+
+test('крыльцо на реальных стенах: выход и повторный вход через все стороны при высоком цоколе', () => {
+  for (const zero of [900, 1500]) for (const side of [0, 1, 2, 3]) for (const type of ['single', 'balcony-swing']) {
+    const project = createProject(); project.envelope.zeroAboveGround = zero;
+    const room = createRoom('entrance', 0, 0, 5000, 4000);
+    const door = createOpening('door', room.id, side, side % 2 ? 2000 : 2500, 1000);
+    door.entryRole = 'main'; door.type = type;
+    if (type === 'balcony-swing') door.assembly = { leftWindow: false, rightWindow: false };
+    project.rooms.push(room); project.openings.push(door);
+    const before = JSON.stringify(project);
+    const entrance = deriveEntrances(project)[0], n = entrance.outward, t = entrance.threshold;
+    const world = walkWorld(buildHouseMesh(project, { site: true }), terrainHeightFn(project));
+    const p = player(t.x-n.x*1000, t.y-n.y*1000, 1);
+    const distance = entrance.landing.depth + entrance.steps.run + 1800;
+    const count = Math.ceil(distance / 35);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      for (let i = 0; i < count; i++) stepWalk(world, p, n.x*35, n.y*35, .025);
+      for (let i = 0; i < 50; i++) stepWalk(world, p, 0, 0, .025);
+      assert.ok(Math.abs(p.z+zero) <= 1, `выход: сторона ${side}, цоколь ${zero}`);
+      for (let i = 0; i < count; i++) stepWalk(world, p, -n.x*35, -n.y*35, .025);
+      assert.ok(Math.abs(p.z-1) <= 1, `вход: сторона ${side}, цоколь ${zero}`);
+      assert.ok(Math.hypot(p.x-(t.x-n.x*1000), p.y-(t.y-n.y*1000)) < 40);
+    }
+    assert.equal(JSON.stringify(project), before);
+  }
+});
+
+test('старт перед калиткой: снаружи участка при любом порядке вершин и повороте дома', () => {
+  for (const reverse of [false, true]) for (const rotation of [0, 37, 170]) {
+    const project = createProject(); project.building = { rotation, origin: { x: 140000, y: -90000 } };
+    let boundary = [{ x: -5000, y: -5000 }, { x: 10000, y: -5000 }, { x: 10000, y: 10000 }, { x: -5000, y: 10000 }];
+    if (reverse) boundary = boundary.reverse();
+    project.site.boundary = boundary.map((p) => toWorld(project.building, p));
+    const anchor = toWorld(project.building, { x: 2500, y: -5000 });
+    const entry = { id: 'wicket', kind: 'wicket', width: 1000, height: 1800 };
+    project.site.entries = [{ ...entry, ...entryAt(project.site, anchor, entry) }];
+    project.envelope.zeroAboveGround = 1000;
+    const world = walkWorld(buildHouseMesh(project, { site: true, landscape: true }), terrainHeightFn(project));
+    const start = walkStart(world, project);
+    const target = toLocal(project.building, anchor);
+    assert.equal(pointInPolygon(toWorld(project.building, start), project.site.boundary), false);
+    assert.ok(Math.abs(start.x-target.x) < 1);
+    assert.ok(Math.abs(start.y - (target.y-1200)) < 1);
+    assert.equal(start.z, -1000);
+    const forward = walkDirection(start.yaw, 1, 0);
+    stepWalk(world, start, forward.x*2400, forward.y*2400, .05);
+    assert.ok(start.y > target.y+1000, 'через створку можно войти на участок');
+  }
+});
+
+test('внутренние лестницы: подъём по реальным проступям с плавной высотой взгляда', () => {
+  for (const build of ['open', 'closed', 'cantilever']) {
+    const project = createProject();
+    project.rooms.push(createRoom('stairs-room', -2000, -4000, 4000, 8000));
+    const stair = applyStairPreset(createItem('stairs', 0, 0, 1000, 3000), 'straight', 3000);
+    stair.stairBuild = build; project.items.push(stair);
+    const world = walkWorld(buildHouseMesh(project)), p = { ...player(0, stair.h/2+500, 1), viewZ: 1 };
+    let maxJump = 0, lag = false;
+    for (let i = 0; i < 135; i++) {
+      const before = p.viewZ;
+      stepWalk(world, p, 0, -35, .025); smoothWalkHeight(p, .025);
+      maxJump = Math.max(maxJump, Math.abs(p.viewZ-before));
+      if (p.z-p.viewZ > 20) lag = true;
+    }
+    assert.ok(p.z > 2800, build);
+    assert.ok(maxJump < 100 && lag, 'камера не прыгает на целый подступенок');
+    for (let i = 0; i < 60; i++) smoothWalkHeight(p, .025);
+    assert.equal(p.viewZ, p.z);
+    let descentJump = 0;
+    for (let i = 0; i < 135; i++) {
+      const before = p.viewZ;
+      stepWalk(world, p, 0, 35, .025); smoothWalkHeight(p, .025);
+      descentJump = Math.max(descentJump, Math.abs(p.viewZ-before));
+    }
+    assert.ok(p.z < 2 && descentJump < 100);
+  }
+});
+
+test('сглаживание высоты не зависит от частоты кадров и доходит до точной отметки', () => {
+  const a = { z: 180, viewZ: 0 }, b = { z: 180, viewZ: 0 };
+  for (let i = 0; i < 12; i++) smoothWalkHeight(a, 1/60);
+  for (let i = 0; i < 6; i++) smoothWalkHeight(b, 1/30);
+  assert.ok(Math.abs(a.viewZ-b.viewZ) < 1e-8);
+  assert.ok(a.viewZ > 0 && a.viewZ < 180);
+  for (let i = 0; i < 60; i++) smoothWalkHeight(a, 1/60);
+  assert.equal(a.viewZ, 180);
 });
 
 test('камера на высоте глаз персонажа 1,7 м при любом наклоне и повороте', () => {

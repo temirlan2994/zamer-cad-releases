@@ -360,6 +360,13 @@
                 <button type="button" id="v3ExitInterior" title="Вернуться к прежнему 3D-виду">Вернуть вид</button>
               </div>
               <button id="v3Walk" type="button" aria-pressed="false" title="Прогулка от первого лица · рост 1,7 м">Прогулка</button>
+              <details id="v3WalkSettings" class="v3-walk-settings"><summary title="Настройки прогулки · O">Настройки</summary>
+                <div class="v3-walk-settings-panel">
+                  <label for="v3WalkSensitivity">Чувствительность мыши <output id="v3WalkSensitivityValue" for="v3WalkSensitivity">1,00×</output></label>
+                  <input id="v3WalkSensitivity" type="range" min="0.25" max="3" step="0.05" value="1" />
+                  <span>Медленнее — быстрее</span>
+                </div>
+              </details>
               <button id="v3Fit" type="button" title="Вписать модель" aria-label="Вписать модель"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 8V3h5m4 0h5v5m0 4v5h-5m-4 0H3v-5"/><rect x="7" y="7" width="6" height="6" rx="1"/></svg><span>Вписать</span></button>
               <button id="v3Close" aria-label="Закрыть 3D-вид" title="Закрыть 3D-вид" type="button">×</button>
             </div>

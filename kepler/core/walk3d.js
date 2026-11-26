@@ -1,4 +1,6 @@
 // Прогулка: миллиметры и оси модели (Y вниз). Камера и проект здесь не меняются.
+import { toLocal } from './building.js';
+import { entryParts, siteEntries } from './site-entries.js';
 export const WALK_HEIGHT = 1700;
 export const WALK_EYE = 1600;
 export const WALK_RADIUS = 200;
@@ -67,7 +69,9 @@ export function walkWorld(faces, ground = () => 0) {
     const pts = face.pts;
     if (!pts?.length || ['massUnder', 'massLine', 'massVoid', 'boundary', 'landscape-water', 'landscape-light'].includes(face.kind)) continue;
     // Двери проходимы; стекло окон остаётся препятствием.
-    if (face.openingId && face.kind !== 'glass') continue;
+    if (face.openingId && !face.entranceId && (face.kind !== 'glass' || face.openingKind === 'door')) continue;
+    // Створки в прогулке проходимы, стойки сохраняют физический габарит.
+    if (face.siteEntryId && !face.entryPost) continue;
     const n = normal(pts);
     const bounds = { x0: Math.min(...pts.map((p) => p.x)), x1: Math.max(...pts.map((p) => p.x)), y0: Math.min(...pts.map((p) => p.y)), y1: Math.max(...pts.map((p) => p.y)) };
     if (Math.abs(n.z) > 0.05) {
@@ -107,31 +111,68 @@ export function walkWorld(faces, ground = () => 0) {
     }
     return false;
   };
-  return { support, blocked, floors };
+  return { support, blocked, floors, ground: (x, y) => ground?.(x, y) ?? 0 };
 }
 
-export function walkStart(world, { level, roomId, x = 0, y = 0 } = {}) {
-  const floors = world.floors.filter((f) => f.level === level);
-  floors.sort((a, b) => Number(b.roomId === roomId) - Number(a.roomId === roomId));
-  for (const f of floors) {
-    const center = f.pts.reduce((p, q) => ({ x: p.x + q.x / f.pts.length, y: p.y + q.y / f.pts.length }), { x: 0, y: 0 });
-    const candidates = [center];
-    for (const u of [0.5, 0.25, 0.75, 0.125, 0.875]) for (const v of [0.5, 0.25, 0.75, 0.125, 0.875]) candidates.push({ x: f.x0 + (f.x1-f.x0)*u, y: f.y0 + (f.y1-f.y0)*v });
-    for (const p of candidates) {
-      if (!contains(f.pts, p.x, p.y)) continue;
-      const h = surfaceZ(f, p.x, p.y);
-      if (!world.blocked(p.x, p.y, h)) return { ...p, z: h, velocityZ: 0 };
+export function walkStart(world, project = {}) {
+  const boundary = (project.site?.boundary || []).map((p) => toLocal(project.building, p));
+  const floors = world.floors;
+  const center = floors.length ? {
+    x: (Math.min(...floors.map((f) => f.x0)) + Math.max(...floors.map((f) => f.x1))) / 2,
+    y: (Math.min(...floors.map((f) => f.y0)) + Math.max(...floors.map((f) => f.y1))) / 2,
+  } : { x: 0, y: 0 };
+  const anchors = [];
+  const entries = [...siteEntries(project.site)].sort((a, b) => Number(b.kind === 'wicket') - Number(a.kind === 'wicket'));
+  for (const e of entries) {
+    const part = entryParts(e).find((p) => p.kind === 'wicket') || entryParts(e)[0];
+    const rad = (e.dir ?? e.angle ?? 0) * Math.PI / 180;
+    anchors.push(toLocal(project.building, { x: e.x + Math.sin(rad) * part.offset, y: e.y - Math.cos(rad) * part.offset }));
+  }
+  const starts = [];
+  if (boundary.length >= 3) {
+    const edges = boundary.map((a, i) => {
+      const b = boundary[(i + 1) % boundary.length], len = Math.hypot(b.x-a.x, b.y-a.y);
+      if (len < 1) return null;
+      let nx = -(b.y-a.y)/len, ny = (b.x-a.x)/len;
+      const mid = { x: (a.x+b.x)/2, y: (a.y+b.y)/2 };
+      if (contains(boundary, mid.x+nx*10, mid.y+ny*10)) { nx = -nx; ny = -ny; }
+      return { a, b, len, nx, ny, mid };
+    }).filter(Boolean);
+    for (const anchor of anchors) {
+      const edge = [...edges].sort((a, b) => segmentDistance(anchor.x, anchor.y, a.a, a.b) - segmentDistance(anchor.x, anchor.y, b.a, b.b))[0];
+      if (!edge) continue;
+      const { a, b, len } = edge;
+      const t = Math.max(0, Math.min(1, ((anchor.x-a.x)*(b.x-a.x)+(anchor.y-a.y)*(b.y-a.y))/(len*len)));
+      starts.push({ ...edge, target: { x: a.x+(b.x-a.x)*t, y: a.y+(b.y-a.y)*t } });
+    }
+    edges.sort((a, b) => Math.hypot(a.mid.x-center.x, a.mid.y-center.y) - Math.hypot(b.mid.x-center.x, b.mid.y-center.y));
+    starts.push(...edges.map((e) => ({ ...e, target: e.mid })));
+  } else {
+    // Пока границы нет, начинаем снаружи габарита дома.
+    const y = floors.length ? Math.max(...floors.map((f) => f.y1)) + 500 : center.y;
+    starts.push({ target: { x: center.x, y }, nx: 0, ny: 1 });
+  }
+  for (const start of starts) {
+    for (const distance of [1200, 1800, 2500, 3500, 5000]) for (const side of [0, -600, 600, -1200, 1200]) {
+      const x = start.target.x + start.nx*distance - start.ny*side;
+      const y = start.target.y + start.ny*distance + start.nx*side;
+      if (boundary.length >= 3 && contains(boundary, x, y)) continue;
+      const z = world.support(x, y, world.ground(x, y) + WALK_STEP);
+      if (Number.isFinite(z) && !world.blocked(x, y, z)) return {
+        x, y, z, viewZ: z, velocityZ: 0,
+        yaw: Math.atan2(start.target.y-y, x-start.target.x),
+      };
     }
   }
-  // Пустая модель или полностью занятый этаж: начинаем снаружи дома.
-  const all = world.floors;
-  if (all.length) { x = Math.min(...all.map((f) => f.x0)) - 1000; y = Math.min(...all.map((f) => f.y0)) - 1000; }
-  for (let i = 0; i < 30; i++) {
-    const h = world.support(x, y, Infinity);
-    if (Number.isFinite(h) && !world.blocked(x, y, h)) return { x, y, z: h, velocityZ: 0 };
-    x -= 500;
-  }
   return null;
+}
+
+// Физические стопы держатся на проступи, взгляд догоняет её отметку плавно.
+export function smoothWalkHeight(player, dt) {
+  if (!Number.isFinite(player.viewZ)) player.viewZ = player.z;
+  player.viewZ += (player.z - player.viewZ) * (1 - Math.exp(-14 * dt));
+  if (Math.abs(player.z - player.viewZ) < 0.5) player.viewZ = player.z;
+  return player.viewZ !== player.z;
 }
 
 export function walkDirection(yaw, forward, right) {
@@ -166,5 +207,5 @@ export function walkCamera(cam, player) {
   const distance = 1000, cp = Math.cos(cam.pitch);
   cam.projection = 'perspective';
   cam.eyeDist = distance;
-  cam.target = { x: player.x - distance * cp * Math.cos(cam.yaw), y: -player.y - distance * cp * Math.sin(cam.yaw), z: player.z + WALK_EYE - distance * Math.sin(cam.pitch) };
+  cam.target = { x: player.x - distance * cp * Math.cos(cam.yaw), y: -player.y - distance * cp * Math.sin(cam.yaw), z: (player.viewZ ?? player.z) + WALK_EYE - distance * Math.sin(cam.pitch) };
 }

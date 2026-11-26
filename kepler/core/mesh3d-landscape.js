@@ -677,7 +677,7 @@ export function landscapeFaces(project, hz = null, { evening = false } = {}) {
     // Идентификатор хранится на каждой грани: 3D выбирает не условную
     // категорию «ландшафт», а конкретное дерево, дорожку или сооружение.
     for (let i = firstFace; i < faces.length; i += 1) {
-      if (o0.siteEntryId) faces[i].siteEntryId = o0.siteEntryId;
+      if (o0.siteEntryId) { faces[i].siteEntryId = o0.siteEntryId; if (o0.entryPost) faces[i].entryPost = true; }
       else { faces[i].landscapeId = o0.id; faces[i].landscapeKind = o0.kind; }
     }
     if (evening && o.kind === 'lamp') {

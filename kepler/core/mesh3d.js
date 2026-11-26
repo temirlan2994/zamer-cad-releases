@@ -166,7 +166,7 @@ function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
   };
   faces.push({
     ...paneFace(band, orient, a0, a1, z0, z1, GLASS_COLOR, 0.38, 'glass'),
-    openingId: opening.id, ref,
+    openingId: opening.id, openingKind: opening.kind, ref,
   });
   const bottomRail = opening.spanPart === 'upper' ? 0 : frame;
   const topRail = opening.spanPart === 'lower' ? 0 : Math.min(frame, height - bottomRail);

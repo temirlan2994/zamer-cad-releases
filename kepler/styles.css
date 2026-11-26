@@ -1125,12 +1125,22 @@ body.v3-open .level-dock { z-index: 46; }
 .v3-walk-help { position: absolute; bottom: 74px; left: 50%; transform: translateX(-50%); margin: 0; padding: 8px 14px; width: max-content; max-width: calc(100% - 24px); border-radius: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow); font-size: 12px; text-align: center; }
 .v3-walk-pad { display: none; }
 body.v3-walking #canvas3d { cursor: crosshair; }
-body.v3-walking .view3d-bar > :not(#v3Walk):not(#v3Close) { display: none; }
+body.v3-walking .view3d-bar > :not(#v3Walk):not(#v3Close):not(#v3WalkSettings) { display: none; }
+.v3-walk-settings { display: none; position: relative; }
+body.v3-walking .v3-walk-settings { display: block; }
+.v3-walk-settings summary { cursor: pointer; padding: 6px 8px; border-radius: 8px; }
+.v3-walk-settings[open] summary { background: var(--surface-2); }
+.v3-walk-settings-panel { position: absolute; z-index: 2; top: calc(100% + 12px); left: 50%; transform: translateX(-50%); width: 260px; max-width: calc(100vw - 36px); display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); white-space: normal; }
+.v3-walk-settings-panel label { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.v3-walk-settings-panel input { width: 100%; min-height: 28px; accent-color: var(--accent); }
+.v3-walk-settings-panel span { font-size: 12px; color: var(--muted); }
 body.v3-walking #v3Walk { background: var(--accent); color: white; }
 body.v3-walking :is(#toolStrip, .library, #propsPanel) { opacity: 0.45; }
 body.v3-walking :is(#selectionToolbar, #projectRoute, .level-dock, #mobileCat) { visibility: hidden; }
 @media (pointer: coarse) {
   .view3d-bar :is(#v3Walk, #v3Close) { min-height: 44px; }
+  .v3-walk-settings summary { min-height: 44px; display: flex; align-items: center; }
+  .v3-walk-settings-panel { left: auto; right: -40px; transform: none; }
   .v3-walk-help { bottom: 160px; }
   .v3-walk-pad { display: grid; position: absolute; left: 16px; bottom: 24px; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(2, 44px); gap: 5px; pointer-events: auto; }
   .v3-walk-pad button { padding: 0; border-radius: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); touch-action: none; font-size: 24px; }

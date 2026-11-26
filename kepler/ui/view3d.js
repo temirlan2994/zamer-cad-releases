@@ -908,7 +908,6 @@ function rebuildScene() {
 
 function enterWalk() {
   if (walk.active) { leaveWalk(); return; }
-  const roomId = state.selection?.type === 'room' ? state.selection.id : null;
   cancelStairShapeDrag();
   if (edit) cancelEdit();
   if (massDragging()) cancelMassDrag();
@@ -927,7 +926,7 @@ function enterWalk() {
   opts = { ...opts, levels: 'all', roof: true, site: true, landscape: true, furniture: true, masses: true };
   rebuildScene();
   const world = walkWorld(faces, terrainHeightFn(state.project, opts.terrainScale));
-  const start = walkStart(world, { level: state.project.activeLevel, roomId });
+  const start = walkStart(world, state.project);
   if (!start) {
     ({ opts, interior, frontFacade } = walkPrevious); walkPrevious = null;
     refresh3d(); toast('Не удалось найти свободное место для прогулки'); return;

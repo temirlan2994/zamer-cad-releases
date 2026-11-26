@@ -34,6 +34,10 @@ it('прогулка: реальное WASD, обзор мышью, защита
     const looked = await scene(page);
     assert.ok(Math.abs(looked.cam.yaw - moved.cam.yaw) > 0.05);
     assert.ok(Math.abs(looked.cam.pitch - moved.cam.pitch) > 0.01);
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.getElementById('v3WalkSettings').open && !window.__kepler.debug3d().walk.locked);
+    await page.keyboard.press('Escape');
+    assert.ok((await scene(page)).walk, 'Esc из настроек сохраняет прогулку');
     await page.keyboard.press('Delete'); await page.keyboard.press('m'); await page.keyboard.press('Control+z');
     assert.equal(await project(page), data);
     assert.equal(await page.evaluate(() => window.__kepler.state.tool), null);
@@ -51,7 +55,7 @@ it('прогулка: реальное WASD, обзор мышью, защита
   } finally { await app.close(); }
 });
 
-it('пример дома: старт на полу, стены ограничивают движение, потеря фокуса останавливает WASD', async () => {
+it('пример дома: старт снаружи, потеря фокуса останавливает WASD', async () => {
   const app = await startApp();
   try {
     const { page } = app;
@@ -64,16 +68,8 @@ it('пример дома: старт на полу, стены ограничи
     await page.keyboard.down('w');
     await page.waitForFunction((start) => {
       const w = window.__kepler.debug3d().walk;
-      if (Math.hypot(w.x-start.x, w.y-start.y) < 200) return false;
-      const prev = window.walkTestPosition;
-      if (!prev || Math.hypot(w.x-prev.x, w.y-prev.y) > .2) {
-        window.walkTestPosition = { x: w.x, y: w.y, since: performance.now() };
-        return false;
-      }
-      return performance.now() - prev.since > 500;
-    }, initial, { polling: 100 });
-    const stopped = (await scene(page)).walk;
-    assert.ok(distance(initial, stopped) < 4000, 'стена удерживает персонажа при зажатой W');
+      return Math.hypot(w.x-start.x, w.y-start.y) > 200;
+    }, initial);
     await page.keyboard.up('w');
     await page.keyboard.down('d');
     await page.evaluate(() => window.dispatchEvent(new Event('blur')));
@@ -117,7 +113,7 @@ it('телефон: кнопка прогулки, движение удержа
   } finally { await app.close(); }
 });
 
-it('прогулка начинается на выбранном этаже интерьера и возвращает его ракурс', async () => {
+it('прогулка из интерьера второго этажа начинается снаружи и возвращает ракурс этажа', async () => {
   const app = await startApp();
   try {
     const { page } = app;
@@ -129,12 +125,150 @@ it('прогулка начинается на выбранном этаже и�
     await page.selectOption('#v3InteriorLevel', level.id);
     const previous = await scene(page), data = await project(page);
     await page.click('#v3Walk');
-    assert.ok(Math.abs((await scene(page)).walk.z - level.elevation) <= 2);
+    assert.ok((await scene(page)).walk.z < level.elevation - 1000);
     await page.keyboard.press('Escape');
     assert.deepEqual((await scene(page)).cam, previous.cam);
     assert.deepEqual((await scene(page)).levelsShown, previous.levelsShown);
     assert.equal(await page.locator('#v3InteriorLevel').inputValue(), level.id);
     assert.equal(await project(page), data);
+    assert.deepEqual(app.errors, []);
+  } finally { await app.close(); }
+});
+
+it('чувствительность меняется клавиатурой, влияет на обзор и сохраняется после перезагрузки', async () => {
+  const app = await startApp();
+  try {
+    const { page } = app;
+    await openNew(page); await page.click('#view3dBtn'); await page.click('#v3Walk');
+    await page.evaluate(() => { document.getElementById('canvas3d').requestPointerLock = undefined; });
+    const slider = page.locator('#v3WalkSensitivity');
+    const look = async () => {
+      const c = await page.locator('#canvas3d').boundingBox();
+      await page.mouse.move(c.x+c.width/2, c.y+c.height/2);
+      const before = (await scene(page)).cam.yaw;
+      await page.mouse.down();
+      await page.mouse.move(c.x+c.width/2+80, c.y+c.height/2, { steps: 8 });
+      await page.mouse.up();
+      return Math.abs((await scene(page)).cam.yaw-before);
+    };
+    await page.keyboard.press('o'); await slider.focus(); await slider.press('Home');
+    assert.equal((await scene(page)).walk.sensitivity, .25);
+    await slider.press('ArrowRight');
+    assert.equal((await scene(page)).walk.sensitivity, .3);
+    await slider.press('Home'); await page.keyboard.press('Escape');
+    const slow = await look();
+    await page.locator('#v3WalkSettings summary').click();
+    await slider.focus(); await slider.press('End'); await page.keyboard.press('Escape');
+    const fast = await look();
+    assert.ok(Math.abs(fast/slow-12) < .01);
+    await page.keyboard.press('Escape');
+    await page.reload(); await page.waitForFunction(() => Boolean(window.__kepler));
+    if (await page.locator('#startScreen').isVisible()) await openNew(page);
+    await page.click('#view3dBtn'); await page.click('#v3Walk');
+    await page.locator('#v3WalkSettings summary').click();
+    assert.equal(await slider.inputValue(), '3');
+    assert.equal((await scene(page)).walk.sensitivity, 3);
+    assert.deepEqual(app.errors, []);
+  } finally { await app.close(); }
+});
+
+it('с улицы через калитку и крыльцо: вход, выход и повторный вход реальными WASD', async () => {
+  const app = await startApp();
+  try {
+    const { page } = app;
+    await openNew(page);
+    await page.evaluate(async () => {
+      const { createRoom, createOpening } = await import('./core/model.js');
+      const { mutate } = await import('./ui/store.js');
+      const { entryAt } = await import('./core/site-entries.js');
+      const p = window.__kepler.state.project;
+      mutate(() => {
+        p.envelope.zeroAboveGround = 1000;
+        const room = createRoom('entrance', 0, 0, 5000, 4000);
+        const door = createOpening('door', room.id, 0, 2500, 1000); door.entryRole = 'main';
+        p.rooms.push(room); p.openings.push(door);
+        p.site.boundary = [{ x: -5000, y: -6000 }, { x: 10000, y: -6000 }, { x: 10000, y: 10000 }, { x: -5000, y: 10000 }];
+        const entry = { id: 'walk-wicket', kind: 'wicket', width: 1000, height: 1800 };
+        p.site.entries = [{ ...entry, ...entryAt(p.site, { x: 2500, y: -6000 }, entry) }];
+      });
+    });
+    const data = await project(page);
+    await page.click('#view3dBtn'); await page.click('#v3Walk');
+    const start = (await scene(page)).walk;
+    assert.ok(start.y < -6000 && Math.abs(start.x-2500) < 1);
+    await page.keyboard.down('Shift');
+    for (const direction of ['w', 's', 'w']) {
+      await page.keyboard.down(direction);
+      await page.waitForFunction((inside) => {
+        const p = window.__kepler.debug3d().walk;
+        return inside ? p.y > 500 : p.y < -6800;
+      }, direction === 'w');
+      await page.keyboard.up(direction);
+      const reached = (await scene(page)).walk;
+      assert.ok(Math.abs(reached.z - (direction === 'w' ? 1 : -1000)) < 2);
+    }
+    await page.keyboard.up('Shift'); await page.keyboard.press('Escape');
+    assert.equal(await project(page), data);
+    assert.deepEqual(app.errors, []);
+  } finally { await app.close(); }
+});
+
+it('внутренняя лестница: WASD поднимает персонажа, камера плавно догоняет ступени и опускается обратно', async () => {
+  const app = await startApp();
+  try {
+    const { page } = app;
+    await openNew(page);
+    await page.evaluate(async () => {
+      const { createRoom, createOpening, createItem, createLevel } = await import('./core/model.js');
+      const { applyStairPreset } = await import('./core/stairs.js');
+      const { mutate } = await import('./ui/store.js');
+      const { entryAt } = await import('./core/site-entries.js');
+      const p = window.__kepler.state.project;
+      mutate(() => {
+        p.envelope.zeroAboveGround = 0;
+        const room = createRoom('stairs-room', -2000, -4000, 4000, 8000);
+        const door = createOpening('door', room.id, 2, 2000, 1000); door.entryRole = 'main';
+        p.rooms.push(room); p.openings.push(door);
+        p.items.push(applyStairPreset(createItem('stairs', 0, 0, 1000, 3000), 'straight', 3000));
+        const upper = createLevel('2 этаж', 3000);
+        upper.rooms.push(createRoom('stairs-room', -2000, -4000, 4000, 8000));
+        p.levels.push(upper);
+        p.site.boundary = [{ x: -5000, y: -6000 }, { x: 5000, y: -6000 }, { x: 5000, y: 7000 }, { x: -5000, y: 7000 }];
+        const entry = { id: 'walk-wicket', kind: 'wicket', width: 1000, height: 1800 };
+        p.site.entries = [{ ...entry, ...entryAt(p.site, { x: 0, y: 7000 }, entry) }];
+      });
+    });
+    await page.click('#view3dBtn'); await page.click('#v3Walk');
+    await page.evaluate(() => {
+      window.walkHeightSamples = [];
+      const sample = () => {
+        const p = window.__kepler.debug3d().walk;
+        if (!p) return;
+        window.walkHeightSamples.push({ z: p.z, viewZ: p.viewZ });
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+    await page.keyboard.down('Shift'); await page.keyboard.down('w');
+    await page.waitForFunction(() => window.__kepler.debug3d().walk.y < -1700);
+    await page.keyboard.up('w');
+    assert.ok((await scene(page)).walk.z > 2500);
+    await page.waitForFunction(() => {
+      const p = window.__kepler.debug3d().walk;
+      return Math.abs(p.z-p.viewZ) < 1;
+    });
+    await page.keyboard.down('s');
+    await page.waitForFunction(() => window.__kepler.debug3d().walk.y > 3200);
+    await page.keyboard.up('s'); await page.keyboard.up('Shift');
+    await page.waitForFunction(() => {
+      const p = window.__kepler.debug3d().walk;
+      return Math.abs(p.z-p.viewZ) < 1;
+    });
+    assert.ok((await scene(page)).walk.z < 2);
+    const samples = await page.evaluate(() => window.walkHeightSamples);
+    assert.ok(samples.some((p) => p.z-p.viewZ > 20), 'плавный подъём');
+    assert.ok(samples.some((p) => p.viewZ-p.z > 20), 'плавный спуск');
+    await page.keyboard.press('Escape');
     assert.deepEqual(app.errors, []);
   } finally { await app.close(); }
 });
