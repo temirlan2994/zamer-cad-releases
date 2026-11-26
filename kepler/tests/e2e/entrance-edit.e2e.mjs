@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { openNew, settleView, startApp, worldToClient } from './helpers.mjs';
+import { openNew, pickWorkspaceView, settleView, startApp, worldToClient } from './helpers.mjs';
 
 test('крыльцо выбирается в 3D: размеры и материал, сохранение и удаление без двери', async () => {
   const app = await startApp({ width: 1440, height: 900 });
@@ -70,15 +70,20 @@ test('крыльцо выбирается в 3D: размеры и матери�
   } finally { await app.close(); }
 });
 
-for (const mobile of [false, true]) test(`наружная лестница из отдельной кнопки${mobile ? ' на телефоне' : ''}`, async () => {
+for (const mobile of [false, true]) test(`наружная лестница из каталога ландшафта${mobile ? ' на телефоне' : ''}`, async () => {
   const app = await startApp({ mobile });
   const { page } = app;
   try {
     await openNew(page);
+    assert.equal(await page.locator('#outdoorStairsToolBtn').count(), 0);
     if (mobile) {
-      await page.tap('#mobileBar [data-sheet="draw"]');
-      await page.tap('#mobileDraw [data-draw="outdoorStairsToolBtn"]');
-    } else await page.click('#outdoorStairsToolBtn');
+      await pickWorkspaceView(page, 'model', 'landscape');
+      await page.tap('#mobileBar [data-sheet="rooms"]');
+      await page.tap('[data-ls-quick="stairs"]');
+    } else {
+      await page.click('#landscapeBtn');
+      await page.click('[data-ls-quick="stairs"]');
+    }
     assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'landscape');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'ls-flight');
     const canvas = await page.locator('#canvas').boundingBox();

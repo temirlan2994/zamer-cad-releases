@@ -195,7 +195,7 @@ const PATH_PRESETS = {
   },
 };
 
-export function startOutdoorStairs() {
+function startOutdoorStairs() {
   setTool({ kind: 'ls-flight', lsKind: 'stairs-out', first: null, cursor: null, opts: { ...stairOptions }, ground: groundFn(state.project) }, STAIR_START);
   selectObject(null);
   renderLandscapeLibrary();

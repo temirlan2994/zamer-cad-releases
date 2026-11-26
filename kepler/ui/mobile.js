@@ -350,7 +350,6 @@ function finishTool() {
 // который находится вне прокручиваемого ряда и потому не обрезается overflow.
 const PLAN_DRAW = [
   { type: 'tool', id: 'wallToolBtn' },
-  { type: 'tool', id: 'outdoorStairsToolBtn' },
   { type: 'family', id: 'openings' },
   { type: 'tool', id: 'roofToolBtn' },
   { type: 'family', id: 'mass' },
@@ -469,8 +468,8 @@ function syncMobileToolFlyout() {
 
 function drawSources() {
   const context = toolContext();
-  if (context === 'site') return [el('outdoorStairsToolBtn'), ...(el('siteTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
-  if (context === 'landscape') return [el('outdoorStairsToolBtn'), ...(el('landscapeTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
+  if (context === 'site') return [...(el('siteTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
+  if (context === 'landscape') return [...(el('landscapeTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
   const model = context === 'model';
   const entries = PLAN_DRAW.filter((entry) => !model || availableModelTool(entry.type === 'family' ? toolFamily(entry.id)?.parentId : entry.id));
   return entries.map((entry) => entry.type === 'family'

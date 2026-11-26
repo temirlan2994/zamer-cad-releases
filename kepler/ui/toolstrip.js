@@ -9,7 +9,7 @@
 
 import { polygonAreaM2 } from '../core/site.js';
 import { el, refs } from './dom.js';
-import { labelLandscapeSelection, selectedIds, startOutdoorStairs } from './landscape.js';
+import { labelLandscapeSelection, selectedIds } from './landscape.js';
 import { startLandscapeArray } from './landscape-array.js';
 import { isSectionOpen, startSectionTool } from './landscape-section.js';
 import { applyLibraryTab, syncLibraryOpen } from './library.js';
@@ -325,7 +325,7 @@ const SHORT = {
 };
 const PLAN_LABELS = {
   selectToolBtn: 'Выбор', wallToolBtn: 'Стена', boundRoomBtn: 'Помещение', doorToolBtn: 'Дверь', windowToolBtn: 'Окно',
-  furnitureToolBtn: 'Мебель', stairsToolBtn: 'Лестница', outdoorStairsToolBtn: 'Наружная', slabOpeningToolBtn: 'Проём', massToolBtn: 'Масса', massVoidToolBtn: 'Пустота', roofToolBtn: 'Крыша', gridToolBtn: 'Ось',
+  furnitureToolBtn: 'Мебель', stairsToolBtn: 'Лестница', slabOpeningToolBtn: 'Проём', massToolBtn: 'Масса', massVoidToolBtn: 'Пустота', roofToolBtn: 'Крыша', gridToolBtn: 'Ось',
   sectionToolBtn: 'Разрез', viewBtn: 'Поворот', fitBtn: 'Вписать',
 };
 function ensurePlanLabels() {
@@ -402,7 +402,7 @@ const toggle = (id, on) => {
 // смене инструмента (ui/library.js renderLibrary) и панели свойств.
 const MODEL_TOOLS = new Set([
   'selectToolBtn', 'openingsGroupBtn', 'doorToolBtn', 'windowToolBtn',
-  'furnitureToolBtn', 'stairsToolBtn', 'outdoorStairsToolBtn', 'massGroupBtn', 'massToolBtn', 'massVoidToolBtn', 'roofToolBtn',
+  'furnitureToolBtn', 'stairsToolBtn', 'massGroupBtn', 'massToolBtn', 'massVoidToolBtn', 'roofToolBtn',
 ]);
 
 export function toolContext() {
@@ -461,8 +461,6 @@ export function renderToolstrip() {
     || (phone ? document.body.classList.contains('sheet-library') && state.libraryTab === 'furniture' : pinned && state.libraryTab === 'furniture'));
   toggle('furnitureToolBtn', furnOpen);
   toggle('stairsToolBtn', stairs);
-  toggle('outdoorStairsToolBtn', t?.kind === 'ls-flight');
-  el('outdoorStairsToolBtn')?.setAttribute('aria-pressed', String(t?.kind === 'ls-flight'));
   toggle('slabOpeningToolBtn', t?.kind === 'slab-opening');
   toggle('sectionToolBtn', t?.kind === 'psec');
   toggle('massToolBtn', t?.kind === 'mass' && !t.void);
@@ -525,16 +523,6 @@ export function bindToolstrip() {
     applyLibraryTab();
   });
   el('stairsToolBtn')?.addEventListener('click', toggleStairs);
-  el('outdoorStairsToolBtn')?.addEventListener('click', () => {
-    if (state.tool?.kind === 'ls-flight') cancelTool();
-    else {
-      if (state.tool?.kind === 'wall') finishWallChain();
-      el('landscapeBtn').click();
-      startOutdoorStairs();
-      closeSheets();
-    }
-    renderToolstrip();
-  });
   el('slabOpeningToolBtn')?.addEventListener('click', () => {
     if (state.tool?.kind === 'wall') finishWallChain();
     startSlabOpeningTool();
