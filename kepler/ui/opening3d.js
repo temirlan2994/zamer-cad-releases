@@ -150,7 +150,7 @@ function selectedInfo() {
   const opening = state.project.openings.find((o) => o.id === state.selection.id);
   if (!opening) return null;
   const geometry = [opening.width, openingPos(opening), opening.sill, opening.height, opening.heightMode, opening.span?.levelId, opening.span?.topGap, opening.corner?.end, opening.corner?.joint, opening.corner?.returnWidth, JSON.stringify(opening.assembly)].join('/');
-  if (selectedCache?.opening === opening && selectedCache.walls === state.walls && selectedCache.geometry === geometry) return selectedCache.info;
+  if (selectedCache?.opening === opening && selectedCache.walls === state.walls && selectedCache.geometry === geometry && selectedCache.revision === state.drawingRevision) return selectedCache.info;
   const placed = openingRect(state.project, opening, state.walls);
   const level = state.project.levels.find((l) => l.id === state.project.activeLevel);
   if (!placed || !level) return null;
@@ -183,7 +183,7 @@ function selectedInfo() {
     .filter((t) => t.kind === opening.kind);
   const span = !isGlazedAssembly(opening) && nextWindowSpan(state.project, level.id, opening);
   const info = { opening, placed, wall, level, handles, targets, z0, z1, wallBottom: wallRange.z0, wallTop: wallRange.z1, span };
-  selectedCache = { opening, walls: state.walls, geometry, info };
+  selectedCache = { opening, walls: state.walls, geometry, revision: state.drawingRevision, info };
   return info;
 }
 

@@ -4,7 +4,7 @@ import { cornerWindowProjections } from './corner-windows.js';
 import { glazedOpeningProjections } from './glazed-openings.js';
 import { activeLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
 import { openingSill } from './opening-preset.js';
-import { fitOpeningOffset } from './opening-spacing.js';
+import { EDGE_MARGIN, fitOpeningOffset } from './opening-spacing.js';
 import { deriveWalls, hostOpeningRoom, openingPos, openingRect, wallsEngine } from './walls.js';
 import { wallZRange } from './wall-z-range.js';
 
@@ -77,26 +77,56 @@ function spanHost(project, levelId, opening, wallsByLevel = new Map()) {
   if (lowerWall.from > from || lowerWall.to < to) return null;
   const lowerFace = faceOf(lowerWall, source.outward);
   const upperWalls = wallsOf(up);
+  const candidates = [];
   for (const wall of upperWalls) {
     if (wall.hidden || !['own', 'manual'].includes(wall.kind) || wall.orient !== lowerWall.orient
-      || wall.from > from || wall.to < to) continue;
-    const target = targetOpening(opening, wall, up, placed.absCenter);
-    const host = target && facadeHost(up, target, wall, upperWalls);
+      || wall.to <= from || wall.from >= to) continue;
+    const center = (Math.max(from, wall.from) + Math.min(to, wall.to)) / 2;
+    const probe = targetOpening(opening, wall, up, center);
+    const host = probe && facadeHost(up, probe, wall, upperWalls);
     if (!host || source.outward !== host.outward) continue;
     const face = faceOf(wall, host.outward);
     // Толщина стен может отличаться. Общая плоскость стекла должна входить в обе стены.
     if (Math.abs(face.outer - lowerFace.outer) > 1 && Math.abs(face.inner - lowerFace.inner) > 1) continue;
     if (lowerFace.center < face.lo + 15 || lowerFace.center > face.hi - 15) continue;
-    const offset = openingPos(target);
-    const fitted = fitOpeningOffset(up, target, upperWalls, offset, { others: upper.openings });
     const upperZ = wallZRange(up, wall, upper.height);
-    if (fitted == null || Math.abs(fitted - offset) > 0.5 || upperZ.z0 > 0.5) continue;
-    const minTop = delta + 1;
+    if (upperZ.z0 > .5) continue;
     const maxTop = delta + Math.min(roomCeiling(host.room, upper), upperZ.z1);
-    if (maxTop < minTop) continue;
-    return { target, targetRoomId: host.room.id, targetLevelId: upper.id, minTop, maxTop, delta, sill, frameBand: lowerWall.band, outward: host.outward };
+    if (maxTop < delta + 1) continue;
+    // rects включают заполнение стыка комнат, которого нет в номинальном
+    // отрезке стены. Покрытие проверяем в общей плоскости стекла.
+    for (const rect of wall.rects || [wall.band]) {
+      const cross = wall.orient === 'h' ? rect.y : rect.x;
+      const crossEnd = cross + (wall.orient === 'h' ? rect.h : rect.w);
+      if (lowerFace.center < cross + 1 || lowerFace.center > crossEnd - 1) continue;
+      const lo = Math.max(from, wall.orient === 'h' ? rect.x : rect.y);
+      const hi = Math.min(to, wall.orient === 'h' ? rect.x+rect.w : rect.y+rect.h);
+      if (hi > lo + .5) candidates.push({ wall, roomId: host.room.id, lo, hi, maxTop });
+    }
   }
-  return null;
+  const targets = [];
+  let cursor = from;
+  while (cursor < to - .5) {
+    const available = candidates.filter((part) => part.lo <= cursor + .5 && part.hi > cursor + .5)
+      .sort((a, b) => b.hi-a.hi);
+    const part = available[0];
+    if (!part) return null; // разрыв или отступ фасада нельзя перекрывать витражом
+    const end = part.hi;
+    const target = targetOpening({ ...opening, width: end-cursor }, part.wall, up, (cursor+end)/2);
+    if (!target || !openingRect(up, target, upperWalls)) return null;
+    // На внутренних стыках нужен единый проём без обязательного простенка.
+    // По внешним краям и у соседних окон прежние отступы сохраняются.
+    const joined = { ...part.wall,
+      from: cursor > from+.5 ? Math.min(part.wall.from, cursor)-EDGE_MARGIN : part.wall.from,
+      to: end < to-.5 ? Math.max(part.wall.to, end)+EDGE_MARGIN : part.wall.to };
+    const fitted = fitOpeningOffset(up, target, upperWalls.map((wall) => wall === part.wall ? joined : wall), openingPos(target), { others: upper.openings });
+    if (fitted == null || Math.abs(fitted-openingPos(target)) > .5) return null;
+    targets.push({ target, roomId: part.roomId, maxTop: part.maxTop });
+    cursor = end;
+  }
+  if (!targets.length) return null;
+  return { targets, targetRoomId: targets[0].roomId, targetLevelId: upper.id, minTop: delta+1,
+    maxTop: Math.min(...targets.map((part) => part.maxTop)), delta, sill, frameBand: lowerWall.band, outward: source.outward, from, to };
 }
 
 export function nextWindowSpan(project, levelId, opening) {
@@ -148,11 +178,13 @@ export function levelWindowOpenings(project, walls = null) {
       const top = topOf(host, opening);
       if (top == null) continue;
       const props = { heightMode: 'custom', spanOwnerLevelId: level.id, spanTop: top,
-        spanTargetRoomId: host.targetRoomId, spanFrameBand: host.frameBand, spanOutward: host.outward };
+        spanTargetRoomId: host.targetRoomId, spanTargetRoomIds: [...new Set(host.targets.map((part) => part.roomId))],
+        spanFrameBand: host.frameBand, spanOutward: host.outward, spanAlongFrom: host.from, spanAlongTo: host.to };
       if (level.id === current.id) {
         slices.set(opening.id, { ...opening, ...props, sill: host.sill, height: host.delta - host.sill, spanPart: 'lower' });
       } else {
-        projected.push({ ...host.target, ...props, sill: 0, height: top - host.delta, spanPart: 'upper' });
+        host.targets.forEach((part, index) => projected.push({ ...part.target, ...props, spanTargetRoomId: part.roomId,
+          ...(host.targets.length > 1 ? { spanSlice: index } : {}), sill: 0, height: top-host.delta, spanPart: 'upper' }));
       }
     }
   }

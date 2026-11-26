@@ -149,7 +149,9 @@ function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
   const width = a1 - a0;
   const height = z1 - z0;
   if (width < 1 || height < 1) return faces;
-  const frame = Math.max(35, Math.min(70, width / 7, (opening.spanPart ? opening.spanTop : height) / 7));
+  const wholeFrom = opening.spanAlongFrom ?? a0, wholeTo = opening.spanAlongTo ?? a1;
+  const wholeWidth = wholeTo-wholeFrom;
+  const frame = Math.max(35, Math.min(70, wholeWidth / 7, (opening.spanPart ? opening.spanTop : height) / 7));
   const cross = orient === 'h' ? band.h : band.w;
   const depth = Math.max(30, Math.min(80, cross * 0.55));
   const mid = orient === 'h' ? band.y + band.h / 2 : band.x + band.w / 2;
@@ -173,8 +175,8 @@ function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
   if (bottomRail) addBox(a0, a1, z0, z0 + bottomRail);
   if (topRail) addBox(a0, a1, z1 - topRail, z1);
   const cornerPost = opening.cornerWing && opening.corner.joint !== 'pier';
-  if (!cornerPost || !opening.cornerAtStart) addBox(a0, a0 + frame, z0 + bottomRail, z1 - topRail);
-  if (!cornerPost || opening.cornerAtStart) addBox(a1 - frame, a1, z0 + bottomRail, z1 - topRail);
+  if (Math.abs(a0-wholeFrom) < .5 && (!cornerPost || !opening.cornerAtStart)) addBox(a0, a0 + frame, z0 + bottomRail, z1 - topRail);
+  if (Math.abs(a1-wholeTo) < .5 && (!cornerPost || opening.cornerAtStart)) addBox(a1 - frame, a1, z0 + bottomRail, z1 - topRail);
   if (opening.cornerJunction) {
     const junction = opening.cornerJunction;
     const x = junction.x + junction.w / 2;
@@ -185,11 +187,11 @@ function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
   }
   const type = opening.type || 'standard';
   let sashes = 1;
-  if (type === 'lift-slide' || type === 'sliding') sashes = Math.max(2, Math.round(width / 1600));
-  else if (!['awning', 'clerestory'].includes(type)) sashes = Math.max(1, Math.round(width / (type === 'panoramic' ? 1200 : 800)));
+  if (type === 'lift-slide' || type === 'sliding') sashes = Math.max(2, Math.round(wholeWidth / 1600));
+  else if (!['awning', 'clerestory'].includes(type)) sashes = Math.max(1, Math.round(wholeWidth / (type === 'panoramic' ? 1200 : 800)));
   for (let i = 1; i < sashes; i += 1) {
-    const x = a0 + (width * i) / sashes;
-    addBox(x - frame / 2, x + frame / 2, z0 + bottomRail, z1 - topRail);
+    const x = wholeFrom + (wholeWidth * i) / sashes;
+    addBox(Math.max(a0, x-frame/2), Math.min(a1, x+frame/2), z0 + bottomRail, z1 - topRail);
   }
   if (type === 'awning' || type === 'clerestory') {
     const z = z0 + height * 0.55;

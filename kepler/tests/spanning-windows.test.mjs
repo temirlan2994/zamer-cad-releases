@@ -6,11 +6,88 @@ import { buildHouseMesh } from '../core/mesh3d.js';
 import { pickBoxes, pickWall } from '../core/pick3d.js';
 import { planHitStack } from '../core/hit-stack.js';
 import { addManualWall } from '../core/wall-manual.js';
-import { deriveWalls } from '../core/walls.js';
+import { deriveWalls, openingRect } from '../core/walls.js';
 import { windowsOf } from '../core/insolation.js';
 import { buildIfc } from '../core/ifc.js';
 import { buildStructuredExport } from '../core/export.js';
 import { roomChecks } from '../core/norms.js';
+
+function splitFacade(gap = 150) {
+  const project = createProject('Широкий витраж'); const base = project.levels[0];
+  base.rooms.push(createRoom('living', 0, 0, 10000, 5000));
+  const opening = createOpening('window', base.rooms[0].id, 0, 5000, 4200);
+  opening.type = 'fixed'; opening.heightMode = 'level'; base.openings.push(opening);
+  const upper = createLevel('2 этаж', 3000);
+  upper.rooms.push(createRoom('bedroom', 0, 0, 5000, 5000), createRoom('bedroom', 5000+gap, 0, 5000-gap, 5000));
+  project.levels.push(upper); return { project, base, upper, opening };
+}
+
+test('широкое окно проходит через фасад двух верхних комнат и заполненный стык', () => {
+  for (const gap of [0, 150, 250]) {
+    const { project, base, upper, opening } = splitFacade(gap);
+    assert.ok(setWindowSpan(project, base.id, opening, 5700));
+    const up = levelProject(project, upper.id), walls = deriveWalls(up), parts = levelWindowOpenings(up, walls);
+    assert.equal(parts.length, 2); assert.equal(parts.reduce((sum, part) => sum+part.width, 0), 4200);
+    const rects = parts.map((part) => openingRect(up, part, walls).rect);
+    assert.equal(rects[0].x, 2900); assert.equal(rects[0].x+rects[0].w, rects[1].x); assert.equal(rects[1].x+rects[1].w, 7100);
+    assert.deepEqual(parts.map((part) => part.roomId), upper.rooms.map((room) => room.id));
+    const boxes = pickBoxes(project);
+    for (const x of [3000, 4990, 5075, 6000, 7000]) {
+      const hit = pickWall(boxes.walls, { o: { x, y: -1000, z: 4500 }, d: { x: 0, y: 1, z: 0 } });
+      assert.ok(!hit || hit.point.y >= -.5, 'наружная стена и стык вырезаны; внутренняя перегородка остаётся');
+    }
+    const mesh = buildHouseMesh(project);
+    const slabs = mesh.filter((f) => f.slabRole === 'interfloor' && f.normal.z > .5);
+    assert.ok(!slabs.some((f) => f.pts.some((p) => p.y < 0) && 5075 > Math.min(...f.pts.map((p) => p.x)) && 5075 < Math.max(...f.pts.map((p) => p.x))), 'внутри окна нет полосы перекрытия');
+    const glass = mesh.filter((f) => f.kind === 'glass' && f.openingId === opening.id);
+    assert.equal(glass.length, 3);
+    const verticalFrames = mesh.filter((f) => f.kind === 'window-frame' && f.openingId === opening.id && Math.max(...f.pts.map((p) => p.z))-Math.min(...f.pts.map((p) => p.z)) > 2000);
+    assert.ok(!verticalFrames.some((f) => f.pts.some((p) => p.x > 4990 && p.x < 5260)), 'стык комнат не добавляет лишних стоек рамы');
+    assert.equal(upper.openings.length, 0, 'на втором этаже нет сохранённых копий окна');
+  }
+});
+
+test('составной фасад сохраняет соседние окна и не перекрывает разрыв или сдвиг стены', () => {
+  const { project, base, upper, opening } = splitFacade();
+  const other = createOpening('window', upper.rooms[1].id, 0, 1000, 900); upper.openings.push(other);
+  const before = JSON.stringify(other);
+  assert.equal(nextWindowSpan(project, base.id, opening), null); assert.equal(JSON.stringify(other), before);
+  upper.openings.pop(); assert.ok(nextWindowSpan(project, base.id, opening));
+  upper.rooms[1].y = 100; assert.equal(nextWindowSpan(project, base.id, opening), null);
+  upper.rooms[1].y = 0; upper.rooms[1].x += 1000;
+  assert.equal(nextWindowSpan(project, base.id, opening), null);
+});
+
+test('разные чистые высоты верхних комнат ограничивают общий верх окна', () => {
+  const { project, base, upper, opening } = splitFacade();
+  upper.rooms[0].ceiling = 2600; upper.rooms[1].ceiling = 2400;
+  assert.equal(nextWindowSpan(project, base.id, opening).maxTop, 5400);
+  assert.ok(setWindowSpan(project, base.id, opening, 5300));
+  assert.equal(windowSpanTop(project, base.id, opening), 5300);
+});
+
+test('составной витраж: файл хранит один проём, свет получают обе комнаты, IFC даёт уникальные вырезы', () => {
+  const { project, base, upper, opening } = splitFacade();
+  assert.ok(setWindowSpan(project, base.id, opening, 5700));
+  const copy = deserializeProject(serializeProject(project));
+  assert.equal(copy.levels[0].openings.length, 1); assert.equal(copy.levels[1].openings.length, 0);
+  assert.equal(windowSpanTop(copy, base.id, copy.openings[0]), 5700);
+  assert.deepEqual(windowsOf(copy).filter((w) => w.levelId === upper.id).map((w) => w.roomId), upper.rooms.map((r) => r.id));
+  const ifc = buildIfc(copy);
+  assert.equal(ifc.counts.windows, 1);
+  const ids = [...ifc.text.matchAll(/IFCOPENINGELEMENT\('([^']+)'/g)].map((m) => m[1]);
+  assert.equal(ids.length, 3); assert.equal(new Set(ids).size, 3);
+});
+
+test('верхняя стена одной комнаты с разными толщинами участков остаётся единым витражом', () => {
+  const { project, base, upper, opening } = splitFacade();
+  upper.rooms = [createRoom('bedroom', 0, 0, 10000, 5000)];
+  upper.wallOverrides[`e|${upper.rooms[0].id}|0`] = { spans: [{ orient: 'h', from: 0, to: 5000, thickness: 300 }] };
+  assert.ok(setWindowSpan(project, base.id, opening, 5700));
+  const glass = buildHouseMesh(project).filter((f) => f.kind === 'glass' && f.openingId === opening.id);
+  assert.equal(glass.length, 3);
+  assert.ok(glass.every((f) => f.pts.every((p) => p.y === -125)), 'стекло обоих этажей в одной плоскости');
+});
 
 function fixture() {
   const project = createProject('Витраж');
