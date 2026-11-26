@@ -568,10 +568,6 @@ function updateHoverAndGhost(world, plan, event) {
     const site = hitSiteObject(world);
     if (site) nextHover = { type: 'site-obj', kind: site.kind, id: site.id };
   }
-  if (!nextHover) {
-    const entry = hitEntrancePlan(state, world, 4 / state.view.scale);
-    if (entry) nextHover = { type: 'entrance', id: entry.openingId, part: entry.key };
-  }
   canvas.style.cursor = nextHover ? 'pointer' : 'crosshair';
   if (event?.clientX !== undefined && state._tempDimsUI && hitTempDim(pointerScreen(event))) canvas.style.cursor = 'text';
   if (JSON.stringify(nextHover) !== JSON.stringify(state.hover)) {
@@ -1272,8 +1268,6 @@ export function bindCanvasInput() {
     // Линия оси вне комнат и стен — выбор и сдвиг оси.
     const gridLine = !picked && gridPointerDown(event, screen, plan, { lineAll: true });
     if (gridLine) { drag = gridLine; return; }
-
-    if (!picked && selectEntranceAt(event, screen, world)) return;
 
     // Пустое место: пальцем — панорама, мышью — рамка выделения.
     selectObject(null);

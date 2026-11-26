@@ -29,6 +29,8 @@ export function visibleEntranceParts(st) {
 }
 
 export function hitEntrancePlan(st, point, tolerance = 0) {
+  // На плане этажа крыльцо — фон участка, как плиты ландшафта.
+  if (st.modeName === 'plan') return null;
   const parts = visibleEntranceParts(st);
   if (!parts.length || pointInBuilding(st.project, point)) return null;
   for (let i = parts.length - 1; i >= 0; i -= 1) {
@@ -41,9 +43,10 @@ export function hitEntrancePlan(st, point, tolerance = 0) {
 // Контекст уже в локальных осях дома (composeView), а не участка.
 export function drawEntrancePlan(ctx, st, tokens, px, { mono = false, print = false } = {}) {
   const parts = visibleEntranceParts(st);
+  const interactive = !print && st.modeName !== 'plan';
   for (const part of parts) {
-    const selected = !print && st.selection?.type === 'entrance' && st.selection.id === part.openingId && (st.selection.part || 'landing') === part.key;
-    const hovered = !print && st.hover?.type === 'entrance' && st.hover.id === part.openingId && st.hover.part === part.key;
+    const selected = interactive && st.selection?.type === 'entrance' && st.selection.id === part.openingId && (st.selection.part || 'landing') === part.key;
+    const hovered = interactive && st.hover?.type === 'entrance' && st.hover.id === part.openingId && st.hover.part === part.key;
     ctx.save();
     ctx.beginPath();
     part.polygon.forEach((p, i) => { if (i) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y); });

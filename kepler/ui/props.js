@@ -39,7 +39,7 @@ import { addRoomAbove, deleteLevel, switchLevel } from './levels.js';
 import { closeSheets, isPhone, syncMobileBar } from './mobile.js';
 import { renderTepPanel } from './props-tep.js';
 import {
-  activeViewTitle, bindViewSettings, renderViewsPanel, viewSettingsHtml,
+  activeViewTitle, bindViewSettings, openView, renderViewsPanel, viewSettingsHtml,
 } from './props-views.js';
 import { renderSheetProps, renderSheetsPanel } from './props-sheets.js';
 import { refreshSheetView } from './sheet-view.js';
@@ -1070,7 +1070,10 @@ function renderOpeningProps(panel, opening) {
         <input id="openOff" type="number" step="50" value="${Math.round(openingPos(opening))}"></label>
     </div>`;
 
-  panel.querySelector('#editEntrance')?.addEventListener('click', () => selectObject({ type: 'entrance', id: opening.id }));
+  panel.querySelector('#editEntrance')?.addEventListener('click', () => {
+    if (state.modeName === 'plan' && !document.body.classList.contains('v3-open')) openView('landscape');
+    selectObject({ type: 'entrance', id: opening.id });
+  });
   const commitOpening = (fn) => {
     const before = structuredClone(opening);
     mutate(() => {

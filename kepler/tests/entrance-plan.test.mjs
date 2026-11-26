@@ -45,11 +45,15 @@ test('крыльцо видно на своём плане и участке, н
   const st = fixture(); st.modeName = 'plan';
   const first = st.project.activeLevel;
   assert.equal(visibleEntranceParts(st).length, 7);
+  const poly = entrancePlanParts(st).find((p) => p.key === 'step-3').worldPolygon;
+  const point = { x: (poly[1].x + poly[2].x) / 2, y: (poly[1].y + poly[2].y) / 2 };
+  assert.equal(hitEntrancePlan(st, point, 1), null, 'на плане этажа ступень видна, но не выбирается');
   const upper = createLevel('2 этаж', 3000); st.project.levels.push(upper);
   st.project.activeLevel = upper.id;
   assert.deepEqual(visibleEntranceParts(st), []);
   st.modeName = 'site'; assert.equal(visibleEntranceParts(st).length, 7);
   st.modeName = 'landscape'; assert.equal(visibleEntranceParts(st).length, 7);
+  assert.equal(hitEntrancePlan(st, point, 1)?.key, 'step-3', 'в ландшафте выбор доступен');
   st.project.activeLevel = first; st.modeName = 'plan'; st.roofPlan = true;
   assert.deepEqual(visibleEntranceParts(st), []);
 });

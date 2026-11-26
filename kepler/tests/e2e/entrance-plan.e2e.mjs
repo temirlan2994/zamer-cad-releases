@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { openNew, pickWorkspaceView, settleView, startApp } from './helpers.mjs';
 
-for (const [mode, mobile] of [['landscape', false], ['landscape', true], ['plan', false], ['site', false], ['plan', true], ['site', true]]) test(`крыльцо видно и выбирается: ${mode}${mobile ? ' на телефоне' : ' с повёрнутым домом'}`, async () => {
+for (const [mode, mobile] of [['landscape', false], ['landscape', true], ['plan', false], ['site', false], ['plan', true], ['site', true]]) test(`крыльцо: ${mode === 'plan' ? 'видно без выбора на этаже' : `видно и выбирается в ${mode}`}${mobile ? ' на телефоне' : ' с повёрнутым домом'}`, async () => {
   const app = await startApp({ mobile, width: 1440, height: 950 });
   const { page } = app;
   try {
@@ -46,16 +46,40 @@ for (const [mode, mobile] of [['landscape', false], ['landscape', true], ['plan'
     }, mobile);
     await settleView(page);
     assert.equal(await page.evaluate(() => window.__kepler.state._planEntrances), 7);
-    const client = await page.evaluate(async (point) => {
+    const locate = () => page.evaluate(async (point) => {
       const { worldToScreen } = await import('./ui/view.js');
       const p = worldToScreen(point.x, point.y); const r = document.getElementById('canvas').getBoundingClientRect();
       return { x: r.x + p.x, y: r.y + p.y };
     }, point);
+    let client = await locate();
     if (mobile) await page.touchscreen.tap(client.x, client.y);
     else { await page.mouse.move(client.x, client.y); await page.mouse.click(client.x, client.y); }
+    if (mode === 'plan') {
+      assert.equal(await page.evaluate(() => window.__kepler.state.selection), null, 'клик или касание не выбирает наружную лестницу на этаже');
+      assert.notEqual(await page.evaluate(() => window.__kepler.state.hover?.type), 'entrance', 'лестница не подсвечивается при наведении');
+      assert.equal(await page.locator('[data-stair-plan-edge]:visible').count(), 0);
+      await page.keyboard.press('Delete'); await settleView(page);
+      assert.equal(await page.evaluate(() => window.__kepler.state._planEntrances), 7, 'Delete после клика не удаляет крыльцо');
+      // Явное редактирование из свойств входной двери открывает ландшафт.
+      await page.evaluate(() => window.__kepler.select({ type: 'opening', id: 'entry-door' }));
+      if (mobile) await page.tap('#mobileBar [data-sheet="props"]');
+      await page.click('#editEntrance'); await settleView(page);
+      assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'landscape');
+      assert.deepEqual(await page.evaluate(() => window.__kepler.state.selection), { type: 'entrance', id: 'entry-door' });
+      // Убираем ручки площадки: на телефоне они могут перекрывать нижнюю ступень.
+      await page.evaluate(() => window.__kepler.select(null));
+      await page.evaluate(async (point) => {
+        const view = await import('./ui/view.js'); const st = window.__kepler.state;
+        const c = document.getElementById('canvas'); const at = view.worldToScreen(point.x, point.y);
+        st.view.panX += c.clientWidth / 2 - at.x; st.view.panY += c.clientHeight * .42 - at.y;
+        view.requestDraw();
+      }, point);
+      await settleView(page); client = await locate();
+      if (mobile) await page.touchscreen.tap(client.x, client.y); else await page.mouse.click(client.x, client.y);
+    }
     const selection = await page.evaluate(() => window.__kepler.state.selection);
     assert.deepEqual(selection, { type: 'entrance', id: 'entry-door', part: 'step-3' });
-    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), mode, 'выбор сохраняет текущий вид');
+    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), mode === 'plan' ? 'landscape' : mode, 'редактирование доступно в виде участка');
     assert.equal(await page.inputValue('#stairPartWidth'), '3400');
     if (mobile && !(await page.locator('body').evaluate((b) => b.classList.contains('sheet-props')))) await page.tap('#mobileBar [data-sheet="props"]');
     await page.fill('#stairPartWidth', '4000'); await page.press('#stairPartWidth', 'Tab');
