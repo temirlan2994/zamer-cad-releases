@@ -35,6 +35,8 @@ import {
 } from '../core/wall-edit3d.js';
 import { el, toast } from './dom.js';
 import { PROJECT_REPLACED_EVENT } from './files.js';
+import { walkStart, walkWorld } from '../core/walk3d.js';
+import { createWalkController } from './walk3d.js';
 import { syncLibraryOpen } from './library.js';
 import { closeLibrarySheet } from './mobile.js';
 import { closeElevation } from './elevation-view.js';
@@ -87,6 +89,8 @@ const cam = {
 const layerPreferences = { roof: true, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all', masses: true, evening: false };
 let opts = layerPreferences;
 let interior = null;
+let walk = null;
+let walkPrevious = null;
 const LAYERS_KEY = 'kepler-3d-layers'; // запомненные слои: мебель, этажи, массы
 const LEVEL_MODES = new Set(['all', 'upto', 'only']);
 let frontFacade = null;
@@ -106,7 +110,7 @@ function loadLayers() {
 }
 
 function saveLayers() {
-  if (interior) return; // временные настройки ракурса не меняют предпочтения пользователя
+  if (interior || walk?.active) return; // временные настройки ракурса не меняют предпочтения пользователя
   try {
     const prev = JSON.parse(localStorage.getItem(LAYERS_KEY) || 'null') || {}; // и флажок «Магнит масс» (ui/mass3d.js)
     localStorage.setItem(LAYERS_KEY, JSON.stringify({
@@ -244,10 +248,11 @@ function faceAlpha(face) {
   return face.alpha ?? 1;
 }
 
-function render() {
+function render(now) {
   drawQueued = false;
   const canvas = el('canvas3d');
   if (!active || !canvas) return;
+  walk?.frame(now);
   if (!use2d && !gl) initGl(canvas);
   else if (gl && geomDirty) uploadGeometry();
   else if (gl && (['mass', 'roof', 'opening', 'item', 'landscape'].includes(state.selection?.type) || openingToolOn())) uploadOverlay(); // гизмо, призраки и точки — к камере
@@ -409,7 +414,7 @@ function render2d(canvas) {
   geomDirty = false;
   for (const face of faces.concat(overlays())) {
     if (!groundShown(face)) continue; // подземная часть — только у выбранной массы
-    const P = face.pts.map(W);
+    let P = face.pts.map(W);
     const centroid = P.reduce((s, p) => ({ x: s.x + p.x / P.length, y: s.y + p.y / P.length, z: s.z + p.z / P.length }), { x: 0, y: 0, z: 0 });
     const toEye = sub(c.eye, centroid);
     let n;
@@ -423,17 +428,33 @@ function render2d(canvas) {
     const pts = [];
     let depth = 0;
     let behind = false;
+    // Внутри комнаты большие стены пересекают ближнюю плоскость камеры.
+    // В Canvas-fallback обрезаем многоугольник, сохраняя видимую часть стены.
+    if (walk?.active) {
+      const clipped = [];
+      for (let i = 0; i < P.length; i++) {
+        const a = P[i], b = P[(i + 1) % P.length];
+        const da = dot(sub(a, c.eye), c.f), db = dot(sub(b, c.eye), c.f);
+        if (da >= near) clipped.push(a);
+        if ((da >= near) !== (db >= near)) {
+          const t = (near - da) / (db - da);
+          clipped.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t });
+        }
+      }
+      P = clipped;
+      if (P.length < 3) continue;
+    }
     for (const p of P) {
       const d = sub(p, c.eye);
       const zc = dot(d, c.f);
-      if (zc < near) { behind = true; break; }
+      if (zc < near - 0.001) { behind = true; break; }
       pts.push(projectPoint(cam, width, height, W(p)));
       depth += zc;
     }
     if (behind) continue;
     const light = face.flat ? 1 : 0.6 + 0.4 * Math.max(0, dot(n, LIGHT));
     const [r, g, b] = hexRgb(sceneColor(face));
-    const edgePts = Array.isArray(face.edges) ? face.edges.map(([a0, b0]) => [a0, b0].map((raw) => {
+    const edgePts = !walk?.active && Array.isArray(face.edges) ? face.edges.map(([a0, b0]) => [a0, b0].map((raw) => {
       return projectPoint(cam, width, height, raw);
     })) : null;
     const er = face.edgeRgba;
@@ -722,6 +743,7 @@ function objectGizmoHint() {
 function setHint(text) {
   const hint = el('v3Hint');
   if (!hint) return;
+  if (walk?.active) { hint.textContent = ''; return; }
   if (text === undefined) {
     if (choosingFacadeWall()) text = 'Нажмите на наружную стену или её окно, чтобы открыть фасад';
     else if (!wallsEditable()) text = HINT_SITE;
@@ -770,6 +792,7 @@ export function refresh3dSelection() {
 // выбор; true — Esc поглощён, иначе (выбора нет) вид можно закрыть.
 export function escape3d() {
   if (!active) return false;
+  if (walk?.active) { leaveWalk(); return true; }
   if (stairShapeDragging()) { cancelStairShapeDrag(); return true; }
   if (numTarget) { hideNumber(); setHint(); return true; }
   if (massNumOpen()) { closeMassNum(); setHint(); return true; }
@@ -880,6 +903,48 @@ function rebuildScene() {
   faces = buildHouseMesh(state.project, { ...opts, roofs: opts.roof, facades: opts.masses, facadeApertures });
   sets = null;
   rebuildStats.full += 1;
+  if (walk?.active) walk.scene(walkWorld(faces, terrainHeightFn(state.project, opts.terrainScale)));
+}
+
+function enterWalk() {
+  if (walk.active) { leaveWalk(); return; }
+  const roomId = state.selection?.type === 'room' ? state.selection.id : null;
+  cancelStairShapeDrag();
+  if (edit) cancelEdit();
+  if (massDragging()) cancelMassDrag();
+  if (roofDragging()) cancelRoofDrag();
+  if (objectGizmoDragging()) cancelObjectGizmoDrag();
+  if (openingResizeDragging()) cancelOpeningResize();
+  if (gesture?.hold) clearTimeout(gesture.hold);
+  gesture = null; pointers.clear();
+  cancelTool(); resetMassTool(); resetRoofTool(); resetOpeningTool();
+  hideNumber(); closeMassNum(); closeRoofNum();
+  selectObject(null);
+  hover = null; objectHover = null; facadePreview = null; massVoidHoverId = null;
+  setMassLabel(null);
+  walkPrevious = { cam: { ...cam, target: { ...cam.target } }, opts, interior, frontFacade };
+  interior = null; frontFacade = null;
+  opts = { ...opts, levels: 'all', roof: true, site: true, landscape: true, furniture: true, masses: true };
+  rebuildScene();
+  const world = walkWorld(faces, terrainHeightFn(state.project, opts.terrainScale));
+  const start = walkStart(world, { level: state.project.activeLevel, roomId });
+  if (!start) {
+    ({ opts, interior, frontFacade } = walkPrevious); walkPrevious = null;
+    refresh3d(); toast('Не удалось найти свободное место для прогулки'); return;
+  }
+  for (const details of el('view3d').querySelectorAll('details')) details.open = false;
+  walk.start(world, start);
+  el('canvas3d').style.cursor = '';
+  syncLayerControls(); syncCameraControls(); uploadGeometry(); requestRender(); setHint();
+}
+
+function leaveWalk({ focus = true } = {}) {
+  if (!walk?.active) return;
+  walk.stop();
+  Object.assign(cam, walkPrevious.cam);
+  ({ opts, interior, frontFacade } = walkPrevious); walkPrevious = null;
+  syncLayerControls(); refresh3d();
+  if (focus) el('v3Walk').focus({ preventScroll: true });
 }
 
 // Обычная мебель не меняет стены, полы, крышу и участок. При постановке из
@@ -963,6 +1028,7 @@ export function open3d() {
 export function close3d() {
   cancelStairShapeDrag();
   if (!active) return;
+  leaveWalk({ focus: false });
   if (choosingFacadeWall()) cancelTool();
   leaveFacade();
   lastSheetCamera = camera3dSnapshot(); // на лист попадает вид, который был на экране
@@ -1388,6 +1454,7 @@ function applyNumber() {
 // ---------------------------------------------------------------- жесты
 
 function onDown(e) {
+  if (walk?.active) return;
   const canvas = el('canvas3d');
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1509,6 +1576,7 @@ function panBy(dx, dy) {
 }
 
 function onMove(e) {
+  if (walk?.active) return;
   if (!pointers.has(e.pointerId) || !gesture) {
     if (e.pointerType === 'mouse' && !gesture && active) {
       if (composingFacade() && wallsEditable()) {
@@ -1576,6 +1644,7 @@ function onMove(e) {
 }
 
 function onUp(e) {
+  if (walk?.active) return;
   const g = gesture;
   pointers.delete(e.pointerId);
   if (g?.kind === 'composition') {
@@ -1660,6 +1729,7 @@ function onUp(e) {
 }
 
 function onCancel(e) {
+  if (walk?.active) return;
   if (gesture?.kind === 'composition') {
     pointers.delete(e.pointerId);
     gesture = null;
@@ -1703,6 +1773,7 @@ function onCancel(e) {
 }
 
 function onDblClick(e) {
+  if (walk?.active) return;
   if (!massToolOn() && wallsEditable() && massDblClick(e)) return;
   if (wallsEditable() && roofDblClick(e)) return;
   const hit = pickAt(e);
@@ -1712,6 +1783,12 @@ function onDblClick(e) {
 
 export function bind3d() {
   const canvas = el('canvas3d');
+  walk = createWalkController({ canvas, cam, repaint: requestRender, exit: leaveWalk });
+  el('v3Walk').addEventListener('click', enterWalk);
+  // После обзора свайпом браузер может подавить совместимый mouse-click.
+  el('v3Walk').addEventListener('touchend', (event) => {
+    event.preventDefault(); enterWalk();
+  }, { passive: false });
   const facade = el('view3d').querySelector('.v3-facade');
   const panel = facade.querySelector('.v3-facade-panel');
   composer = facadeComposer({ pick: compositionSurface, ray: rayAt, hint: setHint,
@@ -1760,6 +1837,7 @@ export function bind3d() {
   el('v3InteriorLevel').addEventListener('change', (e) => switchLevel(e.target.value, { planView: false }));
   el('v3ExitInterior').addEventListener('click', () => { leaveInterior(); views.querySelector('summary').focus(); });
   document.addEventListener(PROJECT_REPLACED_EVENT, () => {
+    leaveWalk({ focus: false });
     if (!interior) return;
     leaveInterior({ restoreFloor: false });
     frameHouse();
@@ -1973,6 +2051,7 @@ export function bind3d() {
     e.dataTransfer.dropEffect = 'copy';
   });
   canvas.addEventListener('drop', (e) => {
+    if (walk?.active) { e.preventDefault(); return; }
     const kind = e.dataTransfer?.getData('application/x-kepler-furn');
     if (!kind) return;
     e.preventDefault();
@@ -2006,6 +2085,7 @@ export function bind3d() {
   canvas.addEventListener('dblclick', onDblClick);
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
+    if (walk?.active) return;
     const key = cam.projection === 'perspective' ? 'eyeDist' : 'dist';
     cam[key] = Math.min(400000, Math.max(3000, cam[key] * Math.exp(e.deltaY * 0.0012)));
     if (['mass', 'opening', 'item', 'landscape'].includes(state.selection?.type) || massToolOn() || openingToolOn()) uploadOverlay(); // ручки и призраки — в пикселях экрана
@@ -2032,6 +2112,7 @@ export function debug3d() {
   const levelsShown = [...new Set(faces.filter((f) => f.kind === 'floor').map((f) => f.level))];
   return {
     active, faces: faces.length, webgl: Boolean(gl), cam: { ...cam, target: { ...cam.target } },
+    walk: walk?.debug() ?? null,
     rebuilds: { ...rebuildStats },
     selectedKey: selectedRef()?.key ?? null, editing: Boolean(edit),
     hovered: objectHover ? { type: objectHover.type, id: objectHover.id ?? null, key: objectHover.key ?? null } : null,

@@ -1119,6 +1119,24 @@ body.v3-open .level-dock { z-index: 46; }
   font-size: 12px; line-height: 1.35; text-align: center; color: var(--text, inherit); pointer-events: none;
 }
 .view3d-hint:empty { display: none; }
+.v3-walk-hud { position: absolute; inset: 0; pointer-events: none; }
+.v3-walk-hud[hidden] { display: none; }
+.v3-walk-reticle { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: white; box-shadow: 0 0 0 1px #253546, 0 0 4px #253546; }
+.v3-walk-help { position: absolute; bottom: 74px; left: 50%; transform: translateX(-50%); margin: 0; padding: 8px 14px; width: max-content; max-width: calc(100% - 24px); border-radius: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow); font-size: 12px; text-align: center; }
+.v3-walk-pad { display: none; }
+body.v3-walking #canvas3d { cursor: crosshair; }
+body.v3-walking .view3d-bar > :not(#v3Walk):not(#v3Close) { display: none; }
+body.v3-walking #v3Walk { background: var(--accent); color: white; }
+body.v3-walking :is(#toolStrip, .library, #propsPanel) { opacity: 0.45; }
+body.v3-walking :is(#selectionToolbar, #projectRoute, .level-dock, #mobileCat) { visibility: hidden; }
+@media (pointer: coarse) {
+  .view3d-bar :is(#v3Walk, #v3Close) { min-height: 44px; }
+  .v3-walk-help { bottom: 160px; }
+  .v3-walk-pad { display: grid; position: absolute; left: 16px; bottom: 24px; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(2, 44px); gap: 5px; pointer-events: auto; }
+  .v3-walk-pad button { padding: 0; border-radius: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); touch-action: none; font-size: 24px; }
+  .v3-walk-pad button:first-child { grid-column: 2; }
+  .v3-walk-pad button:nth-child(2) { grid-column: 1; }
+}
 @media (min-width: 641px) {
   body:has(#projectRoute.has-project) .view3d-hint { bottom: 70px; }
 }
