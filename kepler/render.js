@@ -2,9 +2,11 @@
 // Геометрия рисуется в мировых координатах (мм) через transform (масштаб +
 // поворот: в режиме «Участок» север всегда вверх), подписи — в экранных.
 
+import { drawEntrancePlan, visibleEntranceParts } from './ui/render-entrance.js';
 import { cornerWindowHandles, cornerWindowProjections } from './core/corner-windows.js';
 import { levelWindowOpenings } from './core/spanning-windows.js';
-import { entryParts, entrySpan, entryTitle, siteEntries } from './core/site-entries.js';
+import { entryOpeningSymbol, entryParts, entrySpan, entryTitle, siteEntries } from './core/site-entries.js';
+import { entryWorldPoint, siteEntryHandles } from './core/site-entry-handles.js';
 import { glazedOpeningParts, isGlazedAssembly } from './core/glazed-openings.js';
 import {
   deriveWalls, doorLeaves, doorSymbol, openingRect, wallOutline, wallRects,
@@ -471,19 +473,28 @@ export function createRenderer(canvas) {
     };
     const houseFootprints = landscape ? buildingSiteCheck(state.project).footprint.map((f) => f.corners) : [];
     const showPlanLandscape = Boolean(planLs && lsObjects.length);
+    // Крыльцо на этаже — такой же приглушённый контекст, как плиты участка.
+    // Собираем весь слой до смешивания: пересечения ступеней не темнеют.
+    const planEntrances = state.modeName === 'plan' && !state.roofPlan && !print;
+    const planEntranceCount = planEntrances ? visibleEntranceParts(state).length : 0;
+    const showPlanContext = showPlanLandscape || planEntranceCount > 0;
     function paintLandscape(target, offsetX, offsetY) {
       setView(view, target, offsetX, offsetY);
       drawLandscapeGround(target, lsObjects, lsOpts);
       drawLandscapeRaised(target, lsObjects, lsOpts);
+      if (planEntranceCount) {
+        setView(pv, target, offsetX, offsetY);
+        drawEntrancePlan(target, state, tokens, px, { print });
+      }
     }
-    if ((showPlanLandscape || underlayImg) && state.modeName === 'plan' && !print && !thumbnail) {
+    if ((showPlanContext || underlayImg) && state.modeName === 'plan' && !print && !thumbnail) {
       const selection = state.selection?.type === 'site' ? state.selection : null;
       const hover = state.hover?.type === 'site-obj' ? state.hover : null;
       // Сетка, топосъёмка, рельеф и полупрозрачный ландшафт компонуются один
       // раз, чтобы браузер не смешивал большие изображения на каждом кадре.
       const sunWalls = site?.sun?.enabled && vd.sunShadow ? state.walls : null;
       const key = [
-        state.drawingRevision, canvas.width, canvas.height, dpr, lsStyle, tokens.canvas, lsOpts.noShadows, vd.sunShadow,
+        state.drawingRevision, state.project.activeLevel, planEntranceCount, canvas.width, canvas.height, dpr, lsStyle, tokens.canvas, lsOpts.noShadows, vd.sunShadow,
         lsOpts.shadow?.x, lsOpts.shadow?.y, lsOpts.shadow?.k, document.fonts?.status,
         underlay?.x, underlay?.y, underlay?.mmPerPx, underlay?.rot, underlay?.opacity,
         selection?.kind, selection?.id, hover?.kind, hover?.id,
@@ -491,13 +502,13 @@ export function createRenderer(canvas) {
       drawCachedBackground({
         view, dpr, key, sources: [state.project, state.siteBuildable, underlayImg, sunWalls, ...lsObjects], zooming: opts.zooming,
         paint: drawBackground,
-        paintLandscape: showPlanLandscape ? paintLandscape : null,
+        paintLandscape: showPlanContext ? paintLandscape : null,
       });
       state._siteOpportunityUI = null;
       setView(view);
     } else {
       drawBackground(ctx, width, height, 0, 0);
-      if (showPlanLandscape) {
+      if (showPlanContext) {
         drawPlanLandscape(ctx, canvas.width, canvas.height, (layer) => paintLandscape(layer, 0, 0));
         setView(view);
       }
@@ -522,6 +533,12 @@ export function createRenderer(canvas) {
       drawHouseShadow(ctx, houseFootprints, lsOpts, site?.buildingHeight || 6000);
     }
 
+    // Крыльцо — над землёй и тенями, под стенами дома. Форма совпадает с 3D.
+    state._planEntrances = planEntranceCount;
+    if (!planEntrances && ((state.modeName === 'plan' && !state.roofPlan) || (site && (landscape || state.modeName === 'site')))) {
+      setView(pv);
+      state._planEntrances = drawEntrancePlan(ctx, state, tokens, px, { mono: landscape && lsStyle === 'drawing', print });
+    }
     // 3–6. Дом — в своих осях.
     setView(pv);
     // «План крыши» (ui/roof-plan.js): только подложка этажей и крыши.
@@ -1111,7 +1128,12 @@ export function createRenderer(canvas) {
       drawMassOverlay(ctx, { p2s, tokens });
       ctx.restore();
     }
-    if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
+    if (site) drawSiteLabels(ctx, state, site, w2s, tokens, { entryHandles: !print && !thumbnail });
+    state._entryUI = null;
+    if (site && !print && !thumbnail && state.selection?.type === 'site' && state.selection.kind === 'entry' && (!state.tool || state.tool.kind === 'entry')) {
+      const entry = siteEntries(site).find((item) => item.id === state.selection.id);
+      if (entry) drawSelectedEntryUI(ctx, state, entry, w2s, tokens);
+    }
     // Подписи ландшафта на плане — только если включены во «Видах».
     if (planLs?.labels && lsObjects.length) {
       drawLandscapeOverlay(ctx, lsObjects, { w2s, tokens, scale, labels: true, style: lsStyle });
@@ -1119,7 +1141,7 @@ export function createRenderer(canvas) {
     if (landscape && site) {
       const warnings = landscapeWarnings(lsObjects, { boundary: site.boundary, footprints: houseFootprints });
       drawLandscapeOverlay(ctx, lsObjects, {
-        sel: state.selection?.type === 'landscape' ? state.selection.ids : [],
+        sel: state.selection?.type === 'landscape' && !state.selection.part ? state.selection.ids : [],
         hoverId: state.hover?.type === 'landscape' ? state.hover.id : null,
         warnings, w2s, tokens, scale, warnColor: '#d08a1e',
         labels: lsVis?.labels === true, vertex: state.lsVertex || null, style: lsStyle,
@@ -1504,14 +1526,16 @@ export function drawEntryPreview(canvas, entry) {
   const color = style.getPropertyValue('--desk-accent').trim() || '#21654e';
   const paper = style.getPropertyValue('--chip-paper').trim() || '#f6f9fb';
   const w = canvas.width; const h = canvas.height;
-  const width = entry.width || 4000;
-  const maxHeight = entry.opening === 'sliding' ? width * .45 : entry.kind === 'wicket' ? width : width / 2;
-  const scale = Math.min((w - 44) / width, (h - 24) / (maxHeight + 120));
+  const span = entrySpan(entry);
+  const symbols = entryParts(entry).map(entryOpeningSymbol);
+  const extents = symbols.flatMap((symbol) => symbol.slide ? [150, 550] : symbol.leaves.map((leaf) => leaf.extentY));
+  const minY = Math.min(-120, ...extents); const maxY = Math.max(120, ...extents);
+  const scale = Math.min((w - 44) / (span.to - span.from), (h - 24) / (maxY - minY));
   ctx.clearRect(0, 0, w, h); ctx.save();
-  ctx.translate(w / 2, h - 16); ctx.scale(scale, -scale);
+  ctx.translate(w / 2 - (span.from + span.to) / 2 * scale, 12 + maxY * scale); ctx.scale(scale, -scale);
   ctx.fillStyle = '#a8b1bd';
-  for (const x of [-width / 2 - 650, width / 2]) ctx.fillRect(x, -80, 650, 160);
-  drawSiteEntry(ctx, { ...entry, x: 0, y: 0, dir: 90, wicket: false }, color, { canvas: paper }, (px) => px / scale);
+  for (const x of [span.from - 650, span.to]) ctx.fillRect(x, -80, 650, 160);
+  drawSiteEntry(ctx, { ...entry, x: 0, y: 0, dir: 90 }, color, { canvas: paper }, (px) => px / scale);
   ctx.restore();
 }
 
@@ -1528,18 +1552,18 @@ function drawSiteEntry(ctx, entry, color, tokens, px) {
     const left = p.offset - p.width / 2; const right = p.offset + p.width / 2;
     for (const x of [left, right]) ctx.fillRect(x - 60, -90, 120, 180);
     ctx.beginPath(); ctx.moveTo(left, 0); ctx.lineTo(right, 0); ctx.stroke();
-    if (p.kind === 'gate' && p.opening === 'sliding') {
+    const symbol = entryOpeningSymbol(p);
+    if (symbol.slide) {
       ctx.strokeRect(left, -70, p.width, 140);
-      const y = 350; const end = right - 250; const start = left + 250;
-      ctx.beginPath(); ctx.moveTo(start, y); ctx.lineTo(end, y);
-      ctx.moveTo(end - 300, y - 160); ctx.lineTo(end, y); ctx.lineTo(end - 300, y + 160); ctx.stroke();
+      const { from, to } = symbol.slide; const sign = Math.sign(to.x - from.x); const head = Math.min(300, p.width * .2);
+      ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y);
+      ctx.moveTo(to.x - sign * head, to.y - head / 2); ctx.lineTo(to.x, to.y); ctx.lineTo(to.x - sign * head, to.y + head / 2); ctx.stroke();
       continue;
     }
-    const leaves = p.kind === 'gate' ? [[left, p.width / 2, 1], [right, p.width / 2, -1]] : [[left, p.width, 1]];
-    for (const [hinge, length, sign] of leaves) {
-      ctx.beginPath(); ctx.moveTo(hinge, 0); ctx.lineTo(hinge + sign * length * .7, length * .7); ctx.stroke();
+    for (const leaf of symbol.leaves) {
+      ctx.beginPath(); ctx.moveTo(leaf.hinge.x, leaf.hinge.y); ctx.lineTo(leaf.tip.x, leaf.tip.y); ctx.stroke();
       ctx.setLineDash([px(4), px(3)]);
-      ctx.beginPath(); ctx.arc(hinge, 0, length, sign > 0 ? 0 : Math.PI / 2, sign > 0 ? Math.PI / 2 : Math.PI); ctx.stroke();
+      ctx.beginPath(); ctx.arc(leaf.hinge.x, leaf.hinge.y, leaf.radius, leaf.start, leaf.end, leaf.anticlockwise); ctx.stroke();
       ctx.setLineDash([]);
     }
   }
@@ -1643,7 +1667,61 @@ function drawDraft(ctx, draft, tokens, px) {
   }
 }
 
-function drawSiteLabels(ctx, state, site, w2s, tokens) {
+function drawSelectedEntryUI(ctx, state, entry, w2s, tokens) {
+  const project = (p) => w2s(p.x, p.y);
+  const center = project(entry);
+  const normalPoint = project(entryWorldPoint(entry, 0, 1000));
+  const normalLength = Math.hypot(normalPoint.x - center.x, normalPoint.y - center.y) || 1;
+  const normal = { x: (normalPoint.x - center.x) / normalLength, y: (normalPoint.y - center.y) / normalLength };
+  const ui = { id: entry.id, controls: [] };
+  const r = state.coarsePointer ? 16 : 12;
+  ctx.save();
+  for (const handle of siteEntryHandles(entry)) {
+    const p = project(handle); drawHandleSquare(ctx, p, tokens);
+    ui.controls.push({ kind: 'resize', ...handle, ...p, r: state.coarsePointer ? 22 : 10 });
+  }
+  const flips = [];
+  const flip = (point, part, action, symbol, avoid = normal) => {
+    let p = { ...point };
+    while (flips.some((other) => Math.hypot(other.x - p.x, other.y - p.y) < r * 2 + 8)
+      || ui.controls.some((other) => other.kind === 'resize' && Math.hypot(other.x - p.x, other.y - p.y) < r + other.r + 4)) {
+      p = { x: p.x + avoid.x * (r * 2 + 10), y: p.y + avoid.y * (r * 2 + 10) };
+    }
+    ctx.fillStyle = tokens.surface; ctx.strokeStyle = tokens.accent; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = tokens.accent; ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(symbol, p.x, p.y + 5);
+    const control = { kind: 'flip', part, action, ...p, r: state.coarsePointer ? 22 : 15 };
+    flips.push(control); ui.controls.push(control);
+  };
+  for (const [index, part] of entryParts(entry).entries()) {
+    const a = project(entryWorldPoint(entry, part.offset - part.width / 2));
+    const b = project(entryWorldPoint(entry, part.offset + part.width / 2));
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const lift = Math.max(r * 2 + 14, Math.min(90, Math.hypot(b.x - a.x, b.y - a.y) / 2 + 28));
+    flip({ x: mid.x + normal.x * lift, y: mid.y + normal.y * lift }, index, 'direction', part.opening === 'sliding' ? '⇆' : '⇅');
+    if (part.kind === 'wicket' && part.opening !== 'sliding') {
+      const edge = b.x > a.x || (Math.abs(b.x - a.x) < .01 && b.y > a.y) ? b : a;
+      const other = edge === b ? a : b;
+      const length = Math.hypot(edge.x - other.x, edge.y - other.y) || 1;
+      const along = { x: (edge.x - other.x) / length, y: (edge.y - other.y) / length };
+      const gap = r + (state.coarsePointer ? 22 : 10) + 8;
+      flip({ x: edge.x + along.x * gap, y: edge.y + along.y * gap }, index, 'hinge', '⇆', along);
+    }
+    const offset = index ? 48 : 25;
+    const da = { x: a.x - normal.x * offset, y: a.y - normal.y * offset };
+    const db = { x: b.x - normal.x * offset, y: b.y - normal.y * offset };
+    ctx.strokeStyle = tokens.accent; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(da.x, da.y); ctx.lineTo(db.x, db.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    const label = String(Math.round(part.width)); const x = (da.x + db.x) / 2; const y = (da.y + db.y) / 2;
+    ctx.font = '600 12px system-ui, sans-serif'; ctx.textAlign = 'center';
+    const width = ctx.measureText(label).width + 8;
+    ctx.fillStyle = tokens.surface; ctx.fillRect(x - width / 2, y - 9, width, 18);
+    ctx.fillStyle = tokens.accent; ctx.fillText(label, x, y + 4);
+  }
+  state._entryUI = ui; ctx.restore();
+}
+
+function drawSiteLabels(ctx, state, site, w2s, tokens, { entryHandles = false } = {}) {
   if (site.boundary?.length >= 3) {
     const cx = site.boundary.reduce((s, p) => s + p.x, 0) / site.boundary.length;
     const minY = Math.min(...site.boundary.map((p) => p.y));
@@ -1654,6 +1732,7 @@ function drawSiteLabels(ctx, state, site, w2s, tokens) {
     ctx.fillText(`Участок ${polygonAreaM2(site.boundary).toFixed(1)} м²`, p.x, p.y - 10);
   }
   for (const e of siteEntries(site)) {
+    if (entryHandles && state.selection?.type === 'site' && state.selection.kind === 'entry' && state.selection.id === e.id && (!state.tool || state.tool.kind === 'entry')) continue;
     const p = w2s(e.x, e.y);
     ctx.fillStyle = tokens.accent2;
     ctx.font = '600 11px system-ui, sans-serif';

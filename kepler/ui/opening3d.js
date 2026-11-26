@@ -150,7 +150,7 @@ function selectedInfo() {
   const opening = state.project.openings.find((o) => o.id === state.selection.id);
   if (!opening) return null;
   const geometry = [opening.width, openingPos(opening), opening.sill, opening.height, opening.heightMode, opening.span?.levelId, opening.span?.topGap, opening.corner?.end, opening.corner?.joint, opening.corner?.returnWidth, JSON.stringify(opening.assembly)].join('/');
-  if (selectedCache?.opening === opening && selectedCache.walls === state.walls && selectedCache.geometry === geometry) return selectedCache.info;
+  if (selectedCache?.opening === opening && selectedCache.walls === state.walls && selectedCache.geometry === geometry && selectedCache.revision === state.drawingRevision) return selectedCache.info;
   const placed = openingRect(state.project, opening, state.walls);
   const level = state.project.levels.find((l) => l.id === state.project.activeLevel);
   if (!placed || !level) return null;
@@ -161,8 +161,8 @@ function selectedInfo() {
   const half = opening.width / 2;
   const effectiveSill = openingSill(opening, level);
   const z0 = level.elevation + effectiveSill;
-  const spanTop = opening.span && windowSpanTop(state.project, level.id, opening);
-  const z1 = spanTop ? level.elevation + spanTop : z0 + openingHeight(opening, level);
+  const spanTop = windowSpanTop(state.project, level.id, opening);
+  const z1 = level.elevation + (spanTop ?? Math.min(wallRange.z1, effectiveSill + openingHeight(opening, level)));
   const point = (a, z) => (wall.orient === 'h' ? { x: a, y: cross, z } : { x: cross, y: a, z });
   const handles = [
     { id: 'from', point: point(along - half, (z0 + z1) / 2) },
@@ -183,7 +183,7 @@ function selectedInfo() {
     .filter((t) => t.kind === opening.kind);
   const span = !isGlazedAssembly(opening) && nextWindowSpan(state.project, level.id, opening);
   const info = { opening, placed, wall, level, handles, targets, z0, z1, wallBottom: wallRange.z0, wallTop: wallRange.z1, span };
-  selectedCache = { opening, walls: state.walls, geometry, info };
+  selectedCache = { opening, walls: state.walls, geometry, revision: state.drawingRevision, info };
   return info;
 }
 
@@ -407,7 +407,7 @@ export function moveOpeningResize(event) {
   }
   resize.moved = true;
   const sill = openingSill(opening, resize.level);
-  const top = opening.span && windowSpanTop(state.project, resize.level.id, opening);
+  const top = windowSpanTop(state.project, resize.level.id, opening);
   const height = top ? top - sill : openingHeight(opening, resize.level);
   const width = opening.corner ? `${opening.width} + ${opening.corner.returnWidth}` : opening.width;
   const size = `${width} × ${Math.round(height)} мм${opening.kind === 'window' ? ` · подоконник ${sill}` : ''}`;

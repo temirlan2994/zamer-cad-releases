@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { deriveEntrances } from '../core/entrance.js';
-import { createLevel, createOpening, createProject, createRoom, levelProject } from '../core/model.js';
+import { createLevel, createOpening, createProject, createRoom, levelProject, serializeProject, deserializeProject } from '../core/model.js';
 import { deriveWalls } from '../core/walls.js';
 
 function house({ zero = 1000, side = 0, role = 'main' } = {}) {
@@ -20,6 +20,24 @@ function house({ zero = 1000, side = 0, role = 'main' } = {}) {
   project.openings.push(door);
   return { project, room, door };
 }
+
+test('свои размеры и материал крыльца сохраняются отдельно от двери', () => {
+  const { project, door } = house();
+  door.entrance = { width: 3200, landingDepth: 2200, tread: 400, stepCount: 4, material: 'graphite' };
+  const [entry] = deriveEntrances(project);
+  assert.equal(entry.landing.width, 3200);
+  assert.equal(entry.landing.depth, 2200);
+  assert.equal(entry.steps.width, 3200);
+  assert.equal(entry.steps.count, 4);
+  assert.equal(entry.steps.riser, 250);
+  assert.equal(entry.steps.run, 1600);
+  assert.equal(entry.color, '#4d5254');
+  assert.equal(door.width, 1000);
+  assert.deepEqual(deriveEntrances(deserializeProject(serializeProject(project))), [entry]);
+  door.entrance.enabled = false;
+  assert.deepEqual(deriveEntrances(project), []);
+  assert.equal(project.openings.length, 1, 'отключение крыльца сохраняет дверь');
+});
 
 test('главная наружная дверь даёт стабильную площадку и ступени до ±0.000', () => {
   const { project } = house();

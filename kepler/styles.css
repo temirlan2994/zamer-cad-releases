@@ -27,6 +27,7 @@
   --chip-paper: #f8fafd;
   --chip-grid: rgba(31, 117, 255, 0.07);
   --shadow: 0 10px 30px rgba(24, 32, 43, 0.12);
+  --white-plan-crosshair: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='25' height='25' viewBox='0 0 25 25'%3E%3Cpath d='M12 2v8m0 4v9M2 12h8m4 0h9' fill='none' stroke='%2318202b' stroke-width='4'/%3E%3Cpath d='M12 2v8m0 4v9M2 12h8m4 0h9' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E") 12 12, crosshair;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -57,6 +58,7 @@
     --chip-grid: rgba(45, 162, 255, 0.10);
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     color-scheme: dark;
+    --plan-crosshair: var(--white-plan-crosshair);
   }
 }
 
@@ -87,6 +89,7 @@
   --chip-grid: rgba(45, 162, 255, 0.10);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   color-scheme: dark;
+  --plan-crosshair: var(--white-plan-crosshair);
 }
 
 * { box-sizing: border-box; }
@@ -853,7 +856,11 @@ body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-circulation-canvas
   overflow: hidden;
 }
 .furniture-chip .chip-size { font-size: 9.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-#canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+#canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: var(--plan-crosshair, crosshair); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+/* Инструменты задают crosshair в inline-стиле: сохраняем цвет текущей темы.
+   Остальные курсоры (перемещение, ручки, текст) сохраняют свою форму. */
+#canvas[style*="cursor: crosshair"] { cursor: var(--plan-crosshair, crosshair) !important; }
+.porch-fields { align-items: end; }
 .canvas-wrap { -webkit-tap-highlight-color: transparent; }
 
 .canvas-hint {
@@ -890,6 +897,7 @@ body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-circulation-canvas
   white-space: nowrap;
 }
 .selection-toolbar[hidden] { display: none; }
+.v3-open .canvas-wrap > #selectionToolbar:has([data-selection-action="stair-whole"]) { top: 62px; z-index: 46; }
 .selection-toolbar-label {
   max-width: 150px;
   overflow: hidden;
@@ -1111,6 +1119,39 @@ body.v3-open .level-dock { z-index: 46; }
   font-size: 12px; line-height: 1.35; text-align: center; color: var(--text, inherit); pointer-events: none;
 }
 .view3d-hint:empty { display: none; }
+.v3-walk-hud { position: absolute; inset: 0; pointer-events: none; }
+.v3-walk-hud[hidden] { display: none; }
+.v3-walk-reticle { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: white; box-shadow: 0 0 0 1px #253546, 0 0 4px #253546; }
+.v3-walk-help { position: absolute; bottom: 74px; left: 50%; transform: translateX(-50%); margin: 0; padding: 8px 14px; width: max-content; max-width: calc(100% - 24px); border-radius: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow); font-size: 12px; text-align: center; }
+.v3-walk-pad { display: none; }
+.v3-walk-start { position: absolute; width: 24px; height: 24px; margin: -12px; border: 3px solid white; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--accent), 0 2px 10px #15223855; pointer-events: none; }
+.v3-walk-start[hidden] { display: none; }
+#v3Walk { position: absolute; top: 10px; right: 12px; z-index: 3; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+#v3Walk:hover { background: var(--surface-2); }
+#v3Walk svg { pointer-events: none; }
+body.v3-walking #canvas3d { cursor: crosshair; }
+body.v3-walking .view3d-bar > :not(#v3Close):not(#v3WalkSettings) { display: none; }
+.v3-walk-settings { display: none; position: relative; }
+body.v3-walking .v3-walk-settings { display: block; }
+.v3-walk-settings summary { cursor: pointer; padding: 6px 8px; border-radius: 8px; }
+.v3-walk-settings[open] summary { background: var(--surface-2); }
+.v3-walk-settings-panel { position: absolute; z-index: 2; top: calc(100% + 12px); left: 50%; transform: translateX(-50%); width: 260px; max-width: calc(100vw - 36px); display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); white-space: normal; }
+.v3-walk-settings-panel label { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.v3-walk-settings-panel input { width: 100%; min-height: 28px; accent-color: var(--accent); }
+.v3-walk-settings-panel span { font-size: 12px; color: var(--muted); }
+body:is(.v3-walking, .v3-walk-choosing) #v3Walk { background: var(--accent); color: white; }
+body:is(.v3-walking, .v3-walk-choosing) :is(#toolStrip, .library, #propsPanel) { opacity: 0.45; }
+body:is(.v3-walking, .v3-walk-choosing) :is(#selectionToolbar, #projectRoute, .level-dock, #mobileCat) { visibility: hidden; }
+@media (pointer: coarse) {
+  .view3d-bar #v3Close { min-height: 44px; }
+  .v3-walk-settings summary { min-height: 44px; display: flex; align-items: center; }
+  .v3-walk-settings-panel { left: auto; right: -40px; transform: none; }
+  .v3-walk-help { bottom: 160px; }
+  .v3-walk-pad { display: grid; position: absolute; left: 16px; bottom: 24px; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(2, 44px); gap: 5px; pointer-events: auto; }
+  .v3-walk-pad button { padding: 0; border-radius: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); touch-action: none; font-size: 24px; }
+  .v3-walk-pad button:first-child { grid-column: 2; }
+  .v3-walk-pad button:nth-child(2) { grid-column: 1; }
+}
 @media (min-width: 641px) {
   body:has(#projectRoute.has-project) .view3d-hint { bottom: 70px; }
 }
@@ -4858,24 +4899,35 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   .atrium-panel[data-picking="true"] footer { display: none; }
 }
 
-/* Каталог «Въезд»: те же категории и карточки, что у окон. */
-.entry-menu { box-sizing: border-box; width: min(430px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text); box-shadow: 0 16px 60px #0004; }
-.entry-menu::backdrop { background: #0005; }
-.entry-menu-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 12px; }
-.entry-menu-head h2 { margin: 0; font-size: 18px; }
-.entry-menu-head button { min-width: 36px; min-height: 36px; font-size: 22px; }
-.entry-catalog { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 8px; }
-.entry-categories { display: flex; flex-direction: column; gap: 3px; border-right: 1px solid var(--border); padding-right: 5px; }
-.entry-categories button { min-height: 44px; padding: 6px; border: 0; background: transparent; color: var(--muted); font-size: 12px; text-align: left; }
-.entry-categories button[aria-pressed="true"] { color: var(--desk-accent); background: var(--desk-soft); font-weight: 700; }
-#entryPresetItems { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 6px; }
+/* Въезд использует общую боковую библиотеку дверей и окон. */
+.entry-library-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.entry-library-head h2 { margin: 0; font-size: 15px; }
+.entry-library-head button { min-width: 32px; min-height: 32px; font-size: 20px; }
+.library #entryPresetItems { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.library-entries #entryLibraryWicketRow { flex: none; margin-top: 8px; font-size: 12px; }
 .entry-chip { position: relative; padding: 5px; gap: 3px; }
 .entry-chip canvas { background: var(--chip-paper); }
 .entry-chip .chip-name { font-size: 12px; white-space: nowrap; }
 .entry-chip.active { border-color: var(--desk-accent); box-shadow: inset 0 0 0 1px var(--desk-accent); background: var(--surface); }
 .entry-chip[aria-pressed="true"]::after { content: '✓'; position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; border-radius: 50%; background: var(--desk-accent); color: var(--surface); font: 700 12px/18px system-ui, sans-serif; text-align: center; }
-.entry-menu-wicket { min-height: 44px; margin-top: 12px; }
-.entry-menu-wicket[hidden] { display: none; }
-.entry-menu .empty-hint { margin-bottom: 0; }
 .entry-props-preview { width: 100%; height: auto; max-height: 140px; margin-bottom: 12px; border-radius: 10px; background: var(--chip-paper); }
-@media (max-width: 390px) { .entry-catalog { grid-template-columns: 84px minmax(0, 1fr); } .entry-chip .chip-name { font-size: 11px; } }
+@media (min-width: 641px) {
+  body.mode-site.lib-open .library:has(#entryLibraryBar:not([hidden])) { display: flex; }
+}
+@media (max-width: 640px) {
+  body.mode-site.sheet-library .library:has(#entryLibraryBar:not([hidden])) { display: flex; }
+}
+@media (max-width: 640px) {
+  .library-entries #entryLibraryClose { display: none; }
+  .library .library-entries .catalog-category-list button { font-size: 12px; white-space: nowrap; overflow-wrap: normal; hyphens: none; }
+}
+.library .library-entries .catalog-category-list button[data-entry-cat="wicket-sliding"] { white-space: normal; }
+
+/* Края одной выбранной ступени поверх 3D, без перехвата вращения фона. */
+.stair-shape-handles { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.stair-shape-handles button { position: absolute; transform: translate(-50%, -50%); width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 0; background: transparent; pointer-events: auto; touch-action: none; cursor: move; box-shadow: none; }
+.stair-shape-handles button::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--surface); background: var(--accent); box-shadow: 0 0 0 1px var(--accent); pointer-events: none; }
+.stair-shape-handles button:hover::after, .stair-shape-handles button:focus-visible::after { transform: translate(-50%, -50%) scale(1.2); }
+.stair-shape-handles button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.stair-shape-fields h3 { margin-top: 0; }
+@media (pointer: coarse) { .stair-shape-handles button { width: 44px; height: 44px; } }

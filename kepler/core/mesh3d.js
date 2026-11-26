@@ -33,14 +33,14 @@ import { stairAppearance, stairBuild, stairLayout } from './stairs.js';
 import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
 import { atriumRails } from './atrium.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
-import { MASS_COLOR_3D, massBox } from './masses.js';
+import { MASS_COLOR_3D, massBox, clipMassBoxZ } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
 import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
 import { clipLinkedRoofFaces, convexStrips, freeDrainageEdges, slopedRoofFaces } from './linked-roof.js';
 import { gridOutline, gridRoofRects, linkedRoofRegions } from './linked-roof-regions.js';
 export { linkedRoofRegions };
 import { deriveFoundation } from './foundation-system.js';
-import { deriveEntrances } from './entrance.js';
+import { deriveEntrances, entranceParts } from './entrance.js';
 import {
   EDGE_HEIGHT, FASCIA_T, PARAPET_THICK, edgeSide, expandRects, gridEdges, materialColor, offsetOutline, outlineNormals, ringSpec,
   roofCutRects, roofIsSlanted, roofRects, roofSlabOutline, roofZ, sideDist, triangulate,
@@ -149,7 +149,9 @@ function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
   const width = a1 - a0;
   const height = z1 - z0;
   if (width < 1 || height < 1) return faces;
-  const frame = Math.max(35, Math.min(70, width / 7, (opening.spanPart ? opening.spanTop : height) / 7));
+  const wholeFrom = opening.spanAlongFrom ?? a0, wholeTo = opening.spanAlongTo ?? a1;
+  const wholeWidth = wholeTo-wholeFrom;
+  const frame = Math.max(35, Math.min(70, wholeWidth / 7, (opening.spanPart ? opening.spanTop : height) / 7));
   const cross = orient === 'h' ? band.h : band.w;
   const depth = Math.max(30, Math.min(80, cross * 0.55));
   const mid = orient === 'h' ? band.y + band.h / 2 : band.x + band.w / 2;
@@ -166,15 +168,15 @@ function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
   };
   faces.push({
     ...paneFace(band, orient, a0, a1, z0, z1, GLASS_COLOR, 0.38, 'glass'),
-    openingId: opening.id, ref,
+    openingId: opening.id, openingKind: opening.kind, ref,
   });
   const bottomRail = opening.spanPart === 'upper' ? 0 : frame;
   const topRail = opening.spanPart === 'lower' ? 0 : Math.min(frame, height - bottomRail);
   if (bottomRail) addBox(a0, a1, z0, z0 + bottomRail);
   if (topRail) addBox(a0, a1, z1 - topRail, z1);
   const cornerPost = opening.cornerWing && opening.corner.joint !== 'pier';
-  if (!cornerPost || !opening.cornerAtStart) addBox(a0, a0 + frame, z0 + bottomRail, z1 - topRail);
-  if (!cornerPost || opening.cornerAtStart) addBox(a1 - frame, a1, z0 + bottomRail, z1 - topRail);
+  if (Math.abs(a0-wholeFrom) < .5 && (!cornerPost || !opening.cornerAtStart)) addBox(a0, a0 + frame, z0 + bottomRail, z1 - topRail);
+  if (Math.abs(a1-wholeTo) < .5 && (!cornerPost || opening.cornerAtStart)) addBox(a1 - frame, a1, z0 + bottomRail, z1 - topRail);
   if (opening.cornerJunction) {
     const junction = opening.cornerJunction;
     const x = junction.x + junction.w / 2;
@@ -185,11 +187,11 @@ function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
   }
   const type = opening.type || 'standard';
   let sashes = 1;
-  if (type === 'lift-slide' || type === 'sliding') sashes = Math.max(2, Math.round(width / 1600));
-  else if (!['awning', 'clerestory'].includes(type)) sashes = Math.max(1, Math.round(width / (type === 'panoramic' ? 1200 : 800)));
+  if (type === 'lift-slide' || type === 'sliding') sashes = Math.max(2, Math.round(wholeWidth / 1600));
+  else if (!['awning', 'clerestory'].includes(type)) sashes = Math.max(1, Math.round(wholeWidth / (type === 'panoramic' ? 1200 : 800)));
   for (let i = 1; i < sashes; i += 1) {
-    const x = a0 + (width * i) / sashes;
-    addBox(x - frame / 2, x + frame / 2, z0 + bottomRail, z1 - topRail);
+    const x = wholeFrom + (wholeWidth * i) / sashes;
+    addBox(Math.max(a0, x-frame/2), Math.min(a1, x+frame/2), z0 + bottomRail, z1 - topRail);
   }
   if (type === 'awning' || type === 'clerestory') {
     const z = z0 + height * 0.55;
@@ -350,7 +352,7 @@ export function levelWallSolids(lp, walls, height) {
     const level = (lp.levels || []).find((l) => l.id === lp.activeLevel);
     const wallTop = ri >= 0 ? recs[ri].z1 : height;
     const bottom = openingSill(o, level);
-    const top = Math.min(wallTop, bottom + openingHeight(o, level));
+    const top = o.spanPart === 'lower' ? bottom + openingHeight(o, level) : Math.min(wallTop, bottom + openingHeight(o, level));
     if (top <= bottom || r.w < 0.5 || r.h < 0.5) continue;
     if (o.cornerJunction) voids.push({ r: o.cornerJunction, bottom, top, kind: 'corner-junction', wall: null, rec: -1 });
     voids.push({ r, bottom, top, kind: o.kind, wall: placed.wall, rec: ri, id: o.id, opening: o });
@@ -1250,18 +1252,21 @@ export const ROOF_T = 250;
 export const SLAB_T = 300;
 const SLAB_OUTSET = 20; // торец перекрытия чуть выступает из стены (без мерцания)
 
-// Пятно этажа: прямоугольники комнат (с частями Г/outline) с наружной стеной.
+// Пятно плиты: закрытые комнаты со стеной и балконы до их наружного края.
+// Балкон объединяется с перекрытием, чтобы у примыкания не было второго торца.
 function levelFootprint(lp, offset) {
-  return lp.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r))
-    .flatMap(roomRects)
-    .map((p) => ({ x0: p.x - offset, y0: p.y - offset, x1: p.x + p.w + offset, y1: p.y + p.h + offset }));
+  return lp.rooms.filter((r) => r.type === 'balcony' || (!r.parentId && !isOpenRoom(r) && !isShaft(r)))
+    .flatMap((room) => {
+      const margin = isOpenRoom(room) ? 0 : offset;
+      return roomRects(room).map((p) => ({ x0: p.x - margin, y0: p.y - margin, x1: p.x + p.w + margin, y1: p.y + p.h + margin }));
+    });
 }
 
 // Проём в перекрытии: лестничные помещения и шахты обоих этажей и проёмы в
 // перекрытии верхнего (над лестницами — авто, ручные; core/slab-openings.js).
 function slabCuts(lower, upper) {
   const cuts = [];
-  if (lower.openings.some((opening) => opening.span?.levelId === upper.activeLevel)) {
+  if (lower.openings.some((opening) => opening.kind === 'window')) {
     const walls = deriveWalls(upper);
     for (const opening of levelWindowOpenings(upper, walls)) {
       if (opening.spanPart !== 'upper') continue;
@@ -1566,19 +1571,6 @@ export function foundationFaces(project) {
 
 const ENTRANCE_COLOR = '#b7aea1';
 
-function entranceRect(center, direction, width, depth, offset = 0) {
-  const side = { x: -direction.y, y: direction.x };
-  const start = { x: center.x + side.x * offset, y: center.y + side.y * offset };
-  const end = { x: start.x + direction.x * depth, y: start.y + direction.y * depth };
-  const half = width / 2;
-  return [
-    { x: start.x - side.x * half, y: start.y - side.y * half },
-    { x: start.x + side.x * half, y: start.y + side.y * half },
-    { x: end.x + side.x * half, y: end.y + side.y * half },
-    { x: end.x - side.x * half, y: end.y - side.y * half },
-  ];
-}
-
 function faceNormal3d(points) {
   if (points.length < 3) return v(0, 0, 1);
   const a = points[0]; const b = points[1]; const c = points[2];
@@ -1589,19 +1581,19 @@ function faceNormal3d(points) {
   return v(n.x / length, n.y / length, n.z / length);
 }
 
-function rampComponentFaces(ramp) {
+function rampComponentFaces(ramp, color = ENTRANCE_COLOR) {
   const poly = ramp.polygon || [];
   if (poly.length !== 4 || !(ramp.run > 0.5)) return [];
   const topByIndex = poly.map((point, index) => v(point.x, point.y, index < 2 ? ramp.topZ : ramp.groundZ));
   const top = faceNormal3d(topByIndex).z < 0 ? [...topByIndex].reverse() : topByIndex;
   const baseZ = Math.min(ramp.groundZ - 100, ramp.topZ - 100);
   const bottom = [...poly].reverse().map((point) => v(point.x, point.y, baseZ));
-  const faces = [{ pts: top, normal: faceNormal3d(top), color: ENTRANCE_COLOR, kind: 'entrance', edges: [] },
-    { pts: bottom, normal: v(0, 0, -1), color: ENTRANCE_COLOR, kind: 'entrance', edges: [] }];
+  const faces = [{ pts: top, normal: faceNormal3d(top), color, kind: 'entrance', edges: [] },
+    { pts: bottom, normal: v(0, 0, -1), color, kind: 'entrance', edges: [] }];
   for (let i = 0; i < 4; i += 1) {
     const j = (i + 1) % 4;
     const side = [v(poly[i].x, poly[i].y, baseZ), v(poly[j].x, poly[j].y, baseZ), topByIndex[j], topByIndex[i]];
-    faces.push({ pts: side, normal: faceNormal3d(side), color: ENTRANCE_COLOR, kind: 'entrance', edges: [] });
+    faces.push({ pts: side, normal: faceNormal3d(side), color, kind: 'entrance', edges: [] });
   }
   faces[0].cutZ0 = baseZ;
   return faces;
@@ -1613,6 +1605,7 @@ export function entranceFaces(project, options = {}) {
   const faces = [];
   for (const entrance of deriveEntrances(project, options)) {
     if (entrance.status === 'pending') continue;
+    const color = entrance.color || ENTRANCE_COLOR;
     const tag = (source, component) => source.map((face) => ({
       ...face,
       entranceId: entrance.id,
@@ -1622,28 +1615,14 @@ export function entranceFaces(project, options = {}) {
       level: entrance.levelId,
       entranceSource: 'linked',
     }));
-    if (entrance.landing) {
-      const landing = entrance.landing;
-      const base = Math.min(landing.z - landing.thickness, landing.minGroundZ);
-      faces.push(...tag(polySlabFaces(landing.polygon, base, landing.z, ENTRANCE_COLOR, 'entrance', { bottom: true })
-        .map((face) => ({ ...face, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), landing));
+    for (const part of entranceParts(entrance)) {
+      const landing = part.key === 'landing';
+      const base = part.z0;
+      const component = { id: landing ? entrance.landing.id : `${entrance.steps.id}:${part.key.slice(5)}`, kind: landing ? 'landing' : 'steps' };
+      faces.push(...tag(polySlabFaces(part.polygon, base, part.z, color, landing ? 'entrance' : 'stairs', { bottom: true })
+        .map((face) => ({ ...face, stairPart: part.key, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), component));
     }
-    if (entrance.steps?.enabled) {
-      const steps = entrance.steps;
-      const base = Math.min(steps.groundZ - 100, steps.topZ - steps.rise - 100);
-      for (let index = 0; index < steps.count; index += 1) {
-        const center = {
-          x: steps.topCenter.x + steps.direction.x * index * steps.tread,
-          y: steps.topCenter.y + steps.direction.y * index * steps.tread,
-        };
-        const polygon = entranceRect(center, steps.direction, steps.width, steps.tread);
-        const top = steps.topZ - steps.riser * (index + 1);
-        const component = { ...steps, id: `${steps.id}:${index + 1}`, kind: 'steps' };
-        faces.push(...tag(polySlabFaces(polygon, base, top, ENTRANCE_COLOR, 'stairs', { bottom: true })
-          .map((face) => ({ ...face, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), component));
-      }
-    }
-    if (entrance.ramp?.enabled) faces.push(...tag(rampComponentFaces(entrance.ramp), entrance.ramp));
+    if (entrance.ramp?.enabled) faces.push(...tag(rampComponentFaces(entrance.ramp, color), entrance.ramp));
   }
   return faces;
 }
@@ -2113,11 +2092,22 @@ export function shownLevelIds(project, mode = 'all') {
   return mode === 'only' ? [levels[k].id] : levels.slice(0, k + 1).map((l) => l.id);
 }
 
+// Фасад может пересекать несколько этажей. Отбор по пересечению недостаточен:
+// в ограниченном виде режем его по верху показанного этажа и низу текущего.
+// У нижнего этажа сохраняется цоколь ниже ±0.000.
+export function facadeLevelBounds(project, mode = 'all') {
+  if (mode !== 'only' && mode !== 'upto') return null;
+  const levels = sortedLevels(project);
+  const index = Math.max(0, levels.findIndex((l) => l.id === project.activeLevel));
+  const level = levels[index];
+  return level ? { z0: mode === 'only' && index > 0 ? level.elevation : -Infinity, z1: level.elevation + level.height } : null;
+}
+
 // Массы (core/masses.js) — боксы с контурами (обычные — непрозрачные белые;
 // прозрачной становится только выбранная, см. faceAlpha в ui/view3d.js): 6 граней kind
 // 'mass' с massId и face ('top' | 'bottom' | 'px' | 'nx' | 'py' | 'ny').
 // Только для окна 3D (опция masses у buildHouseMesh).
-export function massFaces(masses, { alpha = 1, voids = [], apertures = [] } = {}) {
+export function massFaces(masses, { alpha = 1, voids = [], apertures = [], facadeClip = null } = {}) {
   const out = [];
   for (const m of masses || []) {
     const b = massBox(m);
@@ -2138,7 +2128,9 @@ export function massFaces(masses, { alpha = 1, voids = [], apertures = [] } = {}
             y0: alongX ? b.y0 : r.y, y1: alongX ? b.y1 : r.y + r.h, z0: hole.z0, z1: hole.z1 });
         }
       }
-      for (const part of facadeParts(m)) {
+      for (const original of facadeParts(m)) {
+        const part = clipMassBoxZ(original, facadeClip);
+        if (!part) continue;
         const meta = () => ({ massId: m.id, facadeKind: m.facadeKind, alpha, flat: m.facadeKind === 'light' });
         const relevant = cuts.filter((cut) => boxOverlap3d(part, cut));
         if (relevant.length) out.push(...orthoCutFaces([part], relevant, { color: part.color, kind: 'mass', meta }));
@@ -2234,12 +2226,12 @@ export function buildHouseMesh(project, {
   // Благоустройство (core/mesh3d-landscape.js): деревья, покрытия, вода, постройки.
   if (site && landscape) faces.push(...landscapeFaces(project, terrainHeightFn(project, terrainScale), { evening }));
   if (masses || facades) {
-    const list = (project.masses || []).filter((m) => m.facadeKind ? facades && (levelMode === 'all' || levels.some((l) =>
-      shown.has(l.id) && m.z0 < l.elevation + l.height && m.z0 + m.h > l.elevation)) : masses);
-    faces.push(...massFaces(list, { voids: project.massVoids || [], apertures: facadeApertures }));
+    const facadeClip = facadeLevelBounds(project, levelMode);
+    const list = (project.masses || []).filter((m) => m.facadeKind ? facades && clipMassBoxZ(massBox(m), facadeClip) : masses);
+    faces.push(...massFaces(list, { voids: project.massVoids || [], apertures: facadeApertures, facadeClip }));
   }
   // Часть масс под землёй (рельеф и слой «Участок») — бледно сквозь землю.
-  if (masses && site && project.masses?.length) faces.push(...massGroundFaces(project.masses, terrainHeightFn(project, terrainScale)));
+  if (masses && site && project.masses?.length) faces.push(...massGroundFaces(project.masses, terrainHeightFn(project, terrainScale), { facadeClip: facadeLevelBounds(project, levelMode) }));
   return faces;
 }
 

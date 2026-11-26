@@ -14,6 +14,20 @@ const A = { id: 'a', name: 'Масса 1', x: 4000, y: 2500, w: 8000, d: 5000, z
 const B = { id: 'b', name: 'Масса 2', x: 13000, y: 3000, w: 8000, d: 6000, z0: 0, h: 6000, rotation: 0 };
 const other = (m) => ({ id: m.id, name: m.name, box: massBox(m) });
 
+test('угол стены навеса важнее реек, в том числе при удержании прежней цели; Alt/Shift отключает', () => {
+  const box = { x0: 1000, x1: 4800, y0: -2050, y1: -250, z0: 2600, z1: 2840 };
+  const slats = { id: 'slats', name: 'Деревянные рейки', box: { x0: 5500, x1: 5565, y0: 2000, y1: 3050, z0: 0, z1: 6000 } };
+  const targets = axisTargets('x', box, [slats], { hostWall: { axis: 'x', from: -250, to: 5250 } }).filter((t) => t.edge === 'hi');
+  const held = targets.find((t) => t.id === slats.id && t.value === 5500).key;
+  const snapped = snapMove({ lo: 4800, hi: 4800, v: 460, targets, tol: 300, release: 400, held });
+  assert.equal(snapped.value, 450); assert.equal(snapped.snap.kind, 'host-wall');
+  assert.equal(snapLabel(snapped.snap), 'по углу стены');
+  const free = snapMove({ lo: 4800, hi: 4800, v: 460, targets, tol: 300, free: true });
+  assert.deepEqual(free, { value: 460, snap: null });
+  const far = snapMove({ lo: 4800, hi: 4800, v: 900, targets, tol: 300, release: 400, held: snapped.snap.key });
+  assert.equal(far.snap.id, slats.id, 'вне радиуса угла доступны остальные цели');
+});
+
 test('радиус из пикселей: 12 px × мм/px, в пределах 20…600 мм; отрыв больше', () => {
   assert.equal(snapRadius(12, 10), 120);
   assert.equal(snapRadius(12, 0.5), 20);

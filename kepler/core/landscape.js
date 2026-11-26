@@ -25,6 +25,7 @@
 //   'line'   — линейный (дорожка, ограждение по ломаной);
 //   'poly'   — площадной (газон, гравий, плитка, пруд произвольной формы).
 
+import { stairHeights, stairRect } from './stair-shape.js';
 import { pointInPolygon, pointToSegmentDistance } from './zamer/geometry.js';
 import { CORNER_IDS, areaOf, layoutBoards, layoutSlabs, pathLayout } from './path-geometry.js';
 import {
@@ -567,8 +568,20 @@ export function stairTreads(o, info = stairsInfo(o)) {
   const middle = Math.floor(steps / 2) - 1;
   return Array.from({ length: steps }, (_, i) => {
     const bottom = o.h / 2 - i * depth - (i > middle ? extra : 0);
-    return { bottom, top: bottom - depth - (i === middle ? extra : 0), z: (i + 1) * riser };
+    const key = `step-${steps - i}`;
+    const base = { left: -info.flight / 2, right: info.flight / 2, back: bottom - depth - (i === middle ? extra : 0), front: bottom };
+    const rect = stairRect(base, o.meta?.shapeEdits?.[key]);
+    const baseZ = { lower: 0, upper: (i + 1) * riser };
+    const height = stairHeights(baseZ, o.meta?.shapeEdits?.[key]);
+    return { key, base, baseZ, left: rect.left, right: rect.right, bottom: rect.front, top: rect.back, z: height.upper, z0: height.lower };
   });
+}
+
+export function hitStairTread(o, point, tolerance = 0) {
+  if (o.kind !== 'stairs-out') return null;
+  const p = toLocal(o, point);
+  return stairTreads(o).sort((a, b) => b.z - a.z).find((t) => p.x >= t.left - tolerance && p.x <= t.right + tolerance &&
+    p.y >= t.top - tolerance && p.y <= t.bottom + tolerance)?.key || null;
 }
 
 export function syncStairs(o) {
@@ -1316,6 +1329,7 @@ export function objectBox(obj) {
 
 // Попадание точки (мир) в объект; tol — запас в мм (клик по мелочи).
 export function pointInObject(obj, p, tol = 0) {
+  if (obj.kind === 'stairs-out' && hitStairTread(obj, p, tol)) return true;
   const def = landscapeDef(obj.kind);
   if (isNoteShape(def)) return calloutHit(obj, p, tol);
   if (def?.shape === 'line') {

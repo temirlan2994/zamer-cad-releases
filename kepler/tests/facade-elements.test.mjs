@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { FACADE_ELEMENTS } from '../data/facade-catalog.js';
-import { bindFacadeToWall, createCanopyLight, createFacadeElement, fitFacadeBand, syncFacadeHosts, updateFacadeAttachment } from '../core/facade.js';
+import { bindFacadeToWall, createCanopyLight, createFacadeElement, facadeHostFrame, facadeWallSpan, fitFacadeBand, syncFacadeHosts, updateFacadeAttachment } from '../core/facade.js';
 import { createOpening, createProject, createRoom, deserializeProject, serializeProject } from '../core/model.js';
 import { buildHouseMesh } from '../core/mesh3d.js';
 import { copyMass, massBox, resizeMass } from '../core/masses.js';
@@ -9,6 +9,30 @@ import { pickFaces, pickObject } from '../core/pick3d.js';
 import { buildElevation } from '../core/elevation.js';
 
 const host = { point: { x: 2500, y: -250, z: 1700 }, normal: { x: 0, y: -1 }, level: { elevation: 0, height: 3000 }, from: 0, to: 5000 };
+
+test('навес привязывается к наружным углам всех сторон и не отскакивает к чистому контуру комнаты', () => {
+  for (const side of [0, 1, 2, 3]) {
+    const p = createProject(); const level = p.levels[0];
+    const room = createRoom('living', 0, 0, 5000, 4000); level.rooms.push(room);
+    const frame = facadeHostFrame(p, level, room, side);
+    const axis = frame.orient === 'h' ? 'x' : 'y'; const across = axis === 'x' ? 'y' : 'x';
+    const m = bindFacadeToWall(p, createFacadeElement('canopy', {
+      level, point: { [axis]: 2500, [across]: frame.across, z: 2700 },
+      normal: { x: axis === 'x' ? 0 : frame.outward, y: axis === 'x' ? frame.outward : 0 }, from: frame.from, to: frame.to,
+    }), level.id, room.id, side);
+    const span = facadeWallSpan(p, m);
+    assert.deepEqual(span, { axis, from: -250, to: axis === 'x' ? 5250 : 4250 });
+    const next = updateFacadeAttachment(p, m, { ...m, w: span.to - 1000, [axis]: (span.to + 1000) / 2 });
+    p.masses = [next]; syncFacadeHosts(p);
+    assert.equal(massBox(next)[`${axis}1`], span.to, `сторона ${side}: наружный угол сохраняется после отпускания`);
+    assert.equal(massBox(next)[`${axis}0`], 1000);
+    assert.ok(next.facadeHost);
+    const restored = deserializeProject(serializeProject(p)); syncFacadeHosts(restored);
+    assert.deepEqual(restored.masses, p.masses);
+    room[axis] += 500; syncFacadeHosts(p);
+    assert.equal(massBox(next)[`${axis}1`], span.to + 500, 'навес следует за своей стеной');
+  }
+});
 
 test('Пояс идёт через соседнюю комнату до наружных углов и останавливается у разрыва фасада', () => {
   const p = createProject();

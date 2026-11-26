@@ -5,6 +5,7 @@ import { hasContent } from '../core/model.js';
 import { neighborRectCorners } from '../core/site.js';
 import { allMasses, massRect } from '../core/masses.js';
 import { projectPoint, underlayHandles, unprojectPoint } from '../render.js';
+import { initStairShapePlan, updateStairShapePlanHandles } from './stair-shape-plan.js';
 import { positionDimInput } from './dim-input.js';
 import { canvas, refs, renderer } from './dom.js';
 import { findWall } from './hit.js';
@@ -83,6 +84,7 @@ export function requestDraw() {
     if (!state.project) return; // ResizeObserver может сработать до восстановления аккаунта и модели.
     advanceZoom(now);
     renderer.draw(state, { zooming: Boolean(zoomAnimation) || state.planPinching });
+    updateStairShapePlanHandles();
     const firstDraw = document.getElementById('firstDrawActions');
     if (firstDraw) firstDraw.hidden = !state.project || state.modeName !== 'plan' || Boolean(
       state.tool || state.selection || state.editLocked || state.roofPlan || state.sheetOpen ||
@@ -279,6 +281,7 @@ export function showPlanRect(rect, opts = {}) {
 }
 
 export function bindView() {
+  initStairShapePlan();
   const actions = document.getElementById('firstDrawActions');
   for (const action of actions.querySelectorAll('[data-first-tool]')) {
     const tool = document.getElementById(action.dataset.firstTool);

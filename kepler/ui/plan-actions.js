@@ -319,6 +319,13 @@ export function deleteSelection() {
   const sel = state.selection;
   if (!sel) return;
   if (sel.type === 'site' && sel.kind === 'building') return; // дом с участка не удаляется
+  if (sel.type === 'entrance') {
+    const opening = state.project.openings.find((o) => o.id === sel.id);
+    if (opening) mutate(() => { opening.entrance = { ...opening.entrance, enabled: false }; });
+    selectObject(null);
+    toast('Крыльцо удалено · Ctrl+Z — вернуть');
+    return;
+  }
   if (sel.type === 'section') { deleteSectionView(sel.id); return; }
   if (sel.type === 'slab') { deleteSlab(sel); return; }
   if (sel.type === 'railing') { deleteSelectedRailing(); return; }

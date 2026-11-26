@@ -122,6 +122,7 @@ export function lsHandleInfo(objects, selection, handle, viewRad = 0) {
   const ids = new Set(selection.ids);
   const objs = objects.filter((o) => ids.has(o.id));
   if (!objs.length) return null;
+  if (objs.length === 1 && objs[0].kind === 'stairs-out' && selection.part) return null;
   const modes = lsModesFor(objs);
   const mode = lsHandleMode(handle, key, modes);
   const group = objs.length > 1;

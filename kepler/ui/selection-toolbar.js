@@ -71,6 +71,10 @@ function gridPinButton(wall) {
 }
 
 function contentForSelection(sel) {
+  const stairPart = sel.part && (sel.type === 'entrance' || (sel.type === 'landscape' && sel.ids?.length === 1 &&
+    state.project.site?.landscape?.objects?.some((o) => o.id === sel.ids[0] && o.kind === 'stairs-out')));
+  if (stairPart) return { label: sel.part === 'landing' ? 'Площадка' : `Ступень ${sel.part.slice(5)} (от верха)`,
+    html: button('stair-whole', '↶', 'Вся лестница') };
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return null;
@@ -121,6 +125,7 @@ function contentForSelection(sel) {
       html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${button('rotate', '↻', 'Повернуть 90°', 'R')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
+  if (sel.type === 'entrance') return { label: 'Крыльцо и наружная лестница', html: button('delete', '⌫', 'Удалить', 'Del', 'class="danger"') };
   if (sel.type === 'roof') {
     const roof = visibleRoofById(sel.id);
     if (!roof) return null;
@@ -259,6 +264,11 @@ export function bindSelectionToolbar() {
     const target = event.target.closest('[data-selection-action]');
     if (!target || target.disabled) return;
     const action = target.dataset.selectionAction;
+    if (action === 'stair-whole') {
+      const next = { ...state.selection }; delete next.part;
+      (await toolsReady).selectObject(next);
+      return;
+    }
     if (action === 'move-furniture' || action === 'cancel-move') {
       const tools = await toolsReady;
       if (action === 'move-furniture') tools.startFurnitureMove(); else tools.cancelTool();

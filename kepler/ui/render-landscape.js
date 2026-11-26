@@ -2151,7 +2151,7 @@ const BUILD_LOOKS = {
     const sd = rc.shadowLocal;
     // Ступени: снизу (+Y) вверх, выше — чуть светлее.
     for (let i = 0; i < n; i += 1) {
-      const { bottom: yb, top: yt } = treads[i];
+      const { bottom: yb, top: yt, left: x0, right: x1 } = treads[i];
       const t = yb - yt;
       ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
       ctx.fillRect(x0, yt, x1 - x0, t);
@@ -2192,7 +2192,7 @@ const BUILD_LOOKS = {
     }
     // Рёбра ступеней (носики).
     ctx.beginPath();
-    for (const { bottom } of treads.slice(1)) { ctx.moveTo(x0, bottom); ctx.lineTo(x1, bottom); }
+    for (const { bottom, top, left, right } of treads) { ctx.rect(left, top, right - left, bottom - top); }
     ink(ctx, rc, 0.8, 0.95);
     // Борта — как стенка короба: верх и двойная линия.
     if (cw > 0) {

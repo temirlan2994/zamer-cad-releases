@@ -400,12 +400,11 @@ export function sectionProfile(project, line, side, opts = {}) {
     // --- Лестница: ступени-блоки реальной высоты.
     if (look === 'stairs') {
       const st = stairsInfo(o);
-      const fw = Math.max(100, st.flight);
       const mat = MAT_BY_VARIANT[o.variant] || 'concrete';
       let any = false;
-      for (const { bottom, top: yTop, z: zTop } of stairTreads(o, st)) {
-        const poly = [toWorld(o, -fw / 2, yTop), toWorld(o, fw / 2, yTop), toWorld(o, fw / 2, bottom), toWorld(o, -fw / 2, bottom)];
-        const iv = body(o, poly, 0, zTop, base, { ...info, cat: 'built', mat, title: zTop >= st.rise - 0.1 ? info.title : '' });
+      for (const { left, right, bottom, top: yTop, z: zTop, z0: zBottom } of stairTreads(o, st)) {
+        const poly = [toWorld(o, left, yTop), toWorld(o, right, yTop), toWorld(o, right, bottom), toWorld(o, left, bottom)];
+        const iv = body(o, poly, zBottom, zTop, base, { ...info, cat: 'built', mat, title: zTop >= st.rise - 0.1 ? info.title : '' });
         if (iv.length) any = true;
         if (st.cheek > 0) {
           for (const sx of [-1, 1]) {

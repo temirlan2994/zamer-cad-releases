@@ -327,7 +327,7 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
       const cy = -(r.y + r.h / 2);
       // Проём чуть толще стены — режет насквозь.
       const cut = rectProfile(cx, cy, horiz ? r.w : r.w + 20, horiz ? r.h + 20 : r.h);
-      const voidId = o.assemblyPart ? `${o.id}-${o.assemblyPart}` : o.cornerWing === 'return' ? `${o.id}-return` : o.spanPart === 'upper' ? `${o.id}-${level.id}` : o.id;
+      const voidId = o.assemblyPart ? `${o.id}-${o.assemblyPart}` : o.cornerWing === 'return' ? `${o.id}-return` : o.spanPart === 'upper' ? `${o.id}-${level.id}${o.spanSlice != null ? `-${o.spanSlice}` : ''}` : o.id;
       const opening = add(`IFCOPENINGELEMENT(${guid(`opening-${voidId}`)},${owner},${stepString(o.kind === 'door' ? 'Проём двери' : 'Проём окна')},$,$,${placement},${shape(solid(cut, bottom, height))},$,.OPENING.)`);
       add(`IFCRELVOIDSELEMENT(${guid(`void-${voidId}`)},${owner},$,$,${wallRef.get(placed.wall)},${opening})`);
       // Полотно двери / стекло окна — тонкая плита посередине стены.

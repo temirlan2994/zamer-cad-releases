@@ -3,9 +3,13 @@
 // и шаблоны сада. Данные — project.site.landscape.objects (core/landscape.js),
 // координаты участка (съёмки).
 
+import { hitEntrancePlan } from './render-entrance.js';
+import { stairClickSelection } from '../core/stair-shape.js';
+import { switchLevel } from './levels.js';
+import { bindStairShapeFields, stairShapeFields } from './stair-shape.js';
 import {
   LANDSCAPE_CATEGORIES, LANDSCAPE_VIS, TREE_HOUSE_MIN, clampWidth, createLandscapeObject,
-  hitEdge, hitLandscape, hitVertex, insertVertex, isPathShape, landscapeByCategory, landscapeDef,
+  hitEdge, hitLandscape, hitStairTread, hitVertex, insertVertex, isPathShape, landscapeByCategory, landscapeDef,
   landscapeSummary, landscapeWarnings, minVertices, moveVertex, objectCorner, objectCorners, objectPath, objectsInPolygon,
   polygonArea, polylineLength, removeVertex, resizeObject, rotateObjectAbout, searchLandscape, syncShape,
   translateObject, CURB_HOSTS, CURB_MATERIALS, PLANTER_FILLS, clampSize, normalizeCurb, planterWall, stairsInfo,
@@ -453,10 +457,11 @@ export function landscapeHover(world, canvas, event) {
   const handle = hitLandscapeHandle(screen);
   const hit = handle ? null : hitLandscape(landscapeObjects(), world, 4 / state.view.scale);
   setEdgeHover(null, hit);
-  const next = hit ? { type: 'landscape', id: hit.id } : null;
+  const entry = !handle && !hit ? hitEntrancePlan(state, world, 4 / state.view.scale) : null;
+  const next = hit ? { type: 'landscape', id: hit.id } : entry ? { type: 'entrance', id: entry.openingId, part: entry.key } : null;
   const handleCursor = (h) => (h.mode.endsWith('rotate') ? 'grab' : h.mode.startsWith('note') ? 'move'
     : h.edge ? (h.edge === 'n' || h.edge === 's' ? 'ns-resize' : 'ew-resize') : 'nwse-resize');
-  canvas.style.cursor = handle ? handleCursor(handle) : hit ? (hit.locked ? 'pointer' : 'move') : 'default';
+  canvas.style.cursor = handle ? handleCursor(handle) : hit ? (hit.locked ? 'pointer' : 'move') : entry ? 'pointer' : 'default';
   if (JSON.stringify(next) !== JSON.stringify(state.hover)) { state.hover = next; requestDraw(); }
   return true;
 }
@@ -673,6 +678,8 @@ export function landscapePointerDown(event, screen, world) {
     let ids = selectedIds();
     // Клик без сдвига по уже выбранному — следующий режим ручек (landscapeDragEnd).
     const wasSelected = !event.shiftKey && ids.includes(hit.id);
+    const stairPart = wasSelected && ids.length === 1 ? hitStairTread(hit, world) : null;
+    if (stairPart && state.selection.part) return tap(() => selectObject({ type: 'landscape', ids: [hit.id], part: stairPart }));
     if (event.shiftKey) {
       ids = ids.includes(hit.id) ? ids.filter((id) => id !== hit.id) : [...ids, hit.id];
       selectLandscape(ids);
@@ -688,8 +695,13 @@ export function landscapePointerDown(event, screen, world) {
     const movable = landscapeObjects().filter((o) => group.has(o.id));
     const starts = new Map(movable.map((o) => [o.id, { x: o.x, y: o.y, points: o.points ? o.points.map((p) => ({ ...p })) : null }]));
     const primary = starts.has(hit.id) ? hit.id : movable[0].id;
-    return { kind: 'ls-move', primary, starts, world, screen, before: snapshot(), moved: false, wasSelected, detail: event.detail || 1 };
+    return { kind: 'ls-move', primary, starts, world, screen, before: snapshot(), moved: false, wasSelected, stairPart, detail: event.detail || 1 };
   }
+  const entry = hitEntrancePlan(state, world, 4 / state.view.scale);
+  if (entry) return tap(() => {
+    if (entry.levelId !== state.project.activeLevel) switchLevel(entry.levelId, { planView: false });
+    selectObject(stairClickSelection(state.selection, { type: 'entrance', id: entry.openingId, part: entry.key }));
+  });
   // Клик по линии разреза — открыть разрез.
   const sec = hitSection(landscapeSections(), screen, worldToScreen, state.coarsePointer ? 12 : 6);
   if (sec && !event.shiftKey) { openSection(sec.id); return null; }
@@ -912,7 +924,8 @@ export function landscapeDragEnd(drag) {
     // второй клик двойного — правка вершин, режим не меняем).
     if (drag.kind === 'ls-move' && drag.wasSelected) {
       const o = landscapeObjects().find((x) => x.id === drag.primary);
-      if (!(drag.detail >= 2 && o && isShapeKind(o.kind))) cycleLandscapeHandle();
+      if (drag.stairPart) selectObject({ type: 'landscape', ids: [drag.primary], part: drag.stairPart });
+      else if (!(drag.detail >= 2 && o && isShapeKind(o.kind))) cycleLandscapeHandle();
     }
     // Клик по ребру без сдвига — как по самому контуру (двойной — вставка вершины).
     if (drag.kind === 'ls-edge' && drag.detail < 2) cycleLandscapeHandle();
@@ -1096,6 +1109,8 @@ export function explodeLandscapeSelection() {
 
 // Клавиши режима; true — нажатие обработано.
 export function handleLandscapeKey(event) {
+  // Связанное крыльцо — объект дома: Delete обрабатывается без удаления двери.
+  if (state.selection?.type === 'entrance' && !state.tool) return false;
   const mod = event.ctrlKey || event.metaKey;
   if (state.tool?.kind === 'ls-array' && !mod) return handleArrayKey(event);
   if (isSectionTool() && !mod) return handleSectionKey(event);
@@ -1862,6 +1877,11 @@ export function renderLandscapeProps(panel) {
   }
   const o = objs[0];
   const def = landscapeDef(o.kind);
+  if (o.kind === 'stairs-out' && state.selection.part) {
+    panel.innerHTML = `<h2>${escapeHtml(def.title)}</h2>${stairShapeFields()}`;
+    bindStairShapeFields(panel);
+    return;
+  }
   const shape = isPathShape(def);
   const notes = currentWarnings().get(o.id) || [];
   const built = o.kind === 'stairs-out' || o.kind === 'retaining-wall' || isPlanter(o);
@@ -1927,10 +1947,12 @@ export function renderLandscapeProps(panel) {
       ${shape && !o.locked ? '<p class="hint">Тяните вершины · «+» на ребре или двойной клик по ребру — новая вершина · двойной клик по вершине, Alt+клик или Delete — удалить</p>' : ''}
       ${notes.map((t) => `<p class="ls-note">${escapeHtml(t)}</p>`).join('')}
     </div>
+    ${o.kind === 'stairs-out' ? stairShapeFields() : ''}
     ${helpers}
     ${planterFillHtml(o)}
     ${plantFillHtml(o)}`;
   bindCommon(panel);
+  if (o.kind === 'stairs-out') bindStairShapeFields(panel);
   bindPathProps(panel, o);
   bindBuildProps(panel, o);
   bindOutdoorLights(panel, o);
@@ -2023,7 +2045,7 @@ function renderFlightProps(panel) {
   const tool = state.tool;
   const o = tool.opts;
   panel.innerHTML = `
-    <h2>Лестница на участке</h2>
+    <h2>Наружная лестница</h2>
     <div class="prop-block">
       <div class="prop-grid">
         ${mmField('lsFlightWidth', 'Ширина марша, мм', o.width, 500, 12000, 50)}

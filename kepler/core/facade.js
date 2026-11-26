@@ -106,21 +106,21 @@ function bandContext(project, levelId, derived) {
 }
 
 // Лицевая сторона стены включает торцы примыкающих стен в углах. Собираем
-// касающиеся интервалы; разрыв или уступ завершает пояс.
-export function fitFacadeBand(project, m, ratio = 0.5, contexts = new Map(), activeWalls = null) {
+// касающиеся интервалы; разрыв или уступ завершает непрерывный фасад.
+export function facadeWallSpan(project, m, anchor = null, contexts = new Map(), activeWalls = null) {
   const host = m.facadeHost;
-  if (m.facadeKind !== 'band' || !host) return false;
+  if (!host) return null;
   const level = project.levels.find((l) => l.id === host.levelId);
   const room = level?.rooms.find((r) => r.id === host.roomId);
   const frame = room && sideEdge(room, host.side);
-  if (!frame) return false;
+  if (!frame) return null;
   if (!contexts.has(level.id)) contexts.set(level.id, bandContext(project, level.id, level.id === project.activeLevel ? activeWalls : null));
   const { lp, walls } = contexts.get(level.id);
   const axis = frame.orient === 'h' ? 'x' : 'y';
   const across = axis === 'x' ? 'y' : 'x';
   const extent = axis === 'x' ? 'w' : 'h';
   const depth = axis === 'x' ? 'h' : 'w';
-  const anchor = frame.from + Math.max(0, Math.min(1, ratio)) * (frame.to - frame.from);
+  const at = anchor ?? m[axis];
   const plane = m[across] - frame.outward * m.d / 2 - host.offset;
   const intervals = [];
   for (const wall of walls) {
@@ -138,10 +138,22 @@ export function fitFacadeBand(project, m, ratio = 0.5, contexts = new Map(), act
     if (last && lo <= last[1] + 1) last[1] = Math.max(last[1], hi);
     else runs.push([lo, hi]);
   }
-  const run = runs.find(([lo, hi]) => lo <= anchor + 1 && hi >= anchor - 1);
-  if (!run || run[1] - run[0] < 12) return false;
-  m[axis] = (run[0] + run[1]) / 2;
-  m.w = run[1] - run[0];
+  const run = runs.find(([lo, hi]) => lo <= at + 1 && hi >= at - 1);
+  return run && run[1] - run[0] >= 12 ? { axis, from: run[0], to: run[1] } : null;
+}
+
+export function fitFacadeBand(project, m, ratio = 0.5, contexts = new Map(), activeWalls = null) {
+  const host = m.facadeHost;
+  if (m.facadeKind !== 'band' || !host) return false;
+  const level = project.levels.find((l) => l.id === host.levelId);
+  const room = level?.rooms.find((r) => r.id === host.roomId);
+  const frame = room && sideEdge(room, host.side);
+  if (!frame) return false;
+  const anchor = frame.from + Math.max(0, Math.min(1, ratio)) * (frame.to - frame.from);
+  const run = facadeWallSpan(project, m, anchor, contexts, activeWalls);
+  if (!run) return false;
+  m[run.axis] = (run.from + run.to) / 2;
+  m.w = run.to - run.from;
   host.bandAnchor = Math.max(0, Math.min(1, ratio));
   return true;
 }
@@ -216,7 +228,9 @@ export function syncFacadeHosts(project, activeWalls = null) {
       m.w = Math.abs(host.width - host.span) < 1 ? length : Math.min(length, host.width);
       if (Math.abs(host.along - host.span / 2) < 1) center = length / 2;
       else if (host.along > host.span / 2) center += length - host.span;
-      center = Math.min(length - m.w / 2, Math.max(m.w / 2, center));
+      // Навес может доходить до наружного угла стены за пределом чистого
+      // контура комнаты. После жеста сохраняем его монтажное положение.
+      if (m.facadeKind !== 'canopy') center = Math.min(length - m.w / 2, Math.max(m.w / 2, center));
     }
     const along = frame.from + center;
     const across = frame.across + host.offset + frame.outward * m.d / 2;

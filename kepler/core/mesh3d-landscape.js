@@ -85,8 +85,9 @@ function terrainPathFaces(poly, o, z, color, hz) {
 }
 
 // Призма: верх (треугольниками) и бока; низ — по земле.
-function prism(poly, z0, z1, color, hz, { side = color, top = true, bottomAt } = {}) {
+function prism(poly, z0, z1, color, hz, { side = color, top = true, bottom = false, bottomAt } = {}) {
   const faces = top ? flat(poly, z1, color, hz) : [];
+  if (bottom) faces.push(...flat(poly, z0, color, hz).map((f) => ({ ...f, pts: [...f.pts].reverse(), normal: v(0, 0, -1) })));
   const cx = poly.reduce((t, p) => t + p.x, 0) / poly.length;
   const cy = poly.reduce((t, p) => t + p.y, 0) / poly.length;
   for (let i = 0; i < poly.length; i += 1) {
@@ -309,13 +310,12 @@ function objectFaces(o, def, outline, path, hz, dryOutlines) {
   // --- Наружная лестница: ступени-блоки реальной высоты, борта по бокам.
   if (look === 'stairs') {
     const st = stairsInfo(o);
-    const fw = Math.max(100, st.flight);
     const at2 = (lx, ly) => ({ x: o.x + lx * Math.cos(rot) - ly * Math.sin(rot), y: o.y + lx * Math.sin(rot) + ly * Math.cos(rot) });
-    for (const { bottom, top, z: zTop } of stairTreads(o, st)) {
+    for (const { key, left, right, bottom, top, z: zTop, z0: zBottom } of stairTreads(o, st)) {
       const ly = (bottom + top) / 2;
       const t = bottom - top;
-      const c = at2(0, ly);
-      faces.push(...prism(rectPoly(c.x, c.y, fw, t, rot), 0, zTop, C[0], hz, { side: C[1] }));
+      const c = at2((left + right) / 2, ly);
+      faces.push(...prism(rectPoly(c.x, c.y, right - left, t, rot), zBottom, zTop, C[0], hz, { side: C[1], bottom: true }).map((face) => ({ ...face, stairPart: key })));
       if (st.cheek > 0) {
         for (const sx of [-1, 1]) {
           const cc = at2(sx * (o.w / 2 - st.cheek / 2), ly);
@@ -677,7 +677,7 @@ export function landscapeFaces(project, hz = null, { evening = false } = {}) {
     // Идентификатор хранится на каждой грани: 3D выбирает не условную
     // категорию «ландшафт», а конкретное дерево, дорожку или сооружение.
     for (let i = firstFace; i < faces.length; i += 1) {
-      if (o0.siteEntryId) faces[i].siteEntryId = o0.siteEntryId;
+      if (o0.siteEntryId) { faces[i].siteEntryId = o0.siteEntryId; if (o0.entryPost) faces[i].entryPost = true; }
       else { faces[i].landscapeId = o0.id; faces[i].landscapeKind = o0.kind; }
     }
     if (evening && o.kind === 'lamp') {

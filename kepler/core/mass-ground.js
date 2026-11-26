@@ -11,7 +11,7 @@
 // прямоугольника полосы полуплоскостью z ≤ g(s). Верх и низ — сеткой ячеек:
 // ячейка под землёй, если земля в её центре выше грани.
 
-import { MASS_COLOR, massBox } from './masses.js';
+import { MASS_COLOR, massBox, clipMassBoxZ } from './masses.js';
 
 const EPS = 1; // мм — касание земли не считаем погружением
 const LINE_LIFT = 15; // мм — ватерлиния чуть над землёй (не тонет в сетке)
@@ -121,11 +121,12 @@ export function massGroundSplit(box, hz, { step = 500 } = {}) {
 
 // Грани подземной части всех масс: kind 'massUnder' (бледные, сквозь землю)
 // и по одной грани kind 'massLine' с рёбрами ватерлинии на массу.
-export function massGroundFaces(masses, hz, { alpha = 0.22, step = 500 } = {}) {
+export function massGroundFaces(masses, hz, { alpha = 0.22, step = 500, facadeClip = null } = {}) {
   const out = [];
   if (typeof hz !== 'function') return out;
   for (const m of masses || []) {
-    const box = massBox(m);
+    const box = m.facadeKind ? clipMassBoxZ(massBox(m), facadeClip) : massBox(m);
+    if (!box) continue;
     const { under, line, edges } = massGroundSplit(box, hz, { step });
     if (!under.length) continue;
     const color = m.color || MASS_COLOR;

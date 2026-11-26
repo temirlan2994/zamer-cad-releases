@@ -13,7 +13,7 @@ import { levelWindowOpenings, nextWindowSpan } from './spanning-windows.js';
 import { openingFrame, openingPos, openingRect, setOpeningPos } from './walls.js';
 
 export const OPENING_GAP = 100;
-const EDGE_MARGIN = 50; // отступ проёма от торца стены (как в clampOpeningOffset)
+export const EDGE_MARGIN = 50; // отступ проёма от торца стены (как в clampOpeningOffset)
 
 // Полосы двух стен лежат на одной линии (перекрываются поперёк).
 function sameLine(a, b) {

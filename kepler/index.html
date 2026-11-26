@@ -32,7 +32,7 @@
     <div class="app" inert>
       <!-- Файлы и общие действия проекта. -->
       <header class="topbar">
-        <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.35">v0.4.35</span></div>
+        <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.58">v0.4.58</span></div>
         <button type="button" id="menuBtn" class="project-home" title="Открыть список проектов"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5h7l2 2h8v12H3z"/><path d="M3 10h17"/></svg><span>Проекты</span></button>
         <span class="project-divider" aria-hidden="true">/</span>
         <input id="projectName" class="project-name" value="Новый дом" maxlength="200" aria-label="Название проекта" />
@@ -165,6 +165,12 @@
               </div>
             </div>
           </div>
+          <div class="tb-group" id="modelTools">
+            <details class="v3-facade" id="v3Facade">
+              <summary class="tb-btn" aria-label="Фасад" title="Фасад" aria-controls="v3FacadePanel"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V3h16v18M2 21h20M10 21v-6h4v6M8 7h2m4 0h2M8 11h2m4 0h2"/></svg></summary>
+              <div class="v3-facade-panel" id="v3FacadePanel" aria-label="Элементы фасада"></div>
+            </details>
+          </div>
           <div class="tb-group" id="siteTools" hidden></div>
           <div class="tb-group" id="landscapeTools" hidden></div>
           <span class="tb-sep" aria-hidden="true"></span>
@@ -228,12 +234,21 @@
               <div class="furniture-items" id="openingItems"></div>
             </div>
           </div>
+          <div class="library-furniture library-entries" id="entryLibraryBar" hidden>
+            <div class="entry-library-head"><h2>Въезд</h2><button type="button" id="entryLibraryClose" aria-label="Закрыть каталог въезда">×</button></div>
+            <input id="entrySearch" class="furn-search" type="search" placeholder="Тип или размер, мм" aria-label="Поиск ворот и калиток" />
+            <div class="furniture-body">
+              <div class="catalog-category-list" id="entryCats" role="group" aria-label="Тип въезда"></div>
+              <div class="furniture-items" id="entryPresetItems" aria-label="Размеры въезда"></div>
+            </div>
+            <label class="check-row" id="entryLibraryWicketRow"><input id="entryPresetWicket" type="checkbox"><span>Калитка рядом с воротами</span></label>
+          </div>
           <div class="library-furniture library-landscape" id="landscapeBar" hidden>
             <h2>Ландшафт</h2>
             <input id="lsSearch" class="furn-search" type="search" placeholder="Найти на участке" aria-label="Поиск по ландшафту" />
             <div class="ls-quick-tools" id="lsQuickTools" role="group" aria-label="Лестницы и дорожки">
               <button type="button" class="ls-route-start" data-ls-quick="route">Маршрут по участку</button>
-              <button type="button" data-ls-quick="stairs">Лестница</button>
+              <button type="button" data-ls-quick="stairs">Наружная лестница</button>
               <button type="button" data-ls-quick="terrain">Дорожка</button>
               <button type="button" data-ls-quick="floating">Плиты над водой</button>
             </div>
@@ -318,7 +333,7 @@
             <div class="level-bar" id="levelBar" role="tablist" aria-label="Этажи"></div>
           </div>
           <div class="view3d" id="view3d" hidden>
-            <canvas id="canvas3d" aria-label="3D-вид дома"></canvas>
+            <canvas id="canvas3d" aria-label="3D-вид дома" tabindex="-1"></canvas>
             <div class="view3d-bar">
               <div class="v3-projection" role="group" aria-label="Проекция 3D-вида">
                 <button type="button" data-v3-projection="perspective" aria-pressed="false">Перспектива</button>
@@ -326,7 +341,6 @@
               </div>
               <button id="v3Atrium" type="button" title="Выбрать область второго света на плане">Второй свет</button>
               <button id="v3ExitFacade" type="button" hidden title="Вернуться к прежнему ракурсу">← В 3D</button>
-              <details class="v3-facade"><summary>Фасад</summary><div class="v3-facade-panel" aria-label="Элементы фасада"></div></details>
               <details class="v3-views"><summary>Ракурс</summary><div class="v3-views-panel">
                 <button type="button" id="v3EnterInterior">Интерьер этажа</button>
                 <button type="button" data-v3-preset="eye">С уровня глаз</button>
@@ -350,10 +364,31 @@
                 <label>Интерьер <select id="v3InteriorLevel" aria-label="Этаж интерьера"></select></label>
                 <button type="button" id="v3ExitInterior" title="Вернуться к прежнему 3D-виду">Вернуть вид</button>
               </div>
+              <details id="v3WalkSettings" class="v3-walk-settings"><summary title="Настройки прогулки · O">Настройки</summary>
+                <div class="v3-walk-settings-panel">
+                  <label for="v3WalkSensitivity">Чувствительность мыши <output id="v3WalkSensitivityValue" for="v3WalkSensitivity">1,00×</output></label>
+                  <input id="v3WalkSensitivity" type="range" min="0.25" max="3" step="0.05" value="1" />
+                  <span>Медленнее — быстрее</span>
+                </div>
+              </details>
               <button id="v3Fit" type="button" title="Вписать модель" aria-label="Вписать модель"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 8V3h5m4 0h5v5m0 4v5h-5m-4 0H3v-5"/><rect x="7" y="7" width="6" height="6" rx="1"/></svg><span>Вписать</span></button>
               <button id="v3Close" aria-label="Закрыть 3D-вид" title="Закрыть 3D-вид" type="button">×</button>
             </div>
+            <button id="v3Walk" type="button" aria-label="Прогулка" aria-pressed="false" title="Прогулка от первого лица · рост 1,7 м">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="4" r="2"/><path d="M12 7v7m-5-3 5-4 5 4m-5 3-4 7m4-7 4 7"/></svg>
+            </button>
             <div class="view3d-hint" id="v3Hint" aria-live="polite"></div>
+            <div id="v3WalkStart" class="v3-walk-start" hidden aria-hidden="true"></div>
+            <div id="v3WalkHud" class="v3-walk-hud" hidden>
+              <span class="v3-walk-reticle" aria-hidden="true"></span>
+              <p id="v3WalkHelp" class="v3-walk-help" role="status"></p>
+              <div class="v3-walk-pad" role="group" aria-label="Движение в прогулке">
+                <button type="button" data-walk-key="KeyW" aria-label="Идти вперёд">↑</button>
+                <button type="button" data-walk-key="KeyA" aria-label="Идти влево">←</button>
+                <button type="button" data-walk-key="KeyS" aria-label="Идти назад">↓</button>
+                <button type="button" data-walk-key="KeyD" aria-label="Идти вправо">→</button>
+              </div>
+            </div>
             <input class="view3d-num" id="v3Num" type="number" step="10" min="1" inputmode="numeric" hidden />
             <input class="view3d-num" id="v3MassNum" type="number" step="100" min="100" inputmode="numeric" hidden />
             <input class="view3d-num" id="v3RoofNum" type="number" step="50" inputmode="numeric" hidden />
@@ -450,7 +485,7 @@
     <div class="start-screen" id="startScreen" hidden>
       <div class="start-card startup-card" role="dialog" aria-modal="true" aria-labelledby="startupTitle">
         <section class="startup-view startup-auth" id="startAuthView" hidden>
-          <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.35">v0.4.35</span></div>
+          <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.58">v0.4.58</span></div>
           <div class="startup-auth-copy">
             <div>
               <h1 id="startupTitle">Ваши проекты</h1>
@@ -471,7 +506,7 @@
         <section class="startup-view startup-projects" id="startProjectsView" hidden>
           <div class="start-head startup-projects-head">
             <div>
-              <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.35">v0.4.35</span></div>
+              <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.58">v0.4.58</span></div>
               <h1 id="startupProjectsTitle">Ваши проекты</h1>
             </div>
             <div class="startup-head-actions">

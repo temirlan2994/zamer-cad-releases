@@ -83,6 +83,14 @@ export function hitOpeningHandle(screen) {
   return null;
 }
 
+export function hitSiteEntryControl(screen) {
+  const sel = state.selection;
+  const ui = state._entryUI;
+  if (sel?.type !== 'site' || sel.kind !== 'entry' || ui?.id !== sel.id || (state.tool && state.tool.kind !== 'entry')) return null;
+  return (ui.controls || []).map((control) => ({ ...control, distance: Math.hypot(control.x - screen.x, control.y - screen.y) }))
+    .filter((control) => control.distance <= control.r).sort((a, b) => a.distance - b.distance)[0] || null;
+}
+
 export function hitUnderlayHandle(screen) {
   const site = state.project.site;
   if (state.selection?.type !== 'site' || state.selection.kind !== 'underlay') return null;
