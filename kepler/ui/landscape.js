@@ -3,6 +3,8 @@
 // и шаблоны сада. Данные — project.site.landscape.objects (core/landscape.js),
 // координаты участка (съёмки).
 
+import { hitEntrancePlan } from './render-entrance.js';
+import { switchLevel } from './levels.js';
 import { bindStairShapeFields, stairShapeFields } from './stair-shape.js';
 import {
   LANDSCAPE_CATEGORIES, LANDSCAPE_VIS, TREE_HOUSE_MIN, clampWidth, createLandscapeObject,
@@ -454,10 +456,11 @@ export function landscapeHover(world, canvas, event) {
   const handle = hitLandscapeHandle(screen);
   const hit = handle ? null : hitLandscape(landscapeObjects(), world, 4 / state.view.scale);
   setEdgeHover(null, hit);
-  const next = hit ? { type: 'landscape', id: hit.id } : null;
+  const entry = !handle && !hit ? hitEntrancePlan(state, world, 4 / state.view.scale) : null;
+  const next = hit ? { type: 'landscape', id: hit.id } : entry ? { type: 'entrance', id: entry.openingId, part: entry.key } : null;
   const handleCursor = (h) => (h.mode.endsWith('rotate') ? 'grab' : h.mode.startsWith('note') ? 'move'
     : h.edge ? (h.edge === 'n' || h.edge === 's' ? 'ns-resize' : 'ew-resize') : 'nwse-resize');
-  canvas.style.cursor = handle ? handleCursor(handle) : hit ? (hit.locked ? 'pointer' : 'move') : 'default';
+  canvas.style.cursor = handle ? handleCursor(handle) : hit ? (hit.locked ? 'pointer' : 'move') : entry ? 'pointer' : 'default';
   if (JSON.stringify(next) !== JSON.stringify(state.hover)) { state.hover = next; requestDraw(); }
   return true;
 }
@@ -691,6 +694,11 @@ export function landscapePointerDown(event, screen, world) {
     const primary = starts.has(hit.id) ? hit.id : movable[0].id;
     return { kind: 'ls-move', primary, starts, world, screen, before: snapshot(), moved: false, wasSelected, detail: event.detail || 1 };
   }
+  const entry = hitEntrancePlan(state, world, 4 / state.view.scale);
+  if (entry) return tap(() => {
+    if (entry.levelId !== state.project.activeLevel) switchLevel(entry.levelId, { planView: false });
+    selectObject({ type: 'entrance', id: entry.openingId, ...(entry.key !== 'landing' ? { part: entry.key } : {}) });
+  });
   // Клик по линии разреза — открыть разрез.
   const sec = hitSection(landscapeSections(), screen, worldToScreen, state.coarsePointer ? 12 : 6);
   if (sec && !event.shiftKey) { openSection(sec.id); return null; }
@@ -1097,6 +1105,8 @@ export function explodeLandscapeSelection() {
 
 // Клавиши режима; true — нажатие обработано.
 export function handleLandscapeKey(event) {
+  // Связанное крыльцо — объект дома: Delete обрабатывается без удаления двери.
+  if (state.selection?.type === 'entrance' && !state.tool) return false;
   const mod = event.ctrlKey || event.metaKey;
   if (state.tool?.kind === 'ls-array' && !mod) return handleArrayKey(event);
   if (isSectionTool() && !mod) return handleSectionKey(event);

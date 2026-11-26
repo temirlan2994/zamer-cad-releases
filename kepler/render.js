@@ -2,6 +2,7 @@
 // Геометрия рисуется в мировых координатах (мм) через transform (масштаб +
 // поворот: в режиме «Участок» север всегда вверх), подписи — в экранных.
 
+import { drawEntrancePlan } from './ui/render-entrance.js';
 import { cornerWindowHandles, cornerWindowProjections } from './core/corner-windows.js';
 import { levelWindowOpenings } from './core/spanning-windows.js';
 import { entryOpeningSymbol, entryParts, entrySpan, entryTitle, siteEntries } from './core/site-entries.js';
@@ -523,6 +524,12 @@ export function createRenderer(canvas) {
       drawHouseShadow(ctx, houseFootprints, lsOpts, site?.buildingHeight || 6000);
     }
 
+    // Крыльцо — над землёй и тенями, под стенами дома. Форма совпадает с 3D.
+    state._planEntrances = 0;
+    if (landscape && site) {
+      setView(pv);
+      state._planEntrances = drawEntrancePlan(ctx, state, tokens, px, { mono: lsStyle === 'drawing', print });
+    }
     // 3–6. Дом — в своих осях.
     setView(pv);
     // «План крыши» (ui/roof-plan.js): только подложка этажей и крыши.
