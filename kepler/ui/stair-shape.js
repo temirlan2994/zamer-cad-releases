@@ -57,7 +57,7 @@ export function stairShapeFields() {
     ['Side', 'Смещение вбок, мм', (r.left + r.right - p.base.left - p.base.right) / 2, -12000, 12000],
     ['Along', 'Вдоль марша, мм', (r.front + r.back - p.base.front - p.base.back) / 2, -12000, 12000],
   ].map(([id, title, value, min, max]) => `<label class="prop-field"><span>${title}</span><input id="stairPart${id}" type="number" min="${min}" max="${max}" step="50" value="${Math.round(value)}"></label>`).join('')}</div>
-    <p class="hint">В 3D нажмите на нужную ступень и тяните круглые ручки её краёв. Shift — без шага. Esc — отменить.</p>
+    <p class="hint">В «Ландшафте» и 3D тяните круглые ручки выбранной ступени. Shift — без шага. Esc — отменить.</p>
     <button type="button" id="stairPartReset">Сбросить форму элемента</button></section>`;
 }
 
@@ -182,3 +182,10 @@ export function initStairShape3d(value) {
   }, true);
   document.addEventListener('pointerdown', (e) => { if (drag && e.pointerId !== drag.pointer) finish(true); }, true);
 }
+
+// Общая модель редактирования для ручек на плане и в 3D.
+export function stairShapeSelection() {
+  const t = target(); const part = chosen(t);
+  return part ? { t, part } : null;
+}
+export { edgePoint as stairShapeEdgePoint, patchRect as setStairShapeRect };

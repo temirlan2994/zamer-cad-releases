@@ -6,6 +6,7 @@ import { pointInBuilding } from '../core/site-check.js';
 import { pointInPolygon, pointToSegmentDistance } from '../core/zamer/geometry.js';
 
 const cache = new WeakMap();
+export const invalidateEntrancePlan = (st) => cache.delete(st);
 export function entrancePlanParts(st) {
   const old = cache.get(st);
   if (Number.isFinite(st.drawingRevision) && old?.project === st.project && old.revision === st.drawingRevision && old.walls === st.walls && old.level === st.project.activeLevel) return old.parts;

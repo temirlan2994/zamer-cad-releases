@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "901b3eade315ead9",
+  "version": "f3e9e22478706143",
   "assets": [
     "./",
     "./analysis-panels.css",
@@ -300,6 +300,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/solar-report-ui.js",
     "./ui/split-input.js",
     "./ui/stair-library.js",
+    "./ui/stair-shape-plan.js",
     "./ui/stair-shape.js",
     "./ui/start-menu.js",
     "./ui/startup-cloud.js",
