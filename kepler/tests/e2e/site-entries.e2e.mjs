@@ -248,6 +248,11 @@ describe('открывание отдельной калитки', () => {
     assert.equal(start.opening, 'sliding'); assert.equal(start.slideDirection, 'left');
     await page.selectOption('#entryOpening', 'swing');
     assert.equal(await page.locator('#entryDirection, #entryHinge').count(), 0);
+    const hingeButton = await entryControl(page, { kind: 'flip', part: 0, action: 'hinge' });
+    const leftEdge = await entryControl(page, { kind: 'resize', part: 0, end: 'start' });
+    const rightEdge = await entryControl(page, { kind: 'resize', part: 0, end: 'end' });
+    assert.ok(hingeButton.x > Math.max(leftEdge.x, rightEdge.x), 'кнопка петель справа от калитки');
+    assert.ok(Math.abs(hingeButton.y - leftEdge.y) < 1, 'кнопка находится на линии ограждения');
     await flipEntry(page, 0);
     await flipEntry(page, 0, 'hinge');
     let w = (await entries(page))[0];

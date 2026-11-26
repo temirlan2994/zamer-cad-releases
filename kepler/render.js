@@ -1665,9 +1665,12 @@ function drawSelectedEntryUI(ctx, state, entry, w2s, tokens) {
     ui.controls.push({ kind: 'resize', ...handle, ...p, r: state.coarsePointer ? 22 : 10 });
   }
   const flips = [];
-  const flip = (point, part, action, symbol) => {
+  const flip = (point, part, action, symbol, avoid = normal) => {
     let p = { ...point };
-    while (flips.some((other) => Math.hypot(other.x - p.x, other.y - p.y) < r * 2 + 8)) p = { x: p.x + normal.x * (r * 2 + 10), y: p.y + normal.y * (r * 2 + 10) };
+    while (flips.some((other) => Math.hypot(other.x - p.x, other.y - p.y) < r * 2 + 8)
+      || ui.controls.some((other) => other.kind === 'resize' && Math.hypot(other.x - p.x, other.y - p.y) < r + other.r + 4)) {
+      p = { x: p.x + avoid.x * (r * 2 + 10), y: p.y + avoid.y * (r * 2 + 10) };
+    }
     ctx.fillStyle = tokens.surface; ctx.strokeStyle = tokens.accent; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     ctx.fillStyle = tokens.accent; ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(symbol, p.x, p.y + 5);
@@ -1680,7 +1683,14 @@ function drawSelectedEntryUI(ctx, state, entry, w2s, tokens) {
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     const lift = Math.max(r * 2 + 14, Math.min(90, Math.hypot(b.x - a.x, b.y - a.y) / 2 + 28));
     flip({ x: mid.x + normal.x * lift, y: mid.y + normal.y * lift }, index, 'direction', part.opening === 'sliding' ? '⇆' : '⇅');
-    if (part.kind === 'wicket' && part.opening !== 'sliding') flip({ x: mid.x + normal.x * (lift + r * 2 + 12), y: mid.y + normal.y * (lift + r * 2 + 12) }, index, 'hinge', '⇆');
+    if (part.kind === 'wicket' && part.opening !== 'sliding') {
+      const edge = b.x > a.x || (Math.abs(b.x - a.x) < .01 && b.y > a.y) ? b : a;
+      const other = edge === b ? a : b;
+      const length = Math.hypot(edge.x - other.x, edge.y - other.y) || 1;
+      const along = { x: (edge.x - other.x) / length, y: (edge.y - other.y) / length };
+      const gap = r + (state.coarsePointer ? 22 : 10) + 8;
+      flip({ x: edge.x + along.x * gap, y: edge.y + along.y * gap }, index, 'hinge', '⇆', along);
+    }
     const offset = index ? 48 : 25;
     const da = { x: a.x - normal.x * offset, y: a.y - normal.y * offset };
     const db = { x: b.x - normal.x * offset, y: b.y - normal.y * offset };
