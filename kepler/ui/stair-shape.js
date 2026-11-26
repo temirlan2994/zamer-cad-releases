@@ -68,7 +68,7 @@ export function stairShapeFields() {
     ['lower', 'Нижняя грань, мм', p.z0, Math.max(p.baseZ.lower - 48000, p.z - 24000), Math.min(p.baseZ.lower + 48000, p.z - STAIR_MIN_THICKNESS)],
   ].map(([edge, title, value, min, max]) => `<label class="prop-field"><span>${title}</span><input id="stairPart-${edge}" type="number" min="${Math.ceil(min)}" max="${Math.floor(max)}" step="10" value="${Math.round(value)}"></label>`).join('')}</div>
     <p class="hint">Толщина: <output id="stairPartThickness">${Math.round(p.z - p.z0)}</output> мм. ${datum}</p>
-    <p class="hint">Круглые ручки — края ступени. В 3D ↑ — верхняя грань, ↓ — нижняя; тяните по высоте. Shift — без шага. Esc — отменить.</p>
+    <p class="hint">Тяните точки в центрах граней. Боковые меняют ширину и глубину, верхняя и нижняя — высоту и толщину. Shift — без шага. Esc — отменить.</p>
     <button type="button" id="stairPartReset">Сбросить форму элемента</button></section>`;
 }
 
@@ -115,29 +115,49 @@ function activePart() {
   const t = target(); const part = chosen(t);
   let value = null;
   if (part) {
-    const face = faces.find((f) => f.stairPart === part.key && f.normal.z > .9 &&
+    const partFaces = faces.filter((f) => f.stairPart === part.key &&
       (state.selection.type === 'entrance' ? f.openingId === t.object.id : f.landscapeId === t.object.id));
+    const face = partFaces.find((f) => f.normal.z > .9);
     if (face) {
       const offset = face.pts[0].z - part.z;
       value = { t, part: { ...part, z: face.pts[0].z, z0: part.z0 + offset, datumOffset: offset,
-        baseZ: { lower: part.baseZ.lower + offset, upper: part.baseZ.upper + offset } } };
+        baseZ: { lower: part.baseZ.lower + offset, upper: part.baseZ.upper + offset }, centers: faceCenters(part, partFaces) } };
     }
   }
   cache = { faces, key, project: state.project, value };
   return value;
 }
 
+function faceCenters(part, faces) {
+  const centers = {};
+  for (const edge of [...STAIR_EDGES, ...STAIR_HEIGHT_EDGES]) {
+    const axis = ['left', 'right'].includes(edge) ? part.xAxis : part.yAxis;
+    const matching = faces.filter((f) => edge === 'upper' ? f.normal.z > .9 : edge === 'lower' ? f.normal.z < -.9
+      : f.pts.every((p) => Math.abs((p.x - part.origin.x) * axis.x + (p.y - part.origin.y) * axis.y - part.rect[edge]) < .1));
+    // Верх и низ разбиты на треугольники: общие вершины считаем один раз.
+    const vertices = [...new Map(matching.flatMap((f) => f.pts).map((p) => [
+      `${p.x.toFixed(3)}|${p.y.toFixed(3)}|${p.z.toFixed(3)}`, p,
+    ])).values()];
+    if (vertices.length) centers[edge] = vertices.reduce((a, p) => ({ x: a.x + p.x / vertices.length,
+      y: a.y + p.y / vertices.length, z: a.z + p.z / vertices.length }), { x: 0, y: 0, z: 0 });
+  }
+  return centers;
+}
+
 function edgePoint(part, edge) {
+  if (part.centers?.[edge]) return part.centers[edge];
   const r = part.rect;
   const x = edge === 'left' || edge === 'right' ? r[edge] : (r.left + r.right) / 2;
   const y = edge === 'front' || edge === 'back' ? r[edge] : (r.back + r.front) / 2;
   return { x: part.origin.x + part.xAxis.x * x + part.yAxis.x * y,
-    y: part.origin.y + part.xAxis.y * x + part.yAxis.y * y, z: part.z };
+    y: part.origin.y + part.xAxis.y * x + part.yAxis.y * y, z: (part.z + part.z0) / 2 };
 }
 
 function heightPoint(part, edge) {
-  const p = edgePoint(part, 'front');
-  return { ...p, z: edge === 'upper' ? part.z : part.z0 };
+  if (part.centers?.[edge]) return part.centers[edge];
+  const r = part.rect; const x = (r.left + r.right) / 2; const y = (r.back + r.front) / 2;
+  return { x: part.origin.x + part.xAxis.x * x + part.yAxis.x * y,
+    y: part.origin.y + part.xAxis.y * x + part.yAxis.y * y, z: edge === 'upper' ? part.z : part.z0 };
 }
 
 function heightScreen(part, edge) {
@@ -146,13 +166,12 @@ function heightScreen(part, edge) {
   const dx = b.x - a.x; const dy = b.y - a.y; const length = Math.hypot(dx, dy);
   // При виде строго сверху высота редактируется числом в свойствах.
   if (length < 3) return null;
-  const offset = (edge === 'upper' ? 1 : -1) * (state.coarsePointer ? 52 : 36);
-  return { x: a.x + dx / length * offset, y: a.y + dy / length * offset };
+  return a;
 }
 
 function heightAtPointer(d, event) {
-  // Вертикальная плоскость обращена к камере; вычитаем экранный отступ
-  // кнопки, чтобы грань следовала за жестом также в перспективе.
+  // Вертикальная плоскость обращена к камере; грань следует за точкой
+  // захвата также в перспективе.
   const ray = env.ray({ clientX: d.screen.x + event.clientX - d.x, clientY: d.screen.y + event.clientY - d.y });
   const n = d.normal; const denominator = ray.d.x * n.x + ray.d.y * n.y;
   if (Math.abs(denominator) < 1e-9) return null;
@@ -172,7 +191,7 @@ export function updateStairShapeHandles() {
     const visible = point && Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= bounds.left && point.x <= bounds.right && point.y >= bounds.top && point.y <= bounds.bottom;
     button.hidden = !visible;
     if (visible) { button.style.left = `${point.x - parent.left}px`; button.style.top = `${point.y - parent.top}px`; }
-    button.title = `${active.part.title}: тяните край`;
+    button.title = `${active.part.title} · ${button.getAttribute('aria-label')}: тяните грань`;
   }
   for (const button of layer.querySelectorAll('[data-stair-height]')) {
     const edge = button.dataset.stairHeight; const point = heightScreen(active.part, edge);
@@ -191,25 +210,33 @@ function finish(cancel = false) {
 }
 export const cancelStairShapeDrag = () => finish(true);
 
+export function closestStairHandle(layer, event) {
+  const distance = (b) => { const r = b.getBoundingClientRect(); return Math.hypot(event.clientX - r.x - r.width / 2, event.clientY - r.y - r.height / 2); };
+  return [...layer.querySelectorAll('button')].filter((b) => !b.hidden).sort((a, b) => distance(a) - distance(b))[0];
+}
+
 export function initStairShape3d(value) {
   env = value;
   if (layer) return;
   layer = document.createElement('div'); layer.className = 'stair-shape-handles'; layer.hidden = true;
-  layer.setAttribute('aria-label', 'Края выбранной ступени');
-  const labels = { left: 'Левый край', right: 'Правый край', back: 'Задний край', front: 'Передний край' };
-  layer.innerHTML = STAIR_EDGES.map((edge) => `<button type="button" data-stair-edge="${edge}" aria-label="${labels[edge]}">${['left', 'right'].includes(edge) ? '↔' : '↕'}</button>`).join('');
-  layer.innerHTML += STAIR_HEIGHT_EDGES.map((edge) => `<button type="button" data-stair-height="${edge}" aria-label="${edge === 'upper' ? 'Верхняя' : 'Нижняя'} грань">${edge === 'upper' ? '↑' : '↓'}</button>`).join('');
+  layer.setAttribute('aria-label', 'Грани выбранной ступени');
+  const labels = { left: 'Левая грань', right: 'Правая грань', back: 'Задняя грань', front: 'Передняя грань' };
+  layer.innerHTML = STAIR_EDGES.map((edge) => `<button type="button" data-stair-edge="${edge}" aria-label="${labels[edge]}"></button>`).join('');
+  layer.innerHTML += STAIR_HEIGHT_EDGES.map((edge) => `<button type="button" data-stair-height="${edge}" aria-label="${edge === 'upper' ? 'Верхняя' : 'Нижняя'} грань"></button>`).join('');
   env.canvas().parentElement.appendChild(layer);
   layer.addEventListener('pointerdown', (event) => {
-    const button = event.target.closest('[data-stair-edge], [data-stair-height]'); const a = activePart();
+    let button = event.target.closest('[data-stair-edge], [data-stair-height]'); const a = activePart();
     if (!button || !a || event.button !== 0 || drag) return;
+    // Невидимые области касания могут пересекаться у тонких ступеней.
+    // Захватываем ближайшую точку, независимо от порядка кнопок в DOM.
+    button = closestStairHandle(layer, event);
     event.preventDefault(); event.stopPropagation(); button.setPointerCapture(event.pointerId);
     const height = button.dataset.stairHeight;
     const point = height ? heightPoint(a.part, height) : edgePoint(a.part, button.dataset.stairEdge);
     drag = { ...a, edge: height || button.dataset.stairEdge, height: Boolean(height), pointer: event.pointerId, before: snapshot(),
       edits: structuredClone(a.t.get()), x: event.clientX, y: event.clientY, point,
       screen: env.project(point), normal: env.ray(event).d,
-      start: env.rayPlaneZ(env.ray(event), a.part.z) };
+      start: env.rayPlaneZ(env.ray(event), point.z) };
   });
   layer.addEventListener('pointermove', (event) => {
     const d = drag; if (!d || d.pointer !== event.pointerId) return;
@@ -217,16 +244,17 @@ export function initStairShape3d(value) {
     if (d.height) {
       const z = heightAtPointer(d, event); if (z === null) return;
       const delta = z - d.point.z;
-      const value = d.point.z + Math.round(delta / (event.shiftKey ? 1 : 10)) * (event.shiftKey ? 1 : 10);
+      const initial = d.edge === 'upper' ? d.part.z : d.part.z0;
+      const value = initial + Math.round(delta / (event.shiftKey ? 1 : 10)) * (event.shiftKey ? 1 : 10);
       if (!validHeight(d.part, d.edge, value)) return;
-      if (value === d.point.z) d.t.set(d.edits); else patchHeight(d.t, d.part, d.edge, value);
+      if (value === initial) d.t.set(d.edits); else patchHeight(d.t, d.part, d.edge, value);
       cache = null; env.rebuild();
       const thickness = d.edge === 'upper' ? value - d.part.z0 : d.part.z - value;
       env.hint(`${d.part.title} · ${d.edge === 'upper' ? 'Верх' : 'Низ'} ${Math.round(value - d.part.datumOffset)} мм · Толщина ${Math.round(thickness)} мм · Esc — отменить`);
       return;
     }
     const axis = ['left', 'right'].includes(d.edge) ? d.part.xAxis : d.part.yAxis;
-    const point = env.rayPlaneZ(env.ray(event), d.part.z);
+    const point = env.rayPlaneZ(env.ray(event), d.point.z);
     let delta;
     if (point && d.start) delta = (point.x - d.start.x) * axis.x + (point.y - d.start.y) * axis.y;
     else {

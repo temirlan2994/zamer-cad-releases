@@ -4891,7 +4891,9 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
 
 /* Края одной выбранной ступени поверх 3D, без перехвата вращения фона. */
 .stair-shape-handles { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
-.stair-shape-handles button { position: absolute; transform: translate(-50%, -50%); width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 2px solid var(--accent); background: var(--surface); color: var(--accent); font-size: 18px; line-height: 1; pointer-events: auto; touch-action: none; cursor: move; box-shadow: 0 1px 5px #0005; }
+.stair-shape-handles button { position: absolute; transform: translate(-50%, -50%); width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 0; background: transparent; pointer-events: auto; touch-action: none; cursor: move; box-shadow: none; }
+.stair-shape-handles button::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--surface); background: var(--accent); box-shadow: 0 0 0 1px var(--accent); pointer-events: none; }
+.stair-shape-handles button:hover::after, .stair-shape-handles button:focus-visible::after { transform: translate(-50%, -50%) scale(1.2); }
 .stair-shape-handles button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .stair-shape-fields h3 { margin-top: 0; }
 @media (pointer: coarse) { .stair-shape-handles button { width: 44px; height: 44px; } }

@@ -3,7 +3,7 @@
 import { STAIR_EDGES } from '../core/stair-shape.js';
 import { canvas } from './dom.js';
 import { invalidateEntrancePlan } from './render-entrance.js';
-import { setStairShapeRect, stairShapeEdgePoint, stairShapeSelection } from './stair-shape.js';
+import { closestStairHandle, setStairShapeRect, stairShapeEdgePoint, stairShapeSelection } from './stair-shape.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, snapshot } from './store.js';
 import { setHint } from './tools.js';
@@ -38,15 +38,10 @@ export function updateStairShapePlanHandles() {
   for (const button of layer.querySelectorAll('[data-stair-plan-edge]')) {
     const edge = button.dataset.stairPlanEdge;
     const part = current.part; const point = stairShapeEdgePoint(part, edge);
-    const axis = ['left', 'right'].includes(edge) ? part.xAxis : part.yAxis;
-    const a = planToScreen(point.x, point.y); const b = planToScreen(point.x + axis.x * 1000, point.y + axis.y * 1000);
-    const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-    const offset = (['left', 'back'].includes(edge) ? -1 : 1) * (state.coarsePointer ? 28 : 22);
-    const x = bounds.left + a.x + (b.x - a.x) / length * offset;
-    const y = bounds.top + a.y + (b.y - a.y) / length * offset;
+    const a = planToScreen(point.x, point.y);
+    const x = bounds.left + a.x; const y = bounds.top + a.y;
     button.hidden = x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom;
     button.style.left = `${x - parent.left}px`; button.style.top = `${y - parent.top}px`;
-    button.style.transform = `translate(-50%, -50%) rotate(${Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI}deg)`;
     button.title = `${part.title}: тяните край`;
   }
 }
@@ -64,11 +59,12 @@ export function initStairShapePlan() {
   layer = document.createElement('div'); layer.className = 'stair-shape-handles stair-shape-plan-handles'; layer.hidden = true;
   layer.setAttribute('aria-label', 'Края выбранной ступени на плане');
   const labels = { left: 'Левый край', right: 'Правый край', back: 'Задний край', front: 'Передний край' };
-  layer.innerHTML = STAIR_EDGES.map((edge) => `<button type="button" data-stair-plan-edge="${edge}" aria-label="${labels[edge]}">↔</button>`).join('');
+  layer.innerHTML = STAIR_EDGES.map((edge) => `<button type="button" data-stair-plan-edge="${edge}" aria-label="${labels[edge]}"></button>`).join('');
   canvas.parentElement.appendChild(layer);
   layer.addEventListener('pointerdown', (event) => {
-    const button = event.target.closest('[data-stair-plan-edge]'); const current = active();
+    let button = event.target.closest('[data-stair-plan-edge]'); const current = active();
     if (!button || !current || event.button !== 0 || drag) return;
+    button = closestStairHandle(layer, event);
     event.preventDefault(); event.stopPropagation(); button.setPointerCapture(event.pointerId);
     drag = { ...current, current, project: state.project, edge: button.dataset.stairPlanEdge, pointer: event.pointerId,
       before: snapshot(), edits: structuredClone(current.t.get()), start: clientPlan(event) };

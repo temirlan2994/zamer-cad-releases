@@ -734,7 +734,7 @@ function setHint(text) {
       ? 'Связанная крыша · Форма и удаление в свойствах · Для работы внутри скройте слой «Крыша»' : HINT_ROOF;
     else if (state.selection?.type === 'mass') text = touchUsed ? HINT_MASS_TOUCH : HINT_MASS;
     else if (state.selection?.type === 'opening') text = openingSelectionHint();
-    else if (state.selection?.type === 'entrance' || (state.selection?.type === 'landscape' && state.selection.part)) text = 'Выберите ступень · круглые ручки — края · Shift — без шага · Esc — отменить';
+    else if (state.selection?.type === 'entrance' || (state.selection?.type === 'landscape' && state.selection.part)) text = 'Выберите ступень · точки в центрах граней — размер · Shift — без шага · Esc — отменить';
     else if (frontFacade && (!state.selection || selectedRef())) text = 'Выберите окно или отделку для правки · Тяните фон, чтобы сдвинуть вид';
     else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
     else if (state.selection?.type === 'item' || state.selection?.type === 'landscape') text = objectGizmoHint();

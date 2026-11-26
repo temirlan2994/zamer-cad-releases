@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { openNew, settleView, startApp } from './helpers.mjs';
+import { stairFaceCenters } from './stair-handle-helpers.mjs';
 
 const edits = (page, outdoor) => page.evaluate((outdoor) => {
   const p = window.__kepler.state.project;
@@ -39,17 +40,12 @@ async function heightHandle(page, edge, delta) {
   const bounds = await page.locator(`[data-stair-height="${edge}"]`).boundingBox();
   assert.ok(bounds, `${edge}: ручка видна`);
   const start = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
-  const shift = await page.evaluate(async ({ edge, delta }) => {
-    const { stairShapeSelection, stairShapeEdgePoint } = await import('./ui/stair-shape.js');
-    const { buildHouseMesh } = await import('./core/mesh3d.js');
-    const k = window.__kepler; const { t, part } = stairShapeSelection();
-    const face = buildHouseMesh(k.state.project, { site: true, landscape: true }).find((f) =>
-      f.stairPart === part.key && f.normal.z > .9 && (f.openingId === t.object.id || f.landscapeId === t.object.id));
-    const offset = face.pts[0].z - part.z;
-    const p = { ...stairShapeEdgePoint(part, 'front'), z: (edge === 'upper' ? part.z : part.z0) + offset };
+  const p = (await stairFaceCenters(page)).world[edge];
+  const shift = await page.evaluate(({ p, delta }) => {
+    const k = window.__kepler;
     const a = k.screen3d(p); const b = k.screen3d({ ...p, z: p.z + delta });
     return { x: b.x - a.x, y: b.y - a.y };
-  }, { edge, delta });
+  }, { p, delta });
   return { start, end: { x: start.x + shift.x, y: start.y + shift.y } };
 }
 
@@ -62,21 +58,32 @@ for (const outdoor of [false, true]) for (const variant of ['parallel', 'perspec
     if (mobile && !await page.locator('body').evaluate((b) => b.classList.contains('sheet-props'))) await page.tap('#mobileBar [data-sheet="props"]');
     const upper = Number(await page.inputValue('#stairPart-upper'));
     const lower = Number(await page.inputValue('#stairPart-lower'));
+    // Тонкая ступень на телефоне: области захвата точек пересекаются.
+    const nextLower = mobile ? upper + 20 : lower + 80;
+    const lowerOffset = nextLower - lower;
     const width = Number(await page.inputValue('#stairPartWidth'));
     await page.fill('#stairPart-upper', String(upper + 100)); await page.press('#stairPart-upper', 'Tab');
     assert.equal(Number(await page.inputValue('#stairPart-lower')), lower, 'верх не двигает низ');
-    await page.fill('#stairPart-lower', String(lower + 80)); await page.press('#stairPart-lower', 'Tab');
+    await page.fill('#stairPart-lower', String(nextLower)); await page.press('#stairPart-lower', 'Tab');
     assert.equal(Number(await page.inputValue('#stairPart-upper')), upper + 100, 'низ не двигает верх');
-    assert.equal(Number(await page.locator('#stairPartThickness').textContent()), upper + 100 - lower - 80);
+    assert.equal(Number(await page.locator('#stairPartThickness').textContent()), upper + 100 - nextLower);
     await page.fill('#stairPartWidth', String(width + 300)); await page.press('#stairPartWidth', 'Tab');
     assert.equal((await edits(page, outdoor))[part].upper, 100, 'правка контура сохраняет высоту');
-    assert.equal((await edits(page, outdoor))[part].lower, 80);
+    assert.equal((await edits(page, outdoor))[part].lower, lowerOffset);
     const beforeInvalid = await edits(page, outdoor);
     await page.fill('#stairPart-upper', String(lower)); await page.press('#stairPart-upper', 'Tab');
     assert.deepEqual(await edits(page, outdoor), beforeInvalid, 'грани нельзя поменять местами');
     if (mobile) await page.tap('#mobileBar [data-sheet="props"]');
     await settleView(page);
     assert.equal(await page.locator('[data-stair-height]:visible').count(), 2);
+    const centers = await stairFaceCenters(page);
+    for (const [edge, point] of Object.entries(centers.screen)) {
+      const dot = page.locator(`[data-stair-${['upper', 'lower'].includes(edge) ? 'height' : 'edge'}="${edge}"]`);
+      const box = await dot.boundingBox(); assert.ok(box, edge);
+      assert.ok(Math.hypot(box.x + box.width / 2 - point.x, box.y + box.height / 2 - point.y) < 1, `${edge}: точка в центре своей грани`);
+      assert.equal(await dot.textContent(), '', 'у точки нет стрелки');
+      assert.equal(await dot.evaluate((b) => getComputedStyle(b, '::after').width), '10px', 'видимая точка маленькая');
+    }
     const cdp = mobile ? await page.context().newCDPSession(page) : null;
     const gesture = async (edge, delta, cancel = false) => {
       const { start, end } = await heightHandle(page, edge, delta);
@@ -95,10 +102,10 @@ for (const outdoor of [false, true]) for (const variant of ['parallel', 'perspec
     };
     await gesture('upper', 120);
     assert.equal((await edits(page, outdoor))[part].upper, 220);
-    assert.equal((await edits(page, outdoor))[part].lower, 80);
+    assert.equal((await edits(page, outdoor))[part].lower, lowerOffset);
     const topOnly = await edits(page, outdoor);
     await gesture('lower', 60);
-    assert.equal((await edits(page, outdoor))[part].lower, 140);
+    assert.equal((await edits(page, outdoor))[part].lower, lowerOffset + 60);
     assert.equal((await edits(page, outdoor))[part].upper, 220);
     const final = await edits(page, outdoor);
     await gesture('upper', 50, true); assert.deepEqual(await edits(page, outdoor), final, 'отмена жеста');

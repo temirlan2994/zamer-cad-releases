@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { openNew, settleView, startApp } from './helpers.mjs';
+import { stairFaceCenters } from './stair-handle-helpers.mjs';
 
 async function setup(page, outdoor = false) {
   await openNew(page);
@@ -40,35 +41,19 @@ async function setup(page, outdoor = false) {
   await settleView(page);
 }
 
-async function handle(page, edge, delta, outdoor) {
+async function handle(page, edge, delta) {
   const b = await page.locator(`[data-stair-edge="${edge}"]`).boundingBox();
   assert.ok(b, 'ручка видна');
   const start = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-  const shift = await page.evaluate(async ({ outdoor, edge, delta }) => {
-    const { toLocal } = await import('./core/building.js');
-    const { deriveEntrances, entranceParts } = await import('./core/entrance.js');
-    const k = window.__kepler; const p = k.state.project;
-    let part;
-    if (outdoor) {
-      const { stairTreads } = await import('./core/landscape.js');
-      const { buildHouseMesh } = await import('./core/mesh3d.js');
-      const o = p.site.landscape.objects[0]; const a = o.rotation * Math.PI / 180;
-      const origin = toLocal(p.building, o);
-      const axis = (x, y) => { const e = toLocal(p.building, { x: o.x + x, y: o.y + y }); return { x: e.x - origin.x, y: e.y - origin.y }; };
-      const tread = stairTreads(o).find((t) => t.key === 'step-3');
-      const face = buildHouseMesh(p, { site: true, landscape: true }).find((f) => f.landscapeId === o.id && f.stairPart === tread.key && f.normal.z > .9);
-      part = { origin, xAxis: axis(Math.cos(a), Math.sin(a)), yAxis: axis(-Math.sin(a), Math.cos(a)), z: face.pts[0].z,
-        rect: { left: tread.left, right: tread.right, back: tread.top, front: tread.bottom } };
-    } else part = entranceParts(deriveEntrances(p)[0]).find((t) => t.key === 'step-3');
-    const across = ['left', 'right'].includes(edge);
-    const axis = across ? part.xAxis : part.yAxis;
-    const r = part.rect;
-    const x = across ? r[edge] : (r.left + r.right) / 2;
-    const y = across ? (r.back + r.front) / 2 : r[edge];
-    const point = { x: part.origin.x + x * part.xAxis.x + y * part.yAxis.x, y: part.origin.y + x * part.xAxis.y + y * part.yAxis.y, z: part.z };
-    const a = k.screen3d(point); const b = k.screen3d({ x: point.x + axis.x * delta, y: point.y + axis.y * delta, z: point.z });
+  const p = (await stairFaceCenters(page)).world[edge];
+  const shift = await page.evaluate(async ({ edge, delta, p }) => {
+    const { stairShapeSelection } = await import('./ui/stair-shape.js');
+    const { part } = stairShapeSelection();
+    const axis = ['left', 'right'].includes(edge) ? part.xAxis : part.yAxis;
+    const k = window.__kepler;
+    const a = k.screen3d(p); const b = k.screen3d({ x: p.x + axis.x * delta, y: p.y + axis.y * delta, z: p.z });
     return { x: b.x - a.x, y: b.y - a.y };
-  }, { outdoor, edge, delta });
+  }, { edge, delta, p });
   return { start, end: { x: start.x + shift.x, y: start.y + shift.y } };
 }
 
@@ -87,13 +72,13 @@ for (const [outdoor, perspective] of [[false, false], [true, false], [true, true
       await page.click('[data-v3-projection="perspective"]'); await page.click('#v3Fit'); await settleView(page);
     }
     const width = Number(await page.inputValue('#stairPartWidth'));
-    const { start, end } = await handle(page, 'right', 800, outdoor);
+    const { start, end } = await handle(page, 'right', 800);
     await page.mouse.move(start.x, start.y); await page.mouse.down();
     await page.mouse.move(end.x, end.y, { steps: 6 }); await page.mouse.up();
     assert.equal(Number(await page.inputValue('#stairPartWidth')), width + 800);
     assert.deepEqual(Object.keys(await edits(page, outdoor)), ['step-3']);
     const saved = await edits(page, outdoor);
-    const other = await handle(page, 'front', 500, outdoor);
+    const other = await handle(page, 'front', 500);
     await page.mouse.move(other.start.x, other.start.y); await page.mouse.down();
     await page.mouse.move(other.end.x, other.end.y, { steps: 4 });
     await page.keyboard.press('Escape'); await page.mouse.up();
@@ -121,7 +106,7 @@ test('телефон: край ступени меняется касанием 
   const { page } = app;
   try {
     await setup(page, false);
-    const { start, end } = await handle(page, 'right', 600, false);
+    const { start, end } = await handle(page, 'right', 600);
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
     for (const [type, points] of [['touchStart', [start]], ['touchMove', [end]], ['touchEnd', []]]) {
@@ -129,7 +114,7 @@ test('телефон: край ступени меняется касанием 
     }
     assert.equal((await edits(page, false))['step-3'].right, 600);
     const before = await edits(page, false);
-    const next = await handle(page, 'right', 300, false);
+    const next = await handle(page, 'right', 300);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...next.start, id: 2 }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...next.end, id: 2 }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
