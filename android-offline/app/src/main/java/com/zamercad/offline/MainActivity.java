@@ -554,7 +554,12 @@ public final class MainActivity extends Activity {
 
         @JavascriptInterface
         public void showUpdates() {
-            runOnUiThread(() -> updater.showMenu());
+            runOnUiThread(() -> updater.startUpdate());
+        }
+
+        @JavascriptInterface
+        public void showUpdateSettings() {
+            runOnUiThread(() -> updater.showSettings());
         }
 
         @JavascriptInterface

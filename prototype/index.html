@@ -87,7 +87,7 @@
         <footer class="project-home-footer" id="projectHomeFooter" hidden>
           <button class="project-updates-button" id="appUpdatesButton" type="button" hidden>
             <span aria-hidden="true"></span>
-            <span id="appUpdatesLabel">Обновления приложения</span>
+            <span id="appUpdatesLabel">Обновить приложение</span>
           </button>
           <span class="app-update-status" id="appUpdateStatus" role="status"></span>
         </footer>
@@ -99,6 +99,7 @@
           <div class="project-action-menu-items">
             <button class="project-menu-item" id="projectTrashButton" type="button" title="Корзина" aria-label="Корзина" aria-controls="projectList" aria-pressed="false" hidden><span data-home-action-icon aria-hidden="true"></span><span data-home-action-label>Корзина</span></button>
             <button class="project-menu-item" id="installAppButton" type="button" title="Установить приложение" aria-label="Установить приложение" hidden><span aria-hidden="true"><svg class="cad-icon" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M12 7v7m-2-2 2 2 2-2m-3 4h2"/></svg></span><span data-home-action-label>Установить приложение</span></button>
+            <button class="project-menu-item" id="appUpdateSettingsButton" type="button" hidden><span data-line-icon="settings" aria-hidden="true"></span><span>Настройки обновлений</span></button>
             <button class="project-menu-item" id="logoutButton" type="button" title="Выйти" aria-label="Выйти из аккаунта" hidden><span aria-hidden="true"></span><span>Выйти из аккаунта</span></button>
           </div>
         </dialog>
@@ -722,7 +723,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=340"></script>
+    <script type="module" src="./app.js?v=341"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

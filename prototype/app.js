@@ -17299,7 +17299,7 @@ if (appUpdatesButton && window.ZamerAndroid?.showUpdates) {
   window.zamerUpdateAvailable = (version) => {
     const available = typeof version === "string" && version.length > 0;
     appUpdatesButton.toggleAttribute("data-update-available", available);
-    label.textContent = available ? `Обновить до ${version}` : "Обновления приложения";
+    label.textContent = available ? `Обновить до ${version}` : "Обновить приложение";
     status.textContent = available ? `Доступно обновление Zamer CAD ${version}` : "";
   };
   appUpdatesButton.firstElementChild.innerHTML = cadIcon("update");
@@ -17307,4 +17307,9 @@ if (appUpdatesButton && window.ZamerAndroid?.showUpdates) {
   appUpdatesButton.hidden = false;
   document.getElementById("projectHomeFooter").hidden = false;
   appUpdatesButton.addEventListener("click", () => window.ZamerAndroid.showUpdates());
+}
+const appUpdateSettingsButton = document.getElementById("appUpdateSettingsButton");
+if (appUpdateSettingsButton && window.ZamerAndroid?.showUpdateSettings) {
+  appUpdateSettingsButton.hidden = false;
+  appUpdateSettingsButton.addEventListener("click", () => window.ZamerAndroid.showUpdateSettings());
 }
