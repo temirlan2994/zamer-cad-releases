@@ -46,6 +46,30 @@ for (const [mode, mobile] of [['landscape', false], ['landscape', true], ['plan'
     }, mobile);
     await settleView(page);
     assert.equal(await page.evaluate(() => window.__kepler.state._planEntrances), 7);
+    if (mode === 'plan') {
+      const colors = await page.evaluate(async (point) => {
+        const { renderer } = await import('./ui/dom.js');
+        const { worldToScreen } = await import('./ui/view.js');
+        const { entrancePlanParts } = await import('./ui/render-entrance.js');
+        const { PLAN_LS_ALPHA } = await import('./ui/plan-landscape.js');
+        const st = window.__kepler.state; const c = document.getElementById('canvas');
+        const at = worldToScreen(point.x, point.y); const dpr = c.width / c.clientWidth;
+        const pixel = () => [...c.getContext('2d').getImageData(Math.round(at.x * dpr), Math.round(at.y * dpr), 1, 1).data].slice(0, 3);
+        const color = entrancePlanParts(st)[0].color.match(/[a-f\d]{2}/gi).map((v) => parseInt(v, 16));
+        const shown = pixel(); const door = st.project.openings[0]; const enabled = door.entrance.enabled;
+        let bare;
+        try {
+          door.entrance.enabled = false; st.drawingRevision += 1; renderer.draw(st); bare = pixel();
+        } finally {
+          if (enabled === undefined) delete door.entrance.enabled; else door.entrance.enabled = enabled;
+          st.drawingRevision += 1; renderer.draw(st);
+        }
+        return { shown, bare, color, alpha: PLAN_LS_ALPHA };
+      }, point);
+      const expected = colors.color.map((v, i) => Math.round(v * colors.alpha + colors.bare[i] * (1 - colors.alpha)));
+      assert.ok(expected.every((v, i) => Math.abs(v - colors.shown[i]) <= 2), `лестница просвечивает как плиты: ${colors.shown} / ${expected}`);
+      if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/entrance-passive-plan-${mobile ? 'phone' : 'desktop'}.png` });
+    }
     const locate = () => page.evaluate(async (point) => {
       const { worldToScreen } = await import('./ui/view.js');
       const p = worldToScreen(point.x, point.y); const r = document.getElementById('canvas').getBoundingClientRect();

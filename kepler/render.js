@@ -2,7 +2,7 @@
 // Геометрия рисуется в мировых координатах (мм) через transform (масштаб +
 // поворот: в режиме «Участок» север всегда вверх), подписи — в экранных.
 
-import { drawEntrancePlan } from './ui/render-entrance.js';
+import { drawEntrancePlan, visibleEntranceParts } from './ui/render-entrance.js';
 import { cornerWindowHandles, cornerWindowProjections } from './core/corner-windows.js';
 import { levelWindowOpenings } from './core/spanning-windows.js';
 import { entryOpeningSymbol, entryParts, entrySpan, entryTitle, siteEntries } from './core/site-entries.js';
@@ -473,19 +473,28 @@ export function createRenderer(canvas) {
     };
     const houseFootprints = landscape ? buildingSiteCheck(state.project).footprint.map((f) => f.corners) : [];
     const showPlanLandscape = Boolean(planLs && lsObjects.length);
+    // Крыльцо на этаже — такой же приглушённый контекст, как плиты участка.
+    // Собираем весь слой до смешивания: пересечения ступеней не темнеют.
+    const planEntrances = state.modeName === 'plan' && !state.roofPlan && !print;
+    const planEntranceCount = planEntrances ? visibleEntranceParts(state).length : 0;
+    const showPlanContext = showPlanLandscape || planEntranceCount > 0;
     function paintLandscape(target, offsetX, offsetY) {
       setView(view, target, offsetX, offsetY);
       drawLandscapeGround(target, lsObjects, lsOpts);
       drawLandscapeRaised(target, lsObjects, lsOpts);
+      if (planEntranceCount) {
+        setView(pv, target, offsetX, offsetY);
+        drawEntrancePlan(target, state, tokens, px, { print });
+      }
     }
-    if ((showPlanLandscape || underlayImg) && state.modeName === 'plan' && !print && !thumbnail) {
+    if ((showPlanContext || underlayImg) && state.modeName === 'plan' && !print && !thumbnail) {
       const selection = state.selection?.type === 'site' ? state.selection : null;
       const hover = state.hover?.type === 'site-obj' ? state.hover : null;
       // Сетка, топосъёмка, рельеф и полупрозрачный ландшафт компонуются один
       // раз, чтобы браузер не смешивал большие изображения на каждом кадре.
       const sunWalls = site?.sun?.enabled && vd.sunShadow ? state.walls : null;
       const key = [
-        state.drawingRevision, canvas.width, canvas.height, dpr, lsStyle, tokens.canvas, lsOpts.noShadows, vd.sunShadow,
+        state.drawingRevision, state.project.activeLevel, planEntranceCount, canvas.width, canvas.height, dpr, lsStyle, tokens.canvas, lsOpts.noShadows, vd.sunShadow,
         lsOpts.shadow?.x, lsOpts.shadow?.y, lsOpts.shadow?.k, document.fonts?.status,
         underlay?.x, underlay?.y, underlay?.mmPerPx, underlay?.rot, underlay?.opacity,
         selection?.kind, selection?.id, hover?.kind, hover?.id,
@@ -493,13 +502,13 @@ export function createRenderer(canvas) {
       drawCachedBackground({
         view, dpr, key, sources: [state.project, state.siteBuildable, underlayImg, sunWalls, ...lsObjects], zooming: opts.zooming,
         paint: drawBackground,
-        paintLandscape: showPlanLandscape ? paintLandscape : null,
+        paintLandscape: showPlanContext ? paintLandscape : null,
       });
       state._siteOpportunityUI = null;
       setView(view);
     } else {
       drawBackground(ctx, width, height, 0, 0);
-      if (showPlanLandscape) {
+      if (showPlanContext) {
         drawPlanLandscape(ctx, canvas.width, canvas.height, (layer) => paintLandscape(layer, 0, 0));
         setView(view);
       }
@@ -525,8 +534,8 @@ export function createRenderer(canvas) {
     }
 
     // Крыльцо — над землёй и тенями, под стенами дома. Форма совпадает с 3D.
-    state._planEntrances = 0;
-    if ((state.modeName === 'plan' && !state.roofPlan) || (site && (landscape || state.modeName === 'site'))) {
+    state._planEntrances = planEntranceCount;
+    if (!planEntrances && ((state.modeName === 'plan' && !state.roofPlan) || (site && (landscape || state.modeName === 'site')))) {
       setView(pv);
       state._planEntrances = drawEntrancePlan(ctx, state, tokens, px, { mono: landscape && lsStyle === 'drawing', print });
     }
