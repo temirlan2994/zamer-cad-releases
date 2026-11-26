@@ -23,6 +23,7 @@ import { rotateStoredEntity, scaleStoredEntity } from "./core/entity-transform.j
 import { IMPORT_UNIT_FACTORS, scaleImportedProject } from "./core/project-import.js";
 import { MAX_ZAMER_FILE_BYTES, validStoredEntity, validateZamerProject } from "./core/project-format.js";
 import { driveProjectStamp, googleAccountForToken, googleDriveProjects, syncDriveProjects } from "./core/google-drive-projects.js";
+import { BILLING, PRO_FEATURES, canUseFeature, checkoutUrl, licenseFromResponse, needsLicenseCheck, normalizeLicenseKey, subscriptionStatus, touchSubscription } from "./core/subscription.js";
 import { DEFAULT_LINE_LAYER, DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT, LINE_TYPE_VALUES, LINE_WEIGHT_VALUES, MAX_CUSTOM_LINE_LAYERS, MAX_LINE_LAYER_NAME_LENGTH, normalizeActiveLineLayer, normalizeLineLayerColor, normalizeLineLayerName, normalizeLineLayerSettings, normalizeLineType, normalizeLineWeight, resolveLineStyle } from "./core/line-layers.js";
 import { buildProjectPreview } from "./core/project-preview.js";
 import { projectStorageInfo } from "./core/project-storage.js";
@@ -2486,6 +2487,280 @@ function askProjectName(title, value, placeholder = "") {
   return showProjectDialog({ title, value, placeholder });
 }
 
+// ----- Zamer CAD Pro: trial, subscription screen, license key -------------
+// Until payments go live BILLING.enabled is false and none of this is shown.
+// localStorage "zamer.billing.preview" = "1" switches it on to try the screens.
+const subscriptionKey = "zamer.subscription.v1";
+const billing = (() => {
+  try {
+    return localStorage.getItem("zamer.billing.preview") === "1" ? { ...BILLING, enabled: true } : BILLING;
+  } catch {
+    return BILLING;
+  }
+})();
+const subscriptionButton = document.getElementById("subscriptionButton");
+let closeSubscriptionDialog = null;
+
+function readSubscription() {
+  try {
+    return JSON.parse(localStorage.getItem(subscriptionKey) || "null");
+  } catch {
+    return null;
+  }
+}
+
+let subscriptionRecord = touchSubscription(readSubscription(), Date.now(), billing);
+
+function saveSubscription() {
+  try {
+    localStorage.setItem(subscriptionKey, JSON.stringify(subscriptionRecord));
+  } catch { /* Storage may be full; the next launch starts from the last saved state. */ }
+}
+
+function proStatus() {
+  return subscriptionStatus(subscriptionRecord, Date.now(), billing);
+}
+
+function daysText(count) {
+  const tens = count % 100;
+  const ones = count % 10;
+  const word = ones === 1 && tens !== 11 ? "день" : ones >= 2 && ones <= 4 && (tens < 12 || tens > 14) ? "дня" : "дней";
+  return `${count} ${word}`;
+}
+
+function subscriptionStateText(status) {
+  if (status.kind === "trial") return `Пробный период: осталось ${daysText(status.daysLeft)}`;
+  if (status.kind === "pro") {
+    return `Подписка на ${status.plan === "year" ? "год" : "месяц"} до ${new Date(status.expiresAt).toLocaleDateString("ru-RU")}`;
+  }
+  if (status.kind === "expired") return status.hadLicense ? "Подписка закончилась" : "Пробный период закончился";
+  return "";
+}
+
+function renderSubscriptionBadge() {
+  if (!subscriptionButton) return;
+  const status = proStatus();
+  subscriptionButton.hidden = status.kind === "free";
+  subscriptionButton.dataset.state = status.kind;
+  subscriptionButton.textContent = status.kind === "pro" ? "Pro" : status.kind === "trial"
+    ? `Пробный период · ${daysText(status.daysLeft)}` : status.kind === "expired" ? "Оформить Pro" : "";
+}
+
+function touchSubscriptionRecord() {
+  subscriptionRecord = touchSubscription(subscriptionRecord, Date.now(), billing);
+  saveSubscription();
+  renderSubscriptionBadge();
+}
+
+function openSitePage(url) {
+  if (typeof window.ZamerAndroid?.openSite === "function") window.ZamerAndroid.openSite(url);
+  else window.open(url, "_blank", "noopener");
+}
+
+async function fetchLicense(key) {
+  let response;
+  try {
+    // In the APK window.fetch serves /api/ paths from the phone, so the
+    // license service is called directly.
+    response = await nativeFetchDelegate(billing.licenseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, app: "zamer-cad" }),
+    });
+  } catch {
+    throw new Error("Нет связи с сервисом подписки. Проверьте интернет и попробуйте ещё раз.");
+  }
+  if (response.status === 404) throw new Error("Ключ не найден. Проверьте, что он введён без ошибок.");
+  if (!response.ok) throw new Error("Сервис подписки недоступен. Попробуйте позже.");
+  return licenseFromResponse(await response.json().catch(() => null), key, Date.now());
+}
+
+async function refreshLicenseQuietly() {
+  const key = subscriptionRecord.license?.key;
+  if (!billing.enabled || !key || !navigator.onLine || !needsLicenseCheck(subscriptionRecord, Date.now())) return;
+  try {
+    subscriptionRecord = { ...subscriptionRecord, license: await fetchLicense(key) };
+    saveSubscription();
+    renderSubscriptionBadge();
+  } catch { /* Keep the saved license; it lapses on its own after the grace period. */ }
+}
+
+function showSubscriptionDialog(feature = "") {
+  closeProjectDialog?.(null);
+  closeSubscriptionDialog?.();
+  const status = proStatus();
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const background = [...shell.children].map((element) => [element, element.inert]);
+  const backdrop = document.createElement("div");
+  backdrop.className = "project-dialog-backdrop";
+  const dialog = document.createElement("form");
+  dialog.className = "project-dialog subscription-dialog";
+  dialog.dataset.state = status.kind;
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-labelledby", "subscriptionTitle");
+  dialog.innerHTML = `
+    <div class="subscription-head">
+      <img src="./icons/favicon.svg" alt="" width="44" height="44">
+      <div><strong id="subscriptionTitle">Zamer CAD Pro</strong><span class="subscription-state"></span></div>
+      <button type="button" class="subscription-close" aria-label="Закрыть">×</button>
+    </div>
+    <p class="subscription-reason" hidden></p>
+    <ul class="subscription-benefits">
+      <li>Экспорт в PDF, DWG и DXF</li>
+      <li>Новые проекты без ограничений</li>
+      <li>Открытие DWG и DXF от проектировщика</li>
+    </ul>
+    <div class="subscription-plans" role="radiogroup" aria-label="Тариф"></div>
+    <button type="submit" class="subscription-buy">Оформить на сайте</button>
+    <details class="subscription-key">
+      <summary>У меня есть ключ</summary>
+      <div class="subscription-key-row">
+        <input type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="80"
+          placeholder="Ключ из письма" aria-label="Ключ подписки">
+        <button type="button" class="subscription-activate">Активировать</button>
+      </div>
+    </details>
+    <p class="subscription-message" role="status" aria-live="polite"></p>
+    <p class="subscription-note">Свои чертежи можно открывать и править всегда, а копию .zamer — сохранять без подписки.</p>`;
+  dialog.querySelector(".subscription-state").textContent = subscriptionStateText(status);
+  const reason = dialog.querySelector(".subscription-reason");
+  if (feature && !canUseFeature(status, feature)) {
+    reason.hidden = false;
+    reason.textContent = `${PRO_FEATURES[feature]} — в Zamer CAD Pro. Оформите подписку, чтобы продолжить.`;
+  }
+  const plans = dialog.querySelector(".subscription-plans");
+  billing.plans.forEach((plan, index) => {
+    const label = document.createElement("label");
+    label.className = "subscription-plan";
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "plan";
+    radio.value = plan.id;
+    radio.checked = index === 0;
+    const text = document.createElement("span");
+    const title = document.createElement("b");
+    title.textContent = plan.title;
+    const note = document.createElement("small");
+    note.textContent = plan.note;
+    text.append(title, note);
+    const price = document.createElement("em");
+    price.textContent = plan.price;
+    label.append(radio, text, price);
+    plans.append(label);
+  });
+  const buyButton = dialog.querySelector(".subscription-buy");
+  const keyBox = dialog.querySelector(".subscription-key");
+  const keyInput = keyBox.querySelector("input");
+  const activateButton = keyBox.querySelector(".subscription-activate");
+  const message = dialog.querySelector(".subscription-message");
+  const say = (text, error = false) => {
+    message.textContent = text;
+    message.dataset.error = String(error);
+  };
+  const showPro = () => {
+    dialog.dataset.state = "pro";
+    dialog.querySelector(".subscription-state").textContent = subscriptionStateText(proStatus());
+    reason.hidden = true;
+    dialog.querySelector(".subscription-benefits").hidden = true;
+    plans.hidden = true;
+    buyButton.textContent = "Управлять подпиской на сайте";
+    keyBox.open = true;
+    keyBox.querySelector("summary").textContent = "Ключ подписки";
+    keyInput.value = subscriptionRecord.license?.key || "";
+    activateButton.textContent = "Проверить";
+  };
+  if (status.kind === "pro") showPro();
+
+  // Escape is caught on the document: focus leaves the dialog while a button is disabled.
+  const onKeydown = (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    finish();
+  };
+  const finish = () => {
+    if (closeSubscriptionDialog !== finish) return;
+    closeSubscriptionDialog = null;
+    document.removeEventListener("keydown", onKeydown, true);
+    backdrop.remove();
+    for (const [element, inert] of background) element.inert = inert;
+    if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    updateViewportLock();
+    window.setTimeout(processNativeImports, 0);
+  };
+  closeSubscriptionDialog = finish;
+
+  dialog.querySelector(".subscription-close").addEventListener("click", finish);
+  backdrop.addEventListener("pointerdown", (event) => {
+    if (event.target === backdrop) finish();
+  });
+  document.addEventListener("keydown", onKeydown, true);
+  dialog.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (dialog.dataset.state === "pro") {
+      openSitePage(`${billing.siteUrl}#pricing`);
+      return;
+    }
+    openSitePage(checkoutUrl(dialog.elements.plan?.value, billing));
+    keyBox.open = true;
+    say("Страница оплаты открыта в браузере. После оплаты ключ придёт на почту — введите его здесь.");
+  });
+  activateButton.addEventListener("click", async () => {
+    const key = normalizeLicenseKey(keyInput.value);
+    if (!key) {
+      say("Проверьте ключ: только латинские буквы, цифры и дефисы, как в письме.", true);
+      keyInput.focus();
+      return;
+    }
+    const wasPro = dialog.dataset.state === "pro";
+    activateButton.disabled = true;
+    say("Проверяю ключ…");
+    try {
+      const license = await fetchLicense(key);
+      subscriptionRecord = { ...subscriptionRecord, license };
+      saveSubscription();
+      renderSubscriptionBadge();
+      if (proStatus().kind === "pro") {
+        showPro();
+        say(wasPro ? "Подписка активна, всё в порядке." : "Готово, Pro включён. Спасибо!");
+      } else {
+        say("Подписка по этому ключу не активна. Продлите её на сайте.", true);
+      }
+    } catch (error) {
+      say(error.message || "Не удалось проверить ключ", true);
+    } finally {
+      activateButton.disabled = false;
+      if (dialog.isConnected) activateButton.focus({ preventScroll: true });
+    }
+  });
+
+  backdrop.append(dialog);
+  for (const [element] of background) element.inert = true;
+  shell.append(backdrop);
+  requestAnimationFrame(() => {
+    if (dialog.isConnected) (status.kind === "pro" ? activateButton : buyButton).focus({ preventScroll: true });
+  });
+}
+
+// Lets an action run, or shows the subscription screen and stops it.
+function requirePro(feature) {
+  touchSubscriptionRecord();
+  if (canUseFeature(proStatus(), feature)) return true;
+  showSubscriptionDialog(feature);
+  return false;
+}
+
+subscriptionButton?.addEventListener("click", () => showSubscriptionDialog());
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  touchSubscriptionRecord();
+  void refreshLicenseQuietly();
+});
+saveSubscription();
+renderSubscriptionBadge();
+void refreshLicenseQuietly();
+
 function showImportSettingsDialog({ name, displayUnit = "mm" }) {
   return new Promise((resolve) => {
     closeProjectDialog?.(null);
@@ -2905,6 +3180,7 @@ async function renameProject(projectId) {
 }
 
 async function duplicateProject(projectId) {
+  if (!requirePro("newProject")) return;
   const project = await latestProjectFor(projectId);
   await createProject({ name: `${String(project.name || "Без названия").slice(0, 74)} копия`, project });
 }
@@ -3030,6 +3306,7 @@ async function importProjectFileContent(file) {
   if (!file.size || file.size > MAX_ZAMER_FILE_BYTES) throw new Error("Выберите непустой ZAMER, DWG или DXF размером до 32 МБ");
   const extension = file.name.split(".").at(-1).toLowerCase();
   if (!["zamer", "json", "dwg", "dxf"].includes(extension)) throw new Error("Выберите чертёж в формате ZAMER, DWG или DXF");
+  if ((extension === "dwg" || extension === "dxf") && !requirePro("importCad")) return;
   const fileName = file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "Импорт";
   const cad = extension === "dwg" || extension === "dxf";
   let project;
@@ -14369,6 +14646,7 @@ function toggleProjectTrash() {
 projectTrashButton?.addEventListener("click", toggleProjectTrash);
 projectTrashBack.addEventListener("click", toggleProjectTrash);
 createBlankProjectButton?.addEventListener("click", async () => {
+  if (!requirePro("newProject")) return;
   const name = await askProjectName("Название нового проекта", "Новый замер");
   if (!name) return;
   createProject({
@@ -15683,6 +15961,7 @@ function renderExportPlan(context, view, entities, scaleFactor, measurementSetti
 
 async function exportCurrentProject(type) {
   if (exportInProgress || !persistence.projectId) return;
+  if (type !== "zamer" && !requirePro("export")) return;
   exportInProgress = true;
   const projectId = persistence.projectId;
   lastNativeExportId = null;
@@ -15764,6 +16043,7 @@ async function exportCurrentProject(type) {
 for (const button of exportCards) {
   button.addEventListener("click", () => {
     const { export: type } = button.dataset;
+    if (type !== "zamer" && !requirePro("export")) return;
     if (type === "pdf" || type === "zip") {
       setExportResult("");
       exportFileActions.hidden = true;

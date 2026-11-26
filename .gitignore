@@ -18,3 +18,5 @@ dist/
 *.keystore
 *.p12
 keystore.properties
+.netlify/
+site/capture/recordings/

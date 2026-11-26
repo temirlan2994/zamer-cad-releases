@@ -171,13 +171,49 @@ function importArc(record, scale) {
   return { type: "arc", start: point(0), through: point(0.5), end: point(1) };
 }
 
+const textGlyphs = { d: "°", p: "±", c: "⌀", u: "", o: "", k: "", "%": "%" };
+const superscriptDigits = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+
+function stackedText(stack) {
+  const [, top, separator, bottom] = /^(.*?)([/#^])(.*)$/s.exec(stack) || [stack, stack, "", ""];
+  if (separator === "^" && !bottom.trim()) return /^\d+$/.test(top) ? [...top].map(digit => superscriptDigits[digit]).join("") : top;
+  if (separator === "^" && !top.trim()) return bottom;
+  return separator ? top + (separator === "^" ? " " : "/") + bottom : top;
+}
+
+// MTEXT keeps formatting inline: \P breaks the line, \pi1152.6; or \H2.5x; set
+// paragraph and font properties up to ";", \L…\l underlines, \S1/2; stacks a
+// fraction and braces group formatting. Only the visible text is kept.
+function plainMText(value) {
+  let text = "";
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char === "{" || char === "}") continue;
+    if (char !== "\\") {
+      text += char;
+      continue;
+    }
+    const code = value[++index];
+    if (code === undefined) break;
+    const end = value.indexOf(";", index);
+    if (code === "P" || code === "N" || code === "X") text += "\n";
+    else if (code === "~") text += " ";
+    else if (code === "\\" || code === "{" || code === "}") text += code;
+    else if (code === "S" && end > index) {
+      text += stackedText(value.slice(index + 1, end));
+      index = end;
+    } else if ("AaCcFfHhpQqTtWw".includes(code) && end > index) index = end;
+    else if (!"LlOoKk".includes(code)) text += code;
+  }
+  return text;
+}
+
 function importText(record, scale) {
   const multiLine = record.type === "MTEXT";
-  const text = record.fields.filter(([code]) => code === 1 || (multiLine && code === 3)).map(([, value]) => value).join("")
+  const raw = record.fields.filter(([code]) => code === 1 || (multiLine && code === 3)).map(([, value]) => value).join("")
     .replace(/\\U\+([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
-    .replace(/%%([dpc])/gi, (_, glyph) => ({ d: "°", p: "±", c: "⌀" })[glyph.toLowerCase()])
-    .replace(multiLine ? /\\P/g : /\r?\n/g, "\n").replace(multiLine ? /\\[ACFHQTW][^;]*;|[{}]/gi : /$^/, "")
-    .trim().slice(0, 4096);
+    .replace(/%%(\d{3}|[dpcuok%])/gi, (_, glyph) => /\d/.test(glyph) ? String.fromCharCode(Number(glyph)) : textGlyphs[glyph.toLowerCase()]);
+  const text = (multiLine ? plainMText(raw) : raw.replace(/\r?\n/g, "\n")).trim().slice(0, 4096);
   const aligned = !multiLine && (numberOf(record, 72, 0) || numberOf(record, 73, 0));
   const point = pointOf(record, scale, aligned ? 11 : 10);
   const height = numberOf(record, 40) * scale;

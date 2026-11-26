@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Zamer CAD — OG</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap">
+  <link rel="stylesheet" href="../public/styles.css">
+  <style>
+    html, body { width: 1200px; height: 630px; overflow: hidden; }
+    .og { position: relative; width: 1200px; height: 630px; padding: 64px 0 0 72px; isolation: isolate; }
+    .og::before {
+      content: ""; position: absolute; inset: 0; z-index: -1;
+      background:
+        linear-gradient(var(--grid-major) 1px, transparent 1px) 0 0 / 120px 120px,
+        linear-gradient(90deg, var(--grid-major) 1px, transparent 1px) 0 0 / 120px 120px,
+        linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 24px 24px,
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 24px 24px;
+    }
+    .og-logo { display: block; width: 320px; height: 70px; }
+    .og h1 { font-size: 70px; max-width: 11ch; margin-top: 32px; }
+    .og-sub { margin-top: 24px; font-size: 26px; line-height: 1.4; color: var(--text); max-width: 520px; }
+    .og-badge { display: inline-flex; align-items: center; gap: 12px; margin-top: 26px; padding: 12px 20px; border-radius: 14px; background: var(--yellow); color: var(--ink); font-weight: 800; font-size: 24px; box-shadow: 0 -3px 0 rgba(15, 29, 56, 0.14) inset; }
+    .og-visual { position: absolute; right: 56px; top: 40px; width: 470px; height: 600px; }
+    .og-visual .sheet { width: 300px; top: 70px; left: 0; }
+    .og-visual .device { position: absolute; right: 0; top: 0; width: 280px; }
+  </style>
+</head>
+<body>
+  <div class="og">
+    <img class="og-logo" src="../../brand/svg/zamer-cad-logo.svg" width="320" height="70" alt="Zamer CAD">
+    <h1>Замер без бумаги и&nbsp;перерисовки</h1>
+    <p class="og-sub">Чертёж прямо на&nbsp;объекте, DWG и&nbsp;DXF в&nbsp;телефоне, PDF&nbsp;клиенту.</p>
+    <span class="og-badge">14 дней бесплатно</span>
+    <div class="og-visual">
+      <img class="sheet" src="../public/img/pdf-sheet.webp" alt="">
+      <div class="device"><img src="../public/img/screen-plan.webp" alt=""></div>
+    </div>
+  </div>
+</body>
+</html>

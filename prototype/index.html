@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD</title>
-    <link rel="stylesheet" href="./styles.css?v=325" />
+    <link rel="stylesheet" href="./styles.css?v=326" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -54,6 +54,7 @@
 
         <div class="project-account">
           <span class="account-badge" id="accountBadge" hidden></span>
+          <button class="subscription-badge" id="subscriptionButton" type="button" hidden></button>
           <div class="google-cloud-row" id="googleCloudRow" hidden>
             <button class="project-create" id="googleSignInButton" type="button">Войти через Google</button>
             <span id="googleCloudStatus" role="status"></span>
@@ -723,7 +724,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=341"></script>
+    <script type="module" src="./app.js?v=342"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

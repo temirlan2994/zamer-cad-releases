@@ -1,0 +1,11 @@
+/*
+  Content-Security-Policy: object-src 'none'; base-uri 'self'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+
+/img/*
+  Cache-Control: public, max-age=86400
+
+/media/*
+  Cache-Control: public, max-age=86400
