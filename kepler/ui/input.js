@@ -1,4 +1,5 @@
 import { hitEntrancePlan } from './render-entrance.js';
+import { stairClickSelection } from '../core/stair-shape.js';
 import { cornerWindowHandles } from '../core/corner-windows.js';
 import { glazedOpeningMinWidth, isGlazedAssembly, resizeGlazedOpening } from '../core/glazed-openings.js';
 import { atriumClick, atriumHover } from './atrium-ui.js';
@@ -157,7 +158,7 @@ function selectEntranceAt(event, screen, world) {
   if (!entry) return false;
   tapOrNow(event, screen, () => {
     if (entry.levelId !== state.project.activeLevel) switchLevel(entry.levelId, { planView: false });
-    selectObject({ type: 'entrance', id: entry.openingId, ...(entry.key !== 'landing' ? { part: entry.key } : {}) });
+    selectObject(stairClickSelection(state.selection, { type: 'entrance', id: entry.openingId, part: entry.key }));
   });
   return true;
 }
@@ -2047,6 +2048,7 @@ export function bindCanvasInput() {
       const sel = pending?.selection;
       if (sel?.type === 'item' && state.selection?.type === 'item' && state.selection.id === sel.id) cycleItemHandle(sel.id);
       else if (pending) selectObject(sel);
+      else if (hold.inner?.kind === 'ls-move' && hold.inner.stairPart) landscapeDragEnd(hold.inner);
       else if (hold.inner?.kind === 'multi' && hold.inner.wasSelected && isItemGroup(state.selection)) cycleGroupHandle();
       return;
     }

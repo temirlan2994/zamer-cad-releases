@@ -42,7 +42,7 @@ function target() {
   return null;
 }
 
-const chosen = (t) => t?.parts.find((p) => p.key === state.selection?.part) || t?.parts[0];
+const chosen = (t) => t?.parts.find((p) => p.key === state.selection?.part);
 const patchRect = (t, part, rect) => t.set({ ...t.get(), [part.key]: { ...t.get()[part.key], ...Object.fromEntries(STAIR_EDGES.map((e) => [e, Math.round(rect[e] - part.base[e])])) } });
 const patchHeight = (t, part, edge, value) => t.set({ ...t.get(), [part.key]: { ...t.get()[part.key], [edge]: Math.round(value - part.baseZ[edge]) } });
 const validHeight = (part, edge, value) => {
@@ -52,7 +52,9 @@ const validHeight = (part, edge, value) => {
 
 export function stairShapeFields() {
   const t = target(); const p = chosen(t);
-  if (!p) return '';
+  if (!t) return '';
+  if (!p) return `<section class="prop-block"><p class="hint">Повторно нажмите на нужную ступень или площадку, чтобы изменить её отдельно.</p>
+    <label class="prop-field"><span>Редактировать</span><select id="stairPart"><option value="" selected>Вся лестница</option>${t.parts.map((part) => `<option value="${part.key}">${escapeHtml(part.title)}</option>`).join('')}</select></label></section>`;
   const r = p.rect;
   const datum = state.selection.type === 'entrance' ? 'Отметки — от пола ±0.000.' : 'Отметки — от основания лестницы.';
   return `<section class="prop-block stair-shape-fields"><h3>Форма каждой ступени</h3>
@@ -69,13 +71,17 @@ export function stairShapeFields() {
   ].map(([edge, title, value, min, max]) => `<label class="prop-field"><span>${title}</span><input id="stairPart-${edge}" type="number" min="${Math.ceil(min)}" max="${Math.floor(max)}" step="10" value="${Math.round(value)}"></label>`).join('')}</div>
     <p class="hint">Толщина: <output id="stairPartThickness">${Math.round(p.z - p.z0)}</output> мм. ${datum}</p>
     <p class="hint">Тяните точки в центрах граней. Боковые меняют ширину и глубину, верхняя и нижняя — высоту и толщину. Shift — без шага. Esc — отменить.</p>
-    <button type="button" id="stairPartReset">Сбросить форму элемента</button></section>`;
+    <button type="button" id="stairPartReset">Сбросить форму элемента</button>
+    <button type="button" id="stairWhole">Вся лестница</button></section>`;
 }
 
 export function bindStairShapeFields(panel) {
   const t = target(); const part = chosen(t);
-  if (!part || !panel.querySelector('#stairPart')) return;
-  panel.querySelector('#stairPart').addEventListener('change', (e) => selectObject({ ...state.selection, part: e.target.value }));
+  if (!t || !panel.querySelector('#stairPart')) return;
+  const selectPart = (part) => { const next = { ...state.selection }; if (part) next.part = part; else delete next.part; selectObject(next); };
+  panel.querySelector('#stairPart').addEventListener('change', (e) => selectPart(e.target.value));
+  if (!part) return;
+  panel.querySelector('#stairWhole').addEventListener('click', () => selectPart(null));
   for (const id of ['Width', 'Depth', 'Side', 'Along']) {
     const input = panel.querySelector(`#stairPart${id}`);
     input.addEventListener('change', () => {

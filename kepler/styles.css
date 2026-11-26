@@ -897,6 +897,7 @@ body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-circulation-canvas
   white-space: nowrap;
 }
 .selection-toolbar[hidden] { display: none; }
+.v3-open .canvas-wrap > #selectionToolbar:has([data-selection-action="stair-whole"]) { top: 62px; z-index: 46; }
 .selection-toolbar-label {
   max-width: 150px;
   overflow: hidden;

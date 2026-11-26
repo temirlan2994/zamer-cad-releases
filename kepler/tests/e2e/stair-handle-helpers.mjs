@@ -23,3 +23,19 @@ export const stairFaceCenters = (page) => page.evaluate(async () => {
   }
   return { world, screen };
 });
+
+export const stairBodyPoint = (page, outdoor, part = 'step-3') => page.evaluate(async ({ outdoor, part }) => {
+  const { buildHouseMesh } = await import('./core/mesh3d.js');
+  const { objectGizmoPartAt } = await import('./ui/object-gizmo3d.js');
+  const k = window.__kepler; const mobile = navigator.maxTouchPoints > 0;
+  const faces = buildHouseMesh(k.state.project, { site: true, landscape: true }).filter((f) =>
+    f.stairPart === part && f.normal.z > .9 && (outdoor ? f.landscapeId === 'outside-stair' : f.openingId === 'entry-door'));
+  for (const face of faces) for (const weights of [[1 / 3, 1 / 3, 1 / 3], [.6, .2, .2], [.2, .6, .2], [.2, .2, .6]]) {
+    const p = face.pts.slice(0, 3).reduce((a, v, i) => ({ x: a.x + v.x * weights[i], y: a.y + v.y * weights[i], z: a.z + v.z * weights[i] }), { x: 0, y: 0, z: 0 });
+    const s = k.screen3d(p); const hit = k.pick3d(s.x, s.y);
+    if (document.elementFromPoint(s.x, s.y)?.id !== 'canvas3d' || hit?.type !== (outdoor ? 'landscape' : 'entrance') ||
+      (hit.part !== part && !(part === 'landing' && !hit.part))) continue;
+    if (!objectGizmoPartAt({ clientX: s.x, clientY: s.y, pointerType: mobile ? 'touch' : 'mouse' })) return s;
+  }
+  return null;
+}, { outdoor, part });

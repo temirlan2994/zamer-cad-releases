@@ -1,12 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stairHeights, stairRect } from '../core/stair-shape.js';
+import { stairClickSelection, stairHeights, stairRect } from '../core/stair-shape.js';
 import { createOpening, createProject, createRoom, deserializeProject, serializeProject } from '../core/model.js';
 import { deriveEntrances, entranceParts } from '../core/entrance.js';
 import { entranceFaces } from '../core/mesh3d.js';
-import { createLandscapeObject, stairTreads } from '../core/landscape.js';
+import { createLandscapeObject, hitStairTread, pointInObject, stairTreads, toWorld } from '../core/landscape.js';
 import { landscapeFaces } from '../core/mesh3d-landscape.js';
 import { sectionProfile } from '../core/landscape-section.js';
+
+test('первый клик — вся лестница, следующий — ступень или площадка; другой объект начинает с общего выбора', () => {
+  for (const type of ['entrance', 'landscape']) {
+    const hit = { type, id: 'stairs', part: 'step-3' };
+    const whole = type === 'entrance' ? { type, id: hit.id } : { type, ids: [hit.id] };
+    assert.deepEqual(stairClickSelection(null, hit), whole);
+    const part = stairClickSelection(whole, hit); assert.equal(part.part, 'step-3');
+    assert.deepEqual(stairClickSelection(whole, { ...hit, part: 'ramp' }), whole);
+    assert.equal(stairClickSelection(part, { ...hit, part: 'step-1' }).part, 'step-1');
+    assert.equal(stairClickSelection(part, { ...hit, id: 'another' }).part, undefined);
+    if (type === 'entrance') assert.equal(stairClickSelection(whole, { type, id: hit.id }).part, 'landing');
+  }
+});
+
+test('на ландшафте выбирается изменённая ступень за исходным габаритом повёрнутой лестницы', () => {
+  const o = createLandscapeObject('stairs-out', 1500, -800, { w: 2000, height: 900, rotation: 37 });
+  o.meta.shapeEdits = { 'step-3': { right: 1200 } };
+  const step = stairTreads(o).find((t) => t.key === 'step-3');
+  const point = toWorld(o, 1800, (step.top + step.bottom) / 2);
+  assert.equal(hitStairTread(o, point), 'step-3'); assert.equal(pointInObject(o, point), true);
+});
 
 test('один край ступени меняется независимо; плохие размеры не выворачивают прямоугольник', () => {
   const base = { left: -800, right: 800, back: 0, front: 300 };

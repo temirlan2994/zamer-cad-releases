@@ -1141,7 +1141,7 @@ export function createRenderer(canvas) {
     if (landscape && site) {
       const warnings = landscapeWarnings(lsObjects, { boundary: site.boundary, footprints: houseFootprints });
       drawLandscapeOverlay(ctx, lsObjects, {
-        sel: state.selection?.type === 'landscape' ? state.selection.ids : [],
+        sel: state.selection?.type === 'landscape' && !state.selection.part ? state.selection.ids : [],
         hoverId: state.hover?.type === 'landscape' ? state.hover.id : null,
         warnings, w2s, tokens, scale, warnColor: '#d08a1e',
         labels: lsVis?.labels === true, vertex: state.lsVertex || null, style: lsStyle,

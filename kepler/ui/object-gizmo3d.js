@@ -27,7 +27,7 @@ function target() {
   }
   if (sel?.type === 'landscape' && sel.ids?.length === 1) {
     const object = state.project.site?.landscape?.objects?.find((entry) => entry.id === sel.ids[0]);
-    return object && !object.locked
+    return object && !object.locked && !(object.kind === 'stairs-out' && sel.part)
       ? { type: 'landscape', id: object.id, object, canZ: ELEV_KINDS.has(object.kind) }
       : null;
   }

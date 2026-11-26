@@ -75,6 +75,7 @@ import {
 } from './object-gizmo3d.js';
 
 import { cancelStairShapeDrag, initStairShape3d, stairShapeDragging, updateStairShapeHandles } from './stair-shape.js';
+import { stairClickSelection } from '../core/stair-shape.js';
 
 // dist — масштаб ортографического вида; eyeDist — физическое расстояние до
 // камеры. Их нельзя связывать: при сильном приближении камера иначе входит в
@@ -734,7 +735,8 @@ function setHint(text) {
       ? 'Связанная крыша · Форма и удаление в свойствах · Для работы внутри скройте слой «Крыша»' : HINT_ROOF;
     else if (state.selection?.type === 'mass') text = touchUsed ? HINT_MASS_TOUCH : HINT_MASS;
     else if (state.selection?.type === 'opening') text = openingSelectionHint();
-    else if (state.selection?.type === 'entrance' || (state.selection?.type === 'landscape' && state.selection.part)) text = 'Выберите ступень · точки в центрах граней — размер · Shift — без шага · Esc — отменить';
+    else if ((state.selection?.type === 'entrance' || state.selection?.type === 'landscape') && state.selection.part) text = 'Точки в центрах граней — размер · Shift — без шага · Esc — отменить';
+    else if (state.selection?.type === 'entrance') text = 'Выбрана вся лестница · нажмите ещё раз на ступень или площадку для её редактирования';
     else if (frontFacade && (!state.selection || selectedRef())) text = 'Выберите окно или отделку для правки · Тяните фон, чтобы сдвинуть вид';
     else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
     else if (state.selection?.type === 'item' || state.selection?.type === 'landscape') text = objectGizmoHint();
@@ -1238,8 +1240,7 @@ function clickSelect(hit) {
       if (hit.levelId && hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId, { planView: false });
       if (hit.type === 'mass') selectObject({ type: 'mass', id: hit.id });
       else if (hit.type === 'roof') selectObject({ type: 'roof', id: hit.id });
-      else if (hit.type === 'landscape') selectObject({ type: 'landscape', ids: [hit.id], ...(hit.part ? { part: hit.part } : {}) });
-      else if (hit.type === 'entrance') selectObject({ type: 'entrance', id: hit.id, ...(hit.part ? { part: hit.part } : {}) });
+      else if (hit.type === 'landscape' || hit.type === 'entrance') selectObject(stairClickSelection(state.selection, hit));
       else if (hit.type === 'site') selectObject({ type: 'site', kind: 'entry', id: hit.id });
       else if (hit.type === 'wall') selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
       else if (hit.type === 'slab') selectObject({ type: 'slab', levelId: hit.levelId, id: hit.id });

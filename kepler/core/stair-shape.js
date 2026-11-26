@@ -3,6 +3,13 @@
 export const STAIR_EDGES = ['left', 'right', 'back', 'front'];
 export const STAIR_HEIGHT_EDGES = ['upper', 'lower'];
 export const STAIR_MIN_THICKNESS = 20;
+// Первый клик выбирает лестницу целиком, следующие — конкретную ступень.
+export function stairClickSelection(current, hit) {
+  const whole = hit.type === 'entrance' ? { type: 'entrance', id: hit.id } : { type: 'landscape', ids: [hit.id] };
+  const same = current?.type === hit.type && (hit.type === 'entrance' ? current.id === hit.id : current.ids?.length === 1 && current.ids[0] === hit.id);
+  const part = hit.part || (hit.type === 'entrance' ? 'landing' : null);
+  return same && (part === 'landing' || /^step-\d+$/.test(part)) ? { ...whole, part } : whole;
+}
 const finite = (v) => Number.isFinite(Number(v)) ? Number(v) : 0;
 export function stairRect(base, edits = {}) {
   const out = Object.fromEntries(STAIR_EDGES.map((edge) => [edge, base[edge] + Math.max(-48000, Math.min(48000, finite(edits?.[edge])))]));

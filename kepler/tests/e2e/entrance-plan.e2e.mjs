@@ -101,6 +101,9 @@ for (const [mode, mobile] of [['landscape', false], ['landscape', true], ['plan'
       await settleView(page); client = await locate();
       if (mobile) await page.touchscreen.tap(client.x, client.y); else await page.mouse.click(client.x, client.y);
     }
+    await settleView(page); client = await locate();
+    assert.deepEqual(await page.evaluate(() => window.__kepler.state.selection), { type: 'entrance', id: 'entry-door' }, 'первый клик выбирает всю лестницу');
+    if (mobile) await page.touchscreen.tap(client.x, client.y); else await page.mouse.click(client.x, client.y);
     const selection = await page.evaluate(() => window.__kepler.state.selection);
     assert.deepEqual(selection, { type: 'entrance', id: 'entry-door', part: 'step-3' });
     assert.equal(await page.evaluate(() => window.__kepler.state.modeName), mode === 'plan' ? 'landscape' : mode, 'редактирование доступно в виде участка');
@@ -108,6 +111,8 @@ for (const [mode, mobile] of [['landscape', false], ['landscape', true], ['plan'
     if (mobile && !(await page.locator('body').evaluate((b) => b.classList.contains('sheet-props')))) await page.tap('#mobileBar [data-sheet="props"]');
     await page.fill('#stairPartWidth', '4000'); await page.press('#stairPartWidth', 'Tab');
     assert.equal(await page.inputValue('#stairPartWidth'), '4000');
+    await page.click('#stairWhole');
+    assert.equal(await page.locator('#stairPartWidth').count(), 0, 'возврат к общим настройкам');
     const pixel = () => page.evaluate(async (p) => {
       const { worldToScreen } = await import('./ui/view.js');
       const at = worldToScreen(p.x, p.y); const c = document.getElementById('canvas');

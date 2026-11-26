@@ -41,13 +41,21 @@ async function setup(page, outdoor, mobile) {
     st.view.panY += c.clientHeight * .35 - before.y;
     view.requestDraw();
     const s = view.worldToScreen(center.x, center.y); const rect = c.getBoundingClientRect();
-    return { x: rect.x + s.x, y: rect.y + s.y };
+    return { x: rect.x + s.x, y: rect.y + s.y, world: center };
   }, { outdoor, mobile });
   await settleView(page);
   if (mobile) await page.touchscreen.tap(at.x, at.y); else await page.mouse.click(at.x, at.y);
-  if (mobile) await page.tap('#mobileBar [data-sheet="props"]');
-  if (outdoor) await page.selectOption('#stairPart', 'step-3');
-  if (mobile) await page.tap('#mobileBar [data-sheet="props"]');
+  await settleView(page);
+  assert.equal(await page.inputValue('#stairPart'), '', 'первый клик — вся лестница');
+  assert.equal(await page.locator('#stairPartWidth').count(), 0);
+  const next = await page.evaluate(async (point) => {
+    const { worldToScreen } = await import('./ui/view.js');
+    const s = worldToScreen(point.x, point.y); const r = document.getElementById('canvas').getBoundingClientRect();
+    return { x: r.x + s.x, y: r.y + s.y };
+  }, at.world);
+  if (mobile) await page.touchscreen.tap(next.x, next.y); else await page.mouse.click(next.x, next.y);
+  assert.equal(await page.inputValue('#stairPart'), 'step-3', 'второй клик — конкретная ступень');
+  if (mobile && await page.locator('body').evaluate((b) => b.classList.contains('sheet-props'))) await page.tap('#mobileBar [data-sheet="props"]');
   await settleView(page);
   assert.equal(await page.locator('[data-stair-plan-edge]:visible').count(), 4);
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { openNew, settleView, startApp } from './helpers.mjs';
-import { stairFaceCenters } from './stair-handle-helpers.mjs';
+import { stairBodyPoint, stairFaceCenters } from './stair-handle-helpers.mjs';
 
 async function setup(page, outdoor = false) {
   await openNew(page);
@@ -26,17 +26,20 @@ async function setup(page, outdoor = false) {
   await page.evaluate(() => document.getElementById('view3dBtn').click());
   await page.click('.v3-views summary'); await page.click('[data-v3-preset="top"]');
   await page.click('#v3Fit'); await settleView(page);
-  const at = await page.evaluate(async (outdoor) => {
-    const { buildHouseMesh } = await import('./core/mesh3d.js');
-    const k = window.__kepler;
-    return buildHouseMesh(k.state.project, { site: true, landscape: true }).filter((f) => f.stairPart === 'step-3' && f.normal.z > .9).map((f) => {
-      const c = f.pts.reduce((a, p) => ({ x: a.x + p.x / f.pts.length, y: a.y + p.y / f.pts.length, z: a.z + p.z / f.pts.length }), { x: 0, y: 0, z: 0 });
-      return k.screen3d(c);
-    }).find((p) => document.elementFromPoint(p.x, p.y)?.id === 'canvas3d' && k.pick3d(p.x, p.y)?.part === 'step-3' && k.pick3d(p.x, p.y)?.type === (outdoor ? 'landscape' : 'entrance'));
-  }, outdoor);
+  const mobile = await page.evaluate(() => navigator.maxTouchPoints > 0);
+  const click = (p) => mobile ? page.touchscreen.tap(p.x, p.y) : page.mouse.click(p.x, p.y);
+  const at = await stairBodyPoint(page, outdoor);
   assert.ok(at, 'выбирается отдельная проступь');
-  await page.mouse.click(at.x, at.y);
+  await click(at); await settleView(page);
+  assert.equal(await page.inputValue('#stairPart'), '', 'первый клик — общие настройки');
+  assert.equal(await page.locator('#stairPartWidth').count(), 0);
+  assert.equal(await page.locator('[data-stair-edge]:visible').count(), 0);
+  assert.equal(await page.locator(outdoor ? '#lsStFlight' : '#porchMode').count(), 1);
+  if (await page.locator('body').evaluate((b) => b.classList.contains('sheet-props'))) await page.tap('#mobileBar [data-sheet="props"]');
+  const next = await stairBodyPoint(page, outdoor); assert.ok(next);
+  await click(next); await settleView(page);
   assert.equal(await page.inputValue('#stairPart'), 'step-3');
+  assert.equal(await page.locator(outdoor ? '#lsStFlight' : '#porchMode').count(), 0, 'общие настройки скрыты при правке ступени');
   if (await page.locator('body').evaluate((b) => b.classList.contains('sheet-props'))) await page.tap('#mobileBar [data-sheet="props"]');
   await settleView(page);
 }
@@ -67,6 +70,17 @@ for (const [outdoor, perspective] of [[false, false], [true, false], [true, true
   const { page } = app;
   try {
     await setup(page, outdoor);
+    if (!outdoor) {
+      await page.click('[data-selection-action="stair-whole"]'); await settleView(page);
+      assert.equal(await page.inputValue('#stairPart'), '', 'панель действий возвращает общий выбор');
+      assert.equal(await page.locator('[data-stair-edge]:visible').count(), 0);
+      const landing = await stairBodyPoint(page, false, 'landing'); assert.ok(landing);
+      await page.mouse.click(landing.x, landing.y); await settleView(page);
+      assert.equal(await page.inputValue('#stairPart'), 'landing', 'повторный клик выбирает площадку');
+      const step = await stairBodyPoint(page, false); assert.ok(step);
+      await page.mouse.click(step.x, step.y); await settleView(page);
+      assert.equal(await page.inputValue('#stairPart'), 'step-3', 'можно переключиться с площадки на ступень');
+    }
     if (perspective) {
       await page.click('.v3-views summary'); await page.click('[data-v3-preset="iso"]');
       await page.click('[data-v3-projection="perspective"]'); await page.click('#v3Fit'); await settleView(page);
@@ -101,24 +115,26 @@ for (const [outdoor, perspective] of [[false, false], [true, false], [true, true
   } finally { await app.close(); }
 });
 
-test('телефон: край ступени меняется касанием и отменяется при pointercancel', async () => {
+for (const outdoor of [false, true]) test(`телефон: выбор и правка ${outdoor ? 'наружной лестницы' : 'крыльца'}, отмена касания`, async () => {
   const app = await startApp({ mobile: true });
   const { page } = app;
   try {
-    await setup(page, false);
+    await setup(page, outdoor);
     const { start, end } = await handle(page, 'right', 600);
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
     for (const [type, points] of [['touchStart', [start]], ['touchMove', [end]], ['touchEnd', []]]) {
       await cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map((p) => ({ ...p, id: 1 })) });
     }
-    assert.equal((await edits(page, false))['step-3'].right, 600);
-    const before = await edits(page, false);
+    await settleView(page);
+    assert.equal((await edits(page, outdoor))['step-3'].right, 600);
+    const before = await edits(page, outdoor);
     const next = await handle(page, 'right', 300);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...next.start, id: 2 }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...next.end, id: 2 }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
-    assert.deepEqual(await edits(page, false), before);
+    await settleView(page);
+    assert.deepEqual(await edits(page, outdoor), before);
     assert.deepEqual(app.errors, []);
   } finally { await app.close(); }
 });

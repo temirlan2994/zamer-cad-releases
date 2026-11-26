@@ -577,6 +577,13 @@ export function stairTreads(o, info = stairsInfo(o)) {
   });
 }
 
+export function hitStairTread(o, point, tolerance = 0) {
+  if (o.kind !== 'stairs-out') return null;
+  const p = toLocal(o, point);
+  return stairTreads(o).sort((a, b) => b.z - a.z).find((t) => p.x >= t.left - tolerance && p.x <= t.right + tolerance &&
+    p.y >= t.top - tolerance && p.y <= t.bottom + tolerance)?.key || null;
+}
+
 export function syncStairs(o) {
   const def = landscapeDef(o.kind);
   const { steps, tread, landing } = stairsInfo(o);
@@ -1322,6 +1329,7 @@ export function objectBox(obj) {
 
 // Попадание точки (мир) в объект; tol — запас в мм (клик по мелочи).
 export function pointInObject(obj, p, tol = 0) {
+  if (obj.kind === 'stairs-out' && hitStairTread(obj, p, tol)) return true;
   const def = landscapeDef(obj.kind);
   if (isNoteShape(def)) return calloutHit(obj, p, tol);
   if (def?.shape === 'line') {

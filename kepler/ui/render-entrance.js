@@ -45,7 +45,7 @@ export function drawEntrancePlan(ctx, st, tokens, px, { mono = false, print = fa
   const parts = visibleEntranceParts(st);
   const interactive = !print && st.modeName !== 'plan';
   for (const part of parts) {
-    const selected = interactive && st.selection?.type === 'entrance' && st.selection.id === part.openingId && (st.selection.part || 'landing') === part.key;
+    const selected = interactive && st.selection?.type === 'entrance' && st.selection.id === part.openingId && (!st.selection.part || st.selection.part === part.key);
     const hovered = interactive && st.hover?.type === 'entrance' && st.hover.id === part.openingId && st.hover.part === part.key;
     ctx.save();
     ctx.beginPath();
