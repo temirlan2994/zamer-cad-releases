@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "571a03e1042fb4d5",
+  "version": "520c7d5b3a46f2da",
   "assets": [
     "./",
     "./analysis-panels.css",
@@ -153,6 +153,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/view-display.js",
     "./core/views.js",
     "./core/villa-template.js",
+    "./core/walk3d.js",
     "./core/wall-edit.js",
     "./core/wall-edit3d.js",
     "./core/wall-follow.js",
@@ -319,6 +320,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/view-align.js",
     "./ui/view.js",
     "./ui/view3d.js",
+    "./ui/walk3d.js",
     "./ui/wall-tool.js",
     "./ui/whole-home-layout.js",
     "./ui/workspace-view-menu.js",
