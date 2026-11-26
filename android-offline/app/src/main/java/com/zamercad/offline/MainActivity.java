@@ -2,6 +2,7 @@ package com.zamercad.offline;
 
 import android.app.Activity;
 import android.annotation.SuppressLint;
+import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ContentValues;
@@ -561,6 +562,20 @@ public final class MainActivity extends Activity {
             return updater.availableVersion();
         }
 
+        // Subscription and payment pages of the Zamer CAD website open in the browser.
+        @JavascriptInterface
+        public void openSite(String url) {
+            String page = SitePolicy.siteUrl(url);
+            if (page == null) return;
+            runOnUiThread(() -> {
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(page)).addCategory(Intent.CATEGORY_BROWSABLE));
+                } catch (ActivityNotFoundException error) {
+                    Toast.makeText(MainActivity.this, "Нет браузера, чтобы открыть страницу оплаты", Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+
         @JavascriptInterface
         public void showKeyboard() {
             runOnUiThread(() -> {
@@ -742,6 +757,12 @@ public final class MainActivity extends Activity {
         return safe.isEmpty() ? "zamer-export" : safe;
     }
 
+    private static boolean isLicenseFetch(WebResourceRequest request) {
+        Uri uri = request.getUrl();
+        return !request.isForMainFrame() && SitePolicy.licenseRequest(uri.getScheme(), uri.getHost(), uri.getPort(),
+            uri.getUserInfo(), uri.getPath(), request.getMethod());
+    }
+
     private static boolean isGoogleDriveFetch(WebResourceRequest request) {
         Uri uri = request.getUrl();
         if (request.isForMainFrame() || !"https".equals(uri.getScheme()) || uri.getPort() != -1 || uri.getUserInfo() != null) return false;
@@ -792,7 +813,7 @@ public final class MainActivity extends Activity {
 
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-            if (isGoogleDriveFetch(request)) return null;
+            if (isGoogleDriveFetch(request) || isLicenseFetch(request)) return null;
             return loadAsset(request.getUrl());
         }
 

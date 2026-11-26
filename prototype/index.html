@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD</title>
-    <link rel="stylesheet" href="./styles.css?v=323" />
+    <link rel="stylesheet" href="./styles.css?v=324" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -49,6 +49,7 @@
             </div>
             <h1>Проекты</h1>
             <span class="account-badge" id="accountBadge" hidden></span>
+            <button class="subscription-badge" id="subscriptionButton" type="button" hidden></button>
           </div>
           <div class="project-home-actions" role="group" aria-label="Действия на главном экране">
             <button class="icon-button" id="homeThemeButton" type="button" title="Включить тёмную тему" aria-label="Тёмная тема главного экрана" aria-pressed="false"><span aria-hidden="true">☾</span></button>
@@ -712,7 +713,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=338"></script>
+    <script type="module" src="./app.js?v=339"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

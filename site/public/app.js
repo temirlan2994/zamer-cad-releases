@@ -128,6 +128,15 @@
     }
   }
 
+  // Из приложения: ?buy=month|year ведёт сразу на оплату выбранного тарифа.
+  const buy = params.get("buy");
+  if (buy === "month" || buy === "year") {
+    window.history.replaceState(null, "", `${window.location.pathname}#pricing`);
+    document.getElementById("pricing")?.scrollIntoView();
+    if (CONFIG.checkout[buy]) window.location.replace(CONFIG.checkout[buy]);
+    else openModal("soon");
+  }
+
   // ----- Копирование ссылки ----------------------------------------------
   document.querySelectorAll("[data-copy]").forEach((button) => {
     const label = button.querySelector("span");

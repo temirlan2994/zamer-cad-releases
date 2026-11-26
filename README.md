@@ -131,6 +131,26 @@ prototype/
 Rendering is batched: all `draw()` calls coalesce into a single
 `requestAnimationFrame`, instead of repainting synchronously per pointer move.
 
+## Zamer CAD Pro subscription
+
+- `prototype/core/subscription.js` holds the rules: 14 days free, then Pro at $7 a month or $59 a year.
+  `BILLING.enabled` stays `false` until payments go live. Until then the trial does not start, nothing is
+  limited and no subscription screens are shown.
+- After the trial without Pro, these open the subscription screen: new projects and copies, opening
+  DWG/DXF, and export to PDF, DWG, DXF, Revit DXF and ZIP. Opening and editing existing drawings, version
+  history and the `.zamer` backup stay free.
+- Checkout opens the website, `https://zamer-cad.netlify.app/?buy=month|year`, through
+  `ZamerAndroid.openSite` (links are checked by `android-offline/.../SitePolicy.java`). The site sends
+  the visitor on to `CONFIG.checkout` in `site/public/app.js`, or shows "Оплата картой — совсем скоро".
+- License key: the app POSTs `{ key, app: "zamer-cad" }` to `https://zamer-cad.netlify.app/api/license`
+  and expects `{ active, plan: "month" | "year", expiresAt }`, or 404 for an unknown key. The service
+  must allow CORS from `https://appassets.androidplatform.net`. The app rechecks the key every 3 days
+  and keeps Pro without a connection until `expiresAt` plus 3 days.
+- To try the screens before launch, set `localStorage["zamer.billing.preview"] = "1"` in the browser
+  prototype.
+- To launch: build the license service, fill `CONFIG.checkout` on the site, set `BILLING.enabled = true`
+  and release the APK.
+
 ## Tests
 
 Pure core logic is covered by Node's built-in test runner (no dependencies):
