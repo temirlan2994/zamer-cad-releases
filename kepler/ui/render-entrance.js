@@ -1,4 +1,4 @@
-// Крыльцо на генплане использует те же отдельные проступи, что и 3D.
+// Планы этажей и участка используют те же проступи крыльца, что и 3D.
 // Перемещение камеры и наведение не пересчитывают стены и рельеф.
 import { toWorld } from '../core/building.js';
 import { deriveEntrances, entranceParts } from '../core/entrance.js';
@@ -20,8 +20,15 @@ export function entrancePlanParts(st) {
   return parts;
 }
 
-export function hitEntrancePlan(st, point, tolerance = 0) {
+// На плане этажа крыльцо принадлежит входной двери своего этажа.
+// На участке и в ландшафте оно остаётся частью дома при любом активном этаже.
+export function visibleEntranceParts(st) {
   const parts = entrancePlanParts(st);
+  return st.modeName === 'plan' ? (st.roofPlan ? [] : parts.filter((p) => p.levelId === st.project.activeLevel)) : parts;
+}
+
+export function hitEntrancePlan(st, point, tolerance = 0) {
+  const parts = visibleEntranceParts(st);
   if (!parts.length || pointInBuilding(st.project, point)) return null;
   for (let i = parts.length - 1; i >= 0; i -= 1) {
     const p = parts[i]; const poly = p.worldPolygon;
@@ -32,7 +39,7 @@ export function hitEntrancePlan(st, point, tolerance = 0) {
 
 // Контекст уже в локальных осях дома (composeView), а не участка.
 export function drawEntrancePlan(ctx, st, tokens, px, { mono = false, print = false } = {}) {
-  const parts = entrancePlanParts(st);
+  const parts = visibleEntranceParts(st);
   for (const part of parts) {
     const selected = !print && st.selection?.type === 'entrance' && st.selection.id === part.openingId && (st.selection.part || 'landing') === part.key;
     const hovered = !print && st.hover?.type === 'entrance' && st.hover.id === part.openingId && st.hover.part === part.key;

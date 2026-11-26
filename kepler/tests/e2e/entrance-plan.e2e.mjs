@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { openNew, pickWorkspaceView, settleView, startApp } from './helpers.mjs';
 
-for (const mobile of [false, true]) test(`крыльцо видно и выбирается в ландшафте${mobile ? ' на телефоне' : ' с повёрнутым домом'}`, async () => {
+for (const [mode, mobile] of [['landscape', false], ['landscape', true], ['plan', false], ['site', false], ['plan', true], ['site', true]]) test(`крыльцо видно и выбирается: ${mode}${mobile ? ' на телефоне' : ' с повёрнутым домом'}`, async () => {
   const app = await startApp({ mobile, width: 1440, height: 950 });
   const { page } = app;
   try {
@@ -23,8 +23,10 @@ for (const mobile of [false, true]) test(`крыльцо видно и выби�
         state.project.activeLevel = upper.id;
       });
     });
-    if (mobile) await pickWorkspaceView(page, 'model', 'landscape');
-    else await page.click('#landscapeBtn');
+    if (mode === 'plan') {
+      const id = await page.evaluate(() => window.__kepler.state.project.levels[0].id);
+      await pickWorkspaceView(page, 'plans', `plan:${id}`);
+    } else await pickWorkspaceView(page, 'model', mode);
     const point = await page.evaluate(async (mobile) => {
       const { entrancePlanParts } = await import('./ui/render-entrance.js');
       const view = await import('./ui/view.js');
@@ -53,7 +55,7 @@ for (const mobile of [false, true]) test(`крыльцо видно и выби�
     else { await page.mouse.move(client.x, client.y); await page.mouse.click(client.x, client.y); }
     const selection = await page.evaluate(() => window.__kepler.state.selection);
     assert.deepEqual(selection, { type: 'entrance', id: 'entry-door', part: 'step-3' });
-    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'landscape', 'выбор не уводит с участка');
+    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), mode, 'выбор сохраняет текущий вид');
     assert.equal(await page.inputValue('#stairPartWidth'), '3400');
     if (mobile && !(await page.locator('body').evaluate((b) => b.classList.contains('sheet-props')))) await page.tap('#mobileBar [data-sheet="props"]');
     await page.fill('#stairPartWidth', '4000'); await page.press('#stairPartWidth', 'Tab');
@@ -66,7 +68,7 @@ for (const mobile of [false, true]) test(`крыльцо видно и выби�
     }, point);
     await settleView(page);
     const visible = await pixel();
-    if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/entrance-landscape-${mobile ? 'phone' : 'desktop'}.png` });
+    if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/entrance-${mode}-${mobile ? 'phone' : 'desktop'}.png` });
     await page.uncheck('#porchEnabled'); await settleView(page);
     assert.equal(await page.evaluate(() => window.__kepler.state._planEntrances), 0);
     assert.notDeepEqual(await pixel(), visible, 'ступень действительно нарисована на холсте');
@@ -81,6 +83,12 @@ for (const mobile of [false, true]) test(`крыльцо видно и выби�
       assert.equal(await page.evaluate(() => window.__kepler.state._planEntrances), 7);
     }
     assert.equal(await page.evaluate(() => window.__kepler.state.project.site.landscape.objects.length), 0, 'крыльцо не дублируется объектом ландшафта');
+    if (mode === 'plan') {
+      if (mobile && await page.locator('body').evaluate((b) => b.classList.contains('sheet-props'))) await page.tap('#mobileBar [data-sheet="props"]');
+      const id = await page.evaluate(() => window.__kepler.state.project.levels[1].id);
+      await pickWorkspaceView(page, 'plans', `plan:${id}`); await settleView(page);
+      assert.equal(await page.evaluate(() => window.__kepler.state._planEntrances), 0, 'на втором этаже крыльцо не дублируется');
+    }
     assert.deepEqual(app.errors, []);
   } finally { await app.close(); }
 });

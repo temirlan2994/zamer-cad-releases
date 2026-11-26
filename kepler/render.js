@@ -526,9 +526,9 @@ export function createRenderer(canvas) {
 
     // Крыльцо — над землёй и тенями, под стенами дома. Форма совпадает с 3D.
     state._planEntrances = 0;
-    if (landscape && site) {
+    if ((state.modeName === 'plan' && !state.roofPlan) || (site && (landscape || state.modeName === 'site'))) {
       setView(pv);
-      state._planEntrances = drawEntrancePlan(ctx, state, tokens, px, { mono: lsStyle === 'drawing', print });
+      state._planEntrances = drawEntrancePlan(ctx, state, tokens, px, { mono: landscape && lsStyle === 'drawing', print });
     }
     // 3–6. Дом — в своих осях.
     setView(pv);

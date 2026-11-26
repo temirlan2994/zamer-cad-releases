@@ -1,3 +1,4 @@
+import { hitEntrancePlan } from './render-entrance.js';
 import { cornerWindowHandles } from '../core/corner-windows.js';
 import { glazedOpeningMinWidth, isGlazedAssembly, resizeGlazedOpening } from '../core/glazed-openings.js';
 import { atriumClick, atriumHover } from './atrium-ui.js';
@@ -148,6 +149,17 @@ function captureLayoutItemIds() {
 function tapOrNow(event, screen, run) {
   if (event.pointerType !== 'touch') { run(); return; }
   drag = { kind: 'tap', run, start: screen, view: { ...state.view } };
+}
+
+// Связанное крыльцо выбирается без перемещения двери или всего дома.
+function selectEntranceAt(event, screen, world) {
+  const entry = hitEntrancePlan(state, world, 4 / state.view.scale);
+  if (!entry) return false;
+  tapOrNow(event, screen, () => {
+    if (entry.levelId !== state.project.activeLevel) switchLevel(entry.levelId, { planView: false });
+    selectObject({ type: 'entrance', id: entry.openingId, ...(entry.key !== 'landing' ? { part: entry.key } : {}) });
+  });
+  return true;
 }
 
 // Номер объекта в стопке под курсором. Серия быстрых кликов (event.detail)
@@ -517,7 +529,9 @@ function updateHoverAndGhost(world, plan, event) {
       const site = hitSiteObject(world);
       if (site) next = { type: 'site-obj', kind: site.kind, id: site.id };
     }
-    canvas.style.cursor = onHouse ? 'move' : 'grab';
+    const entry = !next ? hitEntrancePlan(state, world, 4 / state.view.scale) : null;
+    if (entry) next = { type: 'entrance', id: entry.openingId, part: entry.key };
+    canvas.style.cursor = entry ? 'pointer' : onHouse ? 'move' : 'grab';
     if (JSON.stringify(next) !== JSON.stringify(state.hover)) { state.hover = next; requestDraw(); }
     return;
   }
@@ -553,6 +567,10 @@ function updateHoverAndGhost(world, plan, event) {
   if (!nextHover && state.modeName === 'site') {
     const site = hitSiteObject(world);
     if (site) nextHover = { type: 'site-obj', kind: site.kind, id: site.id };
+  }
+  if (!nextHover) {
+    const entry = hitEntrancePlan(state, world, 4 / state.view.scale);
+    if (entry) nextHover = { type: 'entrance', id: entry.openingId, part: entry.key };
   }
   canvas.style.cursor = nextHover ? 'pointer' : 'crosshair';
   if (event?.clientX !== undefined && state._tempDimsUI && hitTempDim(pointerScreen(event))) canvas.style.cursor = 'text';
@@ -938,6 +956,7 @@ export function bindCanvasInput() {
       if (state.calibration && !el('calOverlay').hidden) hideCalInput();
       const hit = hitSiteObject(world);
       if (hit?.kind === 'entry') { startEntryDrag(world, hit); return; }
+      if (selectEntranceAt(event, screen, world)) return;
       if (pointInBuilding(state.project, world)) {
         selectObject({ type: 'site', kind: 'building' });
         const o = state.project.building?.origin || { x: 0, y: 0 };
@@ -1253,6 +1272,8 @@ export function bindCanvasInput() {
     // Линия оси вне комнат и стен — выбор и сдвиг оси.
     const gridLine = !picked && gridPointerDown(event, screen, plan, { lineAll: true });
     if (gridLine) { drag = gridLine; return; }
+
+    if (!picked && selectEntranceAt(event, screen, world)) return;
 
     // Пустое место: пальцем — панорама, мышью — рамка выделения.
     selectObject(null);

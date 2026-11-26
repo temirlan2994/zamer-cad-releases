@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOpening, createProject, createRoom } from '../core/model.js';
+import { createLevel, createOpening, createProject, createRoom } from '../core/model.js';
 import { deriveWalls } from '../core/walls.js';
 import { entranceFaces } from '../core/mesh3d.js';
-import { entrancePlanParts, hitEntrancePlan } from '../ui/render-entrance.js';
+import { entrancePlanParts, hitEntrancePlan, visibleEntranceParts } from '../ui/render-entrance.js';
 
 function fixture() {
   const project = createProject(); project.envelope.zeroAboveGround = 900;
@@ -38,4 +38,18 @@ test('наведение и масштаб используют готовый �
   assert.deepEqual(entrancePlanParts(st), []);
   st.project.openings[0].entrance.enabled = true; st.drawingRevision += 1;
   assert.equal(entrancePlanParts(st).length, 7);
+});
+
+
+test('крыльцо видно на своём плане и участке, но не на чужом этаже и плане крыши', () => {
+  const st = fixture(); st.modeName = 'plan';
+  const first = st.project.activeLevel;
+  assert.equal(visibleEntranceParts(st).length, 7);
+  const upper = createLevel('2 этаж', 3000); st.project.levels.push(upper);
+  st.project.activeLevel = upper.id;
+  assert.deepEqual(visibleEntranceParts(st), []);
+  st.modeName = 'site'; assert.equal(visibleEntranceParts(st).length, 7);
+  st.modeName = 'landscape'; assert.equal(visibleEntranceParts(st).length, 7);
+  st.project.activeLevel = first; st.modeName = 'plan'; st.roofPlan = true;
+  assert.deepEqual(visibleEntranceParts(st), []);
 });
