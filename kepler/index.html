@@ -359,7 +359,6 @@
                 <label>Интерьер <select id="v3InteriorLevel" aria-label="Этаж интерьера"></select></label>
                 <button type="button" id="v3ExitInterior" title="Вернуться к прежнему 3D-виду">Вернуть вид</button>
               </div>
-              <button id="v3Walk" type="button" aria-pressed="false" title="Прогулка от первого лица · рост 1,7 м">Прогулка</button>
               <details id="v3WalkSettings" class="v3-walk-settings"><summary title="Настройки прогулки · O">Настройки</summary>
                 <div class="v3-walk-settings-panel">
                   <label for="v3WalkSensitivity">Чувствительность мыши <output id="v3WalkSensitivityValue" for="v3WalkSensitivity">1,00×</output></label>
@@ -370,6 +369,9 @@
               <button id="v3Fit" type="button" title="Вписать модель" aria-label="Вписать модель"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 8V3h5m4 0h5v5m0 4v5h-5m-4 0H3v-5"/><rect x="7" y="7" width="6" height="6" rx="1"/></svg><span>Вписать</span></button>
               <button id="v3Close" aria-label="Закрыть 3D-вид" title="Закрыть 3D-вид" type="button">×</button>
             </div>
+            <button id="v3Walk" type="button" aria-label="Прогулка" aria-pressed="false" title="Прогулка от первого лица · рост 1,7 м">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="4" r="2"/><path d="M12 7v7m-5-3 5-4 5 4m-5 3-4 7m4-7 4 7"/></svg>
+            </button>
             <div class="view3d-hint" id="v3Hint" aria-live="polite"></div>
             <div id="v3WalkHud" class="v3-walk-hud" hidden>
               <span class="v3-walk-reticle" aria-hidden="true"></span>

@@ -132,7 +132,8 @@ export function createWalkController({ canvas, cam, repaint, exit }) {
       }
       document.getElementById('v3WalkHud').hidden = false;
       const button = document.getElementById('v3Walk');
-      button.textContent = 'Выйти из прогулки'; button.setAttribute('aria-pressed', 'true');
+      button.setAttribute('aria-label', 'Выйти из прогулки'); button.title = 'Выйти из прогулки · Esc';
+      button.setAttribute('aria-pressed', 'true');
       updateHelp(); canvas.focus({ preventScroll: true }); repaint();
     },
     stop() {
@@ -145,7 +146,8 @@ export function createWalkController({ canvas, cam, repaint, exit }) {
       inertBefore.clear();
       document.getElementById('v3WalkHud').hidden = true;
       const button = document.getElementById('v3Walk');
-      button.textContent = 'Прогулка'; button.setAttribute('aria-pressed', 'false');
+      button.setAttribute('aria-label', 'Прогулка'); button.title = 'Прогулка от первого лица · рост 1,7 м';
+      button.setAttribute('aria-pressed', 'false');
     },
     scene(scene) { world = scene; },
     frame(now) {
