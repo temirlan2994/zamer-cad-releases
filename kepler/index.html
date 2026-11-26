@@ -228,6 +228,15 @@
               <div class="furniture-items" id="openingItems"></div>
             </div>
           </div>
+          <div class="library-furniture library-entries" id="entryLibraryBar" hidden>
+            <div class="entry-library-head"><h2>Въезд</h2><button type="button" id="entryLibraryClose" aria-label="Закрыть каталог въезда">×</button></div>
+            <input id="entrySearch" class="furn-search" type="search" placeholder="Тип или размер, мм" aria-label="Поиск ворот и калиток" />
+            <div class="furniture-body">
+              <div class="catalog-category-list" id="entryCats" role="group" aria-label="Тип въезда"></div>
+              <div class="furniture-items" id="entryPresetItems" aria-label="Размеры въезда"></div>
+            </div>
+            <label class="check-row" id="entryLibraryWicketRow"><input id="entryPresetWicket" type="checkbox"><span>Калитка рядом с воротами</span></label>
+          </div>
           <div class="library-furniture library-landscape" id="landscapeBar" hidden>
             <h2>Ландшафт</h2>
             <input id="lsSearch" class="furn-search" type="search" placeholder="Найти на участке" aria-label="Поиск по ландшафту" />

@@ -4,6 +4,7 @@ import { elevationView, isElevationOpen, refreshElevationView } from './elevatio
 import { findView } from '../core/views.js';
 import { floorAnalyticalViewById } from '../core/analytical-views.js';
 import { renderAnalyticalProps } from './props-analytical.js';
+import { renderEntryToolOptions } from './site-entry-menu.js';
 import { renderSectionProps } from './plan-section.js';
 import { renderSlabProps } from './slab-ui.js';
 import { slabOpenings, stairRiseByLevels, stairTargetLevel } from '../core/slab-openings.js';
@@ -847,7 +848,10 @@ export function renderToolOptions(force = false) {
   if (!force && key === toolOptionsKey) return;
   toolOptionsKey = key;
   let html = '';
-  if (t?.kind === 'place-opening') {
+  if (t?.kind === 'entry') {
+    renderEntryToolOptions(body);
+    html = null;
+  } else if (t?.kind === 'place-opening') {
     renderPlaceOpeningProps(body, true);
     html = null;
   } else if (t?.kind === 'wall') {

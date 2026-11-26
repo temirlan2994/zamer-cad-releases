@@ -8,10 +8,10 @@ async function chooseEntry(page, choice, { mobile = false, wicket = false, size 
     if (!await page.locator('#mobileDraw').isVisible()) await page.tap('#mobileBar [data-sheet="draw"]');
     await page.tap('#mobileDraw [data-draw="entry"]');
   } else await page.click('[data-site-tool="entry"]');
-  await page.click(`#siteEntryMenu [data-entry-cat="${choice}"]`);
+  await page.click(`#entryLibraryBar [data-entry-cat="${choice}"]`);
   if (choice !== 'wicket') await page.locator('#entryPresetWicket').setChecked(wicket);
   if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/entry-menu-${mobile ? 'phone' : 'desktop'}-${choice}.png` });
-  await page.click(`#siteEntryMenu [data-entry-preset="${choice}-${size}"]`);
+  await page.click(`#entryLibraryBar [data-entry-preset="${choice}-${size}"]`);
 }
 async function setup(page, mobile = false) {
   await openNew(page);
@@ -27,7 +27,7 @@ async function setup(page, mobile = false) {
   await settleView(page);
   await page.evaluate(async (phone) => {
     const v = window.__kepler.state.view;
-    v.scale = phone ? .012 : .025; v.panX = phone ? 25 : 150; v.panY = 100;
+    v.scale = phone ? .012 : .025; v.panX = phone ? 25 : 350; v.panY = 100;
     (await import('./ui/view.js')).requestDraw();
   }, mobile);
 }
@@ -41,15 +41,22 @@ describe('ворота и калитки участка', () => {
     const { page } = app;
     assert.equal(await page.locator('[data-site-tool="entry"]').getAttribute('aria-label'), 'Въезд');
     assert.equal(await page.locator('[data-site-tool="wicket"]').count(), 0);
-    await chooseEntry(page, 'swing');
+    await chooseEntry(page, 'swing', { size: '3000-1800' });
+    assert.equal(await page.locator('#entryLibraryBar').isVisible(), true);
+    assert.equal(await page.locator('dialog:modal').count(), 0);
+    await page.fill('#toEntryWidth', '4000'); await page.locator('#toEntryWidth').press('Tab');
+    await page.fill('#toEntryHeight', '1900'); await page.locator('#toEntryHeight').press('Tab');
     await clickWorld(page, 6000, 18000);
     await page.click('[data-site-tool="entry"]');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('#siteEntryMenu[open]').count(), 0);
-    assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'entry');
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool), null);
+    assert.equal(await page.locator('#entryLibraryBar').isVisible(), false);
     await chooseEntry(page, 'sliding', { wicket: true, size: '5000-2000' });
     await clickWorld(page, 16000, 18000);
     assert.equal((await entries(page)).length, 2);
+    assert.deepEqual([(await entries(page))[0].width, (await entries(page))[0].height], [4000, 1900]);
+    assert.equal(await page.locator('#entryLibraryBar').isVisible(), true);
     assert.deepEqual((await entries(page)).map((e) => [e.opening, e.wicket]), [['swing', false], ['sliding', true]]);
     assert.deepEqual([(await entries(page))[1].width, (await entries(page))[1].height], [5000, 2000]);
     await chooseEntry(page, 'wicket');

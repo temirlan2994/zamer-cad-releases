@@ -81,7 +81,7 @@ export function activateSiteTool(id) {
   const site = state.project?.site;
   if (!def || (def.enabled && !def.enabled(site))) return false;
   def.action(site);
-  closeSheets();
+  if (id !== 'entry') closeSheets();
   renderToolstrip();
   return true;
 }
@@ -358,7 +358,7 @@ function buildGroup(box, defs, attr) {
     const def = defs.find((d) => d.id === btn.dataset[attr]);
     if (!def) return;
     if (btn.classList.contains('active') && def.id !== 'entry') cancelTool();
-    else { def.action(state.project?.site); closeSheets(); } // телефон: панели уезжают, план свободен для касаний
+    else { def.action(state.project?.site); if (def.id !== 'entry') closeSheets(); }
     renderToolstrip();
   });
 }

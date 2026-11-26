@@ -11,6 +11,7 @@ import { state } from './state.js';
 import { bindLandscapeLibrary, renderLandscapeLibrary } from './landscape.js';
 import { bindOpeningLibrary, renderOpeningLibrary } from './opening-library.js';
 import { renderStairLibrary } from './stair-library.js';
+import { renderEntryLibrary } from './site-entry-menu.js';
 import { bindFurnitureTouch } from './furniture-touch.js';
 import { renderToolstrip } from './toolstrip.js';
 import { cancelTool, startPlaceFurniture, startPlaceOpening, startPlaceRoom } from './tools.js';
@@ -201,6 +202,7 @@ export function libraryWanted() {
   // На телефоне каталог — нижний лист, а не pinned-панель. После открытия
   // листа syncLibraryOpen должен увидеть его и подготовить отложенные карточки.
   if (document.body.classList.contains('sheet-library')) return true;
+  if (state.tool?.kind === 'entry') return true;
   if (state.modeName === 'landscape' && !model) return true;
   if (state.modeName !== 'plan' && !model) return false;
   const t = state.tool;
@@ -229,11 +231,22 @@ export function syncLibraryOpen() {
   const stairsBar = el('stairsBar');
   if (stairsBar) stairsBar.hidden = true;
   const opening = plan && t?.kind === 'place-opening';
-  el('modelAddRoom').hidden = !model || opening || state.libraryTab !== 'furniture';
+  const entry = t?.kind === 'entry';
+  el('entryLibraryBar').hidden = !entry;
+  el('modelAddRoom').hidden = !model || opening || entry || state.libraryTab !== 'furniture';
   const tabs = el('objectCatalogTabs');
-  tabs.hidden = !(opening || (plan && state.libraryTab === 'furniture'));
+  tabs.hidden = entry || !(opening || (plan && state.libraryTab === 'furniture'));
   if (!tabs.hidden) syncCatalogTabs();
   if (openings) openings.hidden = !opening;
+  if (entry) {
+    refs.libraryTabs.hidden = true;
+    refs.libraryTop.hidden = true;
+    refs.furnitureBar.hidden = true;
+    if (bar) bar.hidden = true;
+    if (openings) openings.hidden = true;
+    renderEntryLibrary();
+    return;
+  }
   if (!plan) {
     refs.libraryTop.hidden = landscape; // «Ландшафт» — свой каталог (ui/landscape.js)
     refs.furnitureBar.hidden = true;
