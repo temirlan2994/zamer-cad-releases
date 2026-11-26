@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, deserializeProject, serializeProject } from '../core/model.js';
-import { ENTRY_CATEGORIES, ensureSiteEntries, entryAt, entryLandscapeObjects, entryOverlaps, entryParts, entryPresets, normalizeSiteEntries, siteEntries, syncPrimaryEntry } from '../core/site-entries.js';
+import { ENTRY_CATEGORIES, ensureSiteEntries, entryAt, entryLandscapeObjects, entryOpeningSymbol, entryOverlaps, entryParts, entryPresets, normalizeSiteEntries, siteEntries, syncPrimaryEntry } from '../core/site-entries.js';
 import { landscapeFaces } from '../core/mesh3d-landscape.js';
 import { pickFaces } from '../core/pick3d.js';
 import { buildStructuredExport } from '../core/export.js';
@@ -9,15 +9,15 @@ import { buildStructuredExport } from '../core/export.js';
 const site = () => ({ boundary: [{ x: 0, y: 0 }, { x: 24000, y: 0 }, { x: 24000, y: 18000 }, { x: 0, y: 18000 }], entries: [] });
 const gate = (id, x = 6000) => ({ id, kind: 'gate', x, y: 0, dir: 90, width: 4000, height: 1800, wicket: false, wicketWidth: 1000, wicketSide: 'right' });
 
-test('каталог въезда содержит размерные пресеты для всех трёх категорий', () => {
+test('каталог въезда содержит размерные пресеты для всех категорий ворот и калиток', () => {
   const ids = new Set();
   for (const cat of ENTRY_CATEGORIES) {
     const items = entryPresets(cat.id);
     assert.equal(items.length, 4);
     for (const item of items) {
       assert.ok(!ids.has(item.id)); ids.add(item.id);
-      assert.equal(item.kind, cat.id === 'wicket' ? 'wicket' : 'gate');
-      assert.equal(item.opening, cat.id === 'sliding' ? 'sliding' : 'swing');
+      assert.equal(item.kind, cat.id.startsWith('wicket') ? 'wicket' : 'gate');
+      assert.equal(item.opening, cat.id.endsWith('sliding') ? 'sliding' : 'swing');
       assert.ok(entryAt(site(), { x: 12000, y: 0 }, item));
     }
   }
@@ -95,4 +95,46 @@ test('раздвижные ворота имеют одно полотно, бо
   assert.equal(parts.length, 2);
   assert.equal(parts[0].w, 3965);
   assert.equal(parts[1].w, 965);
+});
+
+test('распашные створки открываются внутрь/наружу без поворота самого въезда', () => {
+  const g = gate('swing'); const originalSpan = entryParts(g).map(({ offset, width }) => [offset, width]);
+  const inside = entryOpeningSymbol(entryParts(g)[0]);
+  g.swingSide = 'outside';
+  const outside = entryOpeningSymbol(entryParts(g)[0]);
+  assert.ok(inside.leaves.every((leaf) => leaf.tip.y > 0));
+  assert.ok(outside.leaves.every((leaf) => leaf.tip.y < 0));
+  assert.deepEqual(inside.leaves.map((leaf) => leaf.hinge), outside.leaves.map((leaf) => leaf.hinge));
+  assert.deepEqual(entryParts(g).map(({ offset, width }) => [offset, width]), originalSpan);
+  assert.equal(g.dir, 90);
+});
+test('калитка меняет сторону петель и направления сдвига', () => {
+  const w = { ...gate('w'), kind: 'wicket', width: 1000 };
+  const left = entryOpeningSymbol(entryParts(w)[0]).leaves[0];
+  w.hinge = 'right';
+  const right = entryOpeningSymbol(entryParts(w)[0]).leaves[0];
+  assert.equal(left.hinge.x, -500); assert.equal(right.hinge.x, 500);
+  assert.ok(left.tip.x > left.hinge.x); assert.ok(right.tip.x < right.hinge.x);
+  w.opening = 'sliding'; w.slideDirection = 'left';
+  const slideLeft = entryOpeningSymbol(entryParts(w)[0]);
+  assert.equal(slideLeft.leaves.length, 0);
+  assert.ok(slideLeft.slide.from.x > slideLeft.slide.to.x);
+  w.slideDirection = 'right';
+  const slideRight = entryOpeningSymbol(entryParts(w)[0]);
+  assert.ok(slideRight.slide.from.x < slideRight.slide.to.x);
+});
+test('раздвижная калитка и направления ворот/боковой калитки сохраняются независимо', () => {
+  const p = createProject('Направления');
+  Object.assign(p.site, site());
+  p.site.entries = [{ ...gate('g'), swingSide: 'outside', wicket: true, wicketOpening: 'sliding', wicketSlideDirection: 'left' },
+    { ...gate('w', 17000), kind: 'wicket', width: 1000, opening: 'sliding', slideDirection: 'left', hinge: 'right', swingSide: 'outside' }];
+  syncPrimaryEntry(p.site);
+  const loaded = deserializeProject(serializeProject(p));
+  const [g, w] = loaded.site.entries;
+  assert.equal(g.swingSide, 'outside'); assert.equal(g.wicketOpening, 'sliding'); assert.equal(g.wicketSlideDirection, 'left');
+  assert.equal(w.opening, 'sliding'); assert.equal(w.slideDirection, 'left'); assert.equal(w.hinge, 'right'); assert.equal(w.swingSide, 'outside');
+  const parts = entryParts(g);
+  assert.ok(entryOpeningSymbol(parts[0]).leaves.every((leaf) => leaf.tip.y < 0));
+  assert.ok(entryOpeningSymbol(parts[1]).slide.from.x > entryOpeningSymbol(parts[1]).slide.to.x);
+  assert.equal(buildStructuredExport(loaded).site.entries[1].slideDirection, 'left');
 });

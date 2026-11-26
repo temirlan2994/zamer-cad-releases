@@ -10,7 +10,7 @@ import { requestDraw } from './view.js';
 let category = 'swing';
 let syncedKind = '';
 let last = { entryKind: 'gate', opening: 'swing', width: 4000, height: 1800, wicket: false };
-const toolCategory = (t) => t.entryKind === 'wicket' ? 'wicket' : t.opening === 'sliding' ? 'sliding' : 'swing';
+const toolCategory = (t) => t.entryKind === 'wicket' ? t.opening === 'sliding' ? 'wicket-sliding' : 'wicket' : t.opening === 'sliding' ? 'sliding' : 'swing';
 const hint = 'Кликните по границе участка — можно поставить несколько въездов · Esc — выйти';
 
 function refreshPreset({ options = false } = {}) {
@@ -53,11 +53,11 @@ export function renderEntryLibrary() {
   const kind = toolCategory(t);
   if (syncedKind !== kind) { syncedKind = kind; category = kind; search.value = ''; }
   for (const button of cats.children) button.setAttribute('aria-pressed', String(button.dataset.entryCat === category));
-  document.getElementById('entryLibraryWicketRow').hidden = category === 'wicket';
+  document.getElementById('entryLibraryWicketRow').hidden = category.startsWith('wicket');
   wicket.checked = Boolean(t.wicket);
   const box = document.getElementById('entryPresetItems');
   const query = search.value.trim().toLocaleLowerCase('ru');
-  const key = JSON.stringify([category, t.entryKind, t.opening, t.width, t.height, query, getComputedStyle(box).getPropertyValue('--desk-accent')]);
+  const key = JSON.stringify([category, t.entryKind, t.opening, t.width, t.height, t.swingSide, t.hinge, t.slideDirection, query, getComputedStyle(box).getPropertyValue('--desk-accent')]);
   if (box.dataset.presetKey === key) return;
   box.dataset.presetKey = key; box.replaceChildren();
   for (const item of entryPresets(category).filter((p) => !query || `${entryTitle(p)} ${p.width} ${p.height} ${p.width}×${p.height}`.toLocaleLowerCase('ru').includes(query))) {
@@ -67,7 +67,7 @@ export function renderEntryLibrary() {
     card.setAttribute('aria-pressed', String(selected)); card.classList.toggle('active', selected);
     const canvas = document.createElement('canvas'); canvas.width = 240; canvas.height = 132;
     const label = document.createElement('span'); label.className = 'chip-name'; label.textContent = `${item.width} × ${item.height} мм`;
-    card.append(canvas, label); box.append(card); drawEntryPreview(canvas, item);
+    card.append(canvas, label); box.append(card); drawEntryPreview(canvas, { ...item, swingSide: t.swingSide, hinge: t.hinge, slideDirection: t.slideDirection });
     card.addEventListener('click', () => {
       if (state.tool?.kind !== 'entry') return;
       Object.assign(state.tool, { entryKind: item.kind, opening: item.opening, width: item.width, height: item.height, wicket: item.kind === 'gate' && state.tool.wicket });
@@ -86,10 +86,11 @@ export function renderEntryToolOptions(body) {
     <label class="prop-field"><span>Тип</span><select id="toEntryType">${ENTRY_CATEGORIES.map((c) => `<option value="${c.id}" ${toolCategory(t) === c.id ? 'selected' : ''}>${c.title}</option>`).join('')}</select></label>
     <label class="prop-field"><span>Ширина, мм</span><input id="toEntryWidth" type="number" min="${wicket ? 600 : 2000}" max="${wicket ? 2000 : 10000}" step="50" value="${t.width}"></label>
     <label class="prop-field"><span>Высота, мм</span><input id="toEntryHeight" type="number" min="600" max="4000" step="50" value="${t.height}"></label>
+    ${entryDirectionFields({ ...t, kind: t.entryKind }, 'toEntry', true)}
     ${wicket ? '' : `<label class="check-row"><input id="toEntryWicket" type="checkbox" ${t.wicket ? 'checked' : ''}><span>Калитка</span></label>`}`;
   body.querySelector('#toEntryType').addEventListener('change', (e) => {
     const next = e.target.value; const wasWicket = t.entryKind === 'wicket';
-    t.entryKind = next === 'wicket' ? 'wicket' : 'gate'; t.opening = next === 'sliding' ? 'sliding' : 'swing';
+    t.entryKind = next.startsWith('wicket') ? 'wicket' : 'gate'; t.opening = next.endsWith('sliding') ? 'sliding' : 'swing';
     if (wasWicket !== (t.entryKind === 'wicket')) t.width = t.entryKind === 'wicket' ? 1000 : 4000;
     if (t.entryKind === 'wicket') t.wicket = false;
     refreshPreset({ options: true });
@@ -102,4 +103,24 @@ export function renderEntryToolOptions(body) {
     });
   }
   body.querySelector('#toEntryWicket')?.addEventListener('change', (e) => { t.wicket = e.target.checked; refreshPreset(); });
+  for (const id of ['toEntryDirection', 'toEntryHinge']) body.querySelector(`#${id}`)?.addEventListener('change', () => {
+    Object.assign(t, readEntryDirections(body, t, 'toEntry')); refreshPreset();
+  });
+}
+
+export function entryDirectionFields(entry, prefix, compact = false) {
+  const sliding = entry.opening === 'sliding';
+  const values = sliding ? [['left', 'Влево'], ['right', 'Вправо']] : [['inside', 'Внутрь участка'], ['outside', 'Наружу участка']];
+  const current = sliding ? entry.slideDirection || 'right' : entry.swingSide || 'inside';
+  return `<label class="prop-field"><span>${sliding ? compact ? 'Сдвиг' : 'Сдвиг (со стороны участка)' : 'Открывание'}</span><select id="${prefix}Direction">${values.map(([value, label]) => `<option value="${value}" ${value === current ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+    ${entry.kind === 'wicket' && !sliding ? `<label class="prop-field"><span>${compact ? 'Петли' : 'Петли (со стороны участка)'}</span><select id="${prefix}Hinge"><option value="left" ${entry.hinge !== 'right' ? 'selected' : ''}>Слева</option><option value="right" ${entry.hinge === 'right' ? 'selected' : ''}>Справа</option></select></label>` : ''}`;
+}
+
+export function readEntryDirections(panel, entry, prefix) {
+  const value = panel.querySelector(`#${prefix}Direction`)?.value;
+  return {
+    swingSide: entry.opening !== 'sliding' && ['inside', 'outside'].includes(value) ? value : entry.swingSide || 'inside',
+    slideDirection: entry.opening === 'sliding' && ['left', 'right'].includes(value) ? value : entry.slideDirection || 'right',
+    hinge: panel.querySelector(`#${prefix}Hinge`)?.value || entry.hinge || 'left',
+  };
 }

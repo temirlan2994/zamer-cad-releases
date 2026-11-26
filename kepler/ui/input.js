@@ -267,7 +267,10 @@ function startEntryDrag(world, hit = null) {
   if (created) {
     const kind = state.tool?.entryKind || 'gate';
     entry = { id: `entry-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, kind,
-      opening: state.tool?.opening === 'sliding' && kind !== 'wicket' ? 'sliding' : 'swing',
+      opening: state.tool?.opening === 'sliding' ? 'sliding' : 'swing',
+      swingSide: state.tool?.swingSide || 'inside', hinge: state.tool?.hinge || 'left', slideDirection: state.tool?.slideDirection || 'right',
+      wicketOpening: state.tool?.wicketOpening || 'swing', wicketSwingSide: state.tool?.wicketSwingSide || 'inside',
+      wicketHinge: state.tool?.wicketHinge || 'left', wicketSlideDirection: state.tool?.wicketSlideDirection || 'right',
       width: state.tool?.width || (kind === 'wicket' ? 1000 : 4000), height: state.tool?.height || 1800,
       wicket: kind !== 'wicket' && Boolean(state.tool?.wicket), wicketWidth: state.tool?.wicketWidth || 1000, wicketSide: state.tool?.wicketSide || 'right' };
     const spot = computeEntryAt(world, entry);

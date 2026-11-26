@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { clickWorld, openNew, settleView, startApp, worldToClient } from './helpers.mjs';
 
 const entries = (page) => page.evaluate(() => structuredClone(window.__kepler.state.project.site.entries));
-async function chooseEntry(page, choice, { mobile = false, wicket = false, size = choice === 'wicket' ? '1000-1800' : '4000-1800' } = {}) {
+async function chooseEntry(page, choice, { mobile = false, wicket = false, size = choice.startsWith('wicket') ? '1000-1800' : '4000-1800' } = {}) {
   if (mobile) {
     if (!await page.locator('#mobileDraw').isVisible()) await page.tap('#mobileBar [data-sheet="draw"]');
     await page.tap('#mobileDraw [data-draw="entry"]');
   } else await page.click('[data-site-tool="entry"]');
   await page.click(`#entryLibraryBar [data-entry-cat="${choice}"]`);
-  if (choice !== 'wicket') await page.locator('#entryPresetWicket').setChecked(wicket);
+  if (!choice.startsWith('wicket')) await page.locator('#entryPresetWicket').setChecked(wicket);
   if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/entry-menu-${mobile ? 'phone' : 'desktop'}-${choice}.png` });
   await page.click(`#entryLibraryBar [data-entry-preset="${choice}-${size}"]`);
 }
@@ -74,6 +74,11 @@ describe('ворота и калитки участка', () => {
     await page.keyboard.press('Escape');
     await clickWorld(page, 16000, 18000);
     await page.check('#entryWicket');
+    await page.selectOption('#entryWicketOpening', 'sliding');
+    await page.selectOption('#entryWicketDirection', 'left');
+    await page.selectOption('#entryDirection', 'right');
+    const directed = (await entries(page))[1];
+    assert.equal(directed.wicketOpening, 'sliding'); assert.equal(directed.wicketSlideDirection, 'left'); assert.equal(directed.slideDirection, 'right');
     await page.selectOption('#entryWicketSide', 'left');
     await page.fill('#entryWicketWidth', '1200'); await page.locator('#entryWicketWidth').press('Tab');
     let list = await entries(page);
@@ -83,6 +88,8 @@ describe('ворота и калитки участка', () => {
     assert.equal(list[1].wicketWidth, 1200);
     assert.equal(list[1].width, 5000);
     await page.selectOption('#entryOpening', 'swing');
+    await page.selectOption('#entryDirection', 'outside');
+    assert.equal((await entries(page))[1].swingSide, 'outside');
     assert.equal((await entries(page))[1].width, 5000);
     assert.equal((await entries(page))[1].wicketWidth, 1200);
     await page.selectOption('#entryOpening', 'sliding');
@@ -163,10 +170,44 @@ describe('ворота на телефоне', () => {
     assert.equal((await entries(page))[1].wicket, true);
     await page.tap('#entryAdd');
     assert.equal(await page.locator('body').evaluate((b) => b.classList.contains('sheet-props')), false);
-    await chooseEntry(page, 'wicket', { mobile: true });
+    await chooseEntry(page, 'wicket-sliding', { mobile: true });
+    await page.selectOption('#toEntryDirection', 'left');
     const at = await worldToClient(page, 6000, 0);
     await page.touchscreen.tap(at.x, at.y);
     assert.equal((await entries(page))[2].kind, 'wicket');
+    assert.equal((await entries(page))[2].opening, 'sliding');
+    assert.equal((await entries(page))[2].slideDirection, 'left');
+    assert.deepEqual(app.errors, []);
+  });
+});
+
+describe('открывание отдельной калитки', () => {
+  let app;
+  before(async () => { app = await startApp(); await setup(app.page); });
+  after(async () => { await app?.close(); });
+  it('раздвижная калитка ставится из каталога, направление и петли меняются без сдвига объекта', async () => {
+    const { page } = app;
+    await chooseEntry(page, 'wicket-sliding');
+    await page.selectOption('#toEntryDirection', 'left');
+    await clickWorld(page, 6000, 18000);
+    await page.keyboard.press('Escape');
+    await clickWorld(page, 6000, 18000);
+    const start = (await entries(page))[0];
+    assert.equal(start.opening, 'sliding'); assert.equal(start.slideDirection, 'left');
+    await page.selectOption('#entryOpening', 'swing');
+    await page.selectOption('#entryDirection', 'outside');
+    await page.selectOption('#entryHinge', 'right');
+    let w = (await entries(page))[0];
+    assert.equal(w.swingSide, 'outside'); assert.equal(w.hinge, 'right');
+    assert.deepEqual([w.x, w.y, w.dir, w.width, w.height], [start.x, start.y, start.dir, 1000, 1800]);
+    if (process.env.KEPLER_SHOTS) await page.screenshot({ path: `${process.env.KEPLER_SHOTS}/wicket-outside-right.png` });
+    await page.selectOption('#entryOpening', 'sliding');
+    assert.equal(await page.locator('#entryDirection').inputValue(), 'left');
+    await page.selectOption('#entryDirection', 'right');
+    w = (await entries(page))[0];
+    assert.equal(w.slideDirection, 'right');
+    await page.click('#undoBtn');
+    assert.equal((await entries(page))[0].slideDirection, 'left');
     assert.deepEqual(app.errors, []);
   });
 });

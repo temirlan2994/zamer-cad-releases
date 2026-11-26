@@ -4,7 +4,7 @@
 
 import { cornerWindowHandles, cornerWindowProjections } from './core/corner-windows.js';
 import { levelWindowOpenings } from './core/spanning-windows.js';
-import { entryParts, entrySpan, entryTitle, siteEntries } from './core/site-entries.js';
+import { entryOpeningSymbol, entryParts, entrySpan, entryTitle, siteEntries } from './core/site-entries.js';
 import { glazedOpeningParts, isGlazedAssembly } from './core/glazed-openings.js';
 import {
   deriveWalls, doorLeaves, doorSymbol, openingRect, wallOutline, wallRects,
@@ -1504,14 +1504,16 @@ export function drawEntryPreview(canvas, entry) {
   const color = style.getPropertyValue('--desk-accent').trim() || '#21654e';
   const paper = style.getPropertyValue('--chip-paper').trim() || '#f6f9fb';
   const w = canvas.width; const h = canvas.height;
-  const width = entry.width || 4000;
-  const maxHeight = entry.opening === 'sliding' ? width * .45 : entry.kind === 'wicket' ? width : width / 2;
-  const scale = Math.min((w - 44) / width, (h - 24) / (maxHeight + 120));
+  const span = entrySpan(entry);
+  const symbols = entryParts(entry).map(entryOpeningSymbol);
+  const extents = symbols.flatMap((symbol) => symbol.slide ? [150, 550] : symbol.leaves.map((leaf) => leaf.extentY));
+  const minY = Math.min(-120, ...extents); const maxY = Math.max(120, ...extents);
+  const scale = Math.min((w - 44) / (span.to - span.from), (h - 24) / (maxY - minY));
   ctx.clearRect(0, 0, w, h); ctx.save();
-  ctx.translate(w / 2, h - 16); ctx.scale(scale, -scale);
+  ctx.translate(w / 2 - (span.from + span.to) / 2 * scale, 12 + maxY * scale); ctx.scale(scale, -scale);
   ctx.fillStyle = '#a8b1bd';
-  for (const x of [-width / 2 - 650, width / 2]) ctx.fillRect(x, -80, 650, 160);
-  drawSiteEntry(ctx, { ...entry, x: 0, y: 0, dir: 90, wicket: false }, color, { canvas: paper }, (px) => px / scale);
+  for (const x of [span.from - 650, span.to]) ctx.fillRect(x, -80, 650, 160);
+  drawSiteEntry(ctx, { ...entry, x: 0, y: 0, dir: 90 }, color, { canvas: paper }, (px) => px / scale);
   ctx.restore();
 }
 
@@ -1528,18 +1530,18 @@ function drawSiteEntry(ctx, entry, color, tokens, px) {
     const left = p.offset - p.width / 2; const right = p.offset + p.width / 2;
     for (const x of [left, right]) ctx.fillRect(x - 60, -90, 120, 180);
     ctx.beginPath(); ctx.moveTo(left, 0); ctx.lineTo(right, 0); ctx.stroke();
-    if (p.kind === 'gate' && p.opening === 'sliding') {
+    const symbol = entryOpeningSymbol(p);
+    if (symbol.slide) {
       ctx.strokeRect(left, -70, p.width, 140);
-      const y = 350; const end = right - 250; const start = left + 250;
-      ctx.beginPath(); ctx.moveTo(start, y); ctx.lineTo(end, y);
-      ctx.moveTo(end - 300, y - 160); ctx.lineTo(end, y); ctx.lineTo(end - 300, y + 160); ctx.stroke();
+      const { from, to } = symbol.slide; const sign = Math.sign(to.x - from.x); const head = Math.min(300, p.width * .2);
+      ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y);
+      ctx.moveTo(to.x - sign * head, to.y - head / 2); ctx.lineTo(to.x, to.y); ctx.lineTo(to.x - sign * head, to.y + head / 2); ctx.stroke();
       continue;
     }
-    const leaves = p.kind === 'gate' ? [[left, p.width / 2, 1], [right, p.width / 2, -1]] : [[left, p.width, 1]];
-    for (const [hinge, length, sign] of leaves) {
-      ctx.beginPath(); ctx.moveTo(hinge, 0); ctx.lineTo(hinge + sign * length * .7, length * .7); ctx.stroke();
+    for (const leaf of symbol.leaves) {
+      ctx.beginPath(); ctx.moveTo(leaf.hinge.x, leaf.hinge.y); ctx.lineTo(leaf.tip.x, leaf.tip.y); ctx.stroke();
       ctx.setLineDash([px(4), px(3)]);
-      ctx.beginPath(); ctx.arc(hinge, 0, length, sign > 0 ? 0 : Math.PI / 2, sign > 0 ? Math.PI / 2 : Math.PI); ctx.stroke();
+      ctx.beginPath(); ctx.arc(leaf.hinge.x, leaf.hinge.y, leaf.radius, leaf.start, leaf.end, leaf.anticlockwise); ctx.stroke();
       ctx.setLineDash([]);
     }
   }

@@ -4880,3 +4880,4 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   .library-entries #entryLibraryClose { display: none; }
   .library .library-entries .catalog-category-list button { font-size: 12px; white-space: nowrap; overflow-wrap: normal; hyphens: none; }
 }
+.library .library-entries .catalog-category-list button[data-entry-cat="wicket-sliding"] { white-space: normal; }
