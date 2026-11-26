@@ -3,6 +3,7 @@
 //
 // Цели по оси c ('x' | 'y' | 'z') — край двигаемого габарита (lo — min,
 // hi — max, mid — середина) встаёт на координату value:
+//   host-wall — наружный угол своей стены у связанного навеса;
 //   face   — «грань к грани»: моя max = чужая min или моя min = чужая max,
 //            и габариты перекрываются по двум другим осям (блоки касаются;
 //            по z — стопка «на» / «под» массу);
@@ -12,7 +13,7 @@
 //   ground — земля (z = 0 и рельеф под углами), только низ по z;
 //   line   — грани комнат и стен (слабая цель), только x / y;
 //   center — середина к середине (самая слабая), только x / y.
-// Приоритет: face > flush/align > level/ground > line > center; среди целей
+// Приоритет: host-wall > face > flush/align > level/ground > line > center; среди целей
 // одного ранга — ближайшая.
 //
 // Радиус — в пикселях экрана (мышь 12 px, касание 20 px), переведённых в мм
@@ -23,7 +24,7 @@
 export const MASS_SNAP_PX = { mouse: 12, touch: 20 };
 export const MASS_RELEASE_PX = { mouse: 16, touch: 26 };
 export const MASS_SNAP_MM = [20, 600];
-export const MASS_SNAP_RANK = { face: 0, flush: 1, align: 1, level: 2, ground: 2, line: 3, center: 4 };
+export const MASS_SNAP_RANK = { 'host-wall': -1, face: 0, flush: 1, align: 1, level: 2, ground: 2, line: 3, center: 4 };
 
 // Центр — слабая цель: ловится в половине радиуса.
 const WEAK = { center: 0.5 };
@@ -52,9 +53,14 @@ const meets = (a0, a1, b0, b1) => a0 <= b1 + 0.5 && b0 <= a1 + 0.5;
 // Цели по оси c для габарита box ({ x0, y0, z0, x1, y1, z1 }).
 // others — [{ id, name, box }] (другие массы, повёрнутые — их massBox);
 // extra: { levels: [{ elevation, height, name }], ground: [z…] (рельеф),
-// lines: [координаты граней комнат и стен] }.
+// lines: [координаты граней комнат и стен], hostWall: { axis, from, to } }.
 export function axisTargets(c, box, others = [], extra = {}) {
   const raw = [];
+  if (extra.hostWall?.axis === c) {
+    for (const value of [extra.hostWall.from, extra.hostWall.to]) for (const edge of ['lo', 'hi']) {
+      raw.push({ edge, value, kind: 'host-wall' });
+    }
+  }
   const rest = AXES.filter((q) => q !== c);
   if (c === 'z') {
     for (const z of [0, ...(extra.ground || [])]) {
@@ -115,6 +121,11 @@ export function snapMove({ lo, hi, v, targets = [], tol = 0, release = tol, held
   const shiftTo = (t) => t.value - edgeAt(t);
   const ok = (t) => !accept || accept(shiftTo(t), t);
   if (!free) {
+    // У связанного навеса угол своей стены важнее отделки, даже если
+    // предыдущий кадр ещё удерживает магнит на рейках или облицовке.
+    const corner = targets.filter((t) => t.kind === 'host-wall' && Math.abs(shiftTo(t) - v) <= tol && ok(t))
+      .sort((a, b) => Math.abs(shiftTo(a) - v) - Math.abs(shiftTo(b) - v))[0];
+    if (corner) return { value: shiftTo(corner), snap: corner };
     if (held) {
       const t = targets.find((q) => q.key === held);
       if (t && Math.abs(shiftTo(t) - v) <= release && ok(t)) return { value: shiftTo(t), snap: t };
@@ -135,6 +146,7 @@ export function snapLabel(t) {
   if (!t) return '';
   const n = t.name ? `«${t.name}»` : '';
   switch (t.kind) {
+    case 'host-wall': return 'по углу стены';
     case 'face':
       if (t.axis === 'z') return t.edge === 'lo' ? `на ${n}` : `под ${n}`;
       return `к грани ${n}`;

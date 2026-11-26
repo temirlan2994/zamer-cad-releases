@@ -45,7 +45,7 @@ import {
 } from '../core/mass-gizmo.js';
 import { axisTargets, snapContact, snapLabel, snapMove, snapTolerances } from '../core/mass-snap.js';
 import { basePlane, pickMass, rayPlaneZ } from '../core/pick3d.js';
-import { updateFacadeAttachment } from '../core/facade.js';
+import { facadeWallSpan, updateFacadeAttachment } from '../core/facade.js';
 import { massFaces } from '../core/mesh3d.js';
 import { toast } from './dom.js';
 import {
@@ -140,6 +140,7 @@ function mmPerPxAlong(p, c) {
 function snapAlong(c, box, cur, v, e, held, { skip = null, ground = [], step = 0, accept = null, edges = null, at = null } = {}) {
   let targets = axisTargets(c, cur, otherBoxes(skip), {
     levels: c === 'z' ? levelList() : [], ground: c === 'z' ? ground : [], lines: c === 'z' ? [] : massBaseSnap(skip)[`${c}s`],
+    hostWall: drag?.id === skip ? drag.hostWall : null,
   });
   if (edges) targets = targets.filter((t) => edges.includes(t.edge));
   const { tol, release } = snapTolerances(mmPerPxAlong(at || gizmoOrigin(cur), c), drag?.pointer || (tool()?.touch ? 'touch' : 'mouse'));
@@ -578,6 +579,7 @@ export function startMassDrag(e, at = massPartAt(e)) {
     before: snapshot(), changed: false,
     pointer: e.pointerType === 'touch' || e.pointerType === 'pen' ? 'touch' : 'mouse',
     held: {}, snaps: [], // магнит: притянутые цели (гистерезис) и подсветка
+    hostWall: m.facadeKind === 'canopy' ? facadeWallSpan(state.project, m, null, new Map(), state.walls) : null,
   };
   // Перенос по плоскости и углы — по горизонтальной плоскости.
   if (at.part === 'gxy' || (handle && !handle.face)) {
