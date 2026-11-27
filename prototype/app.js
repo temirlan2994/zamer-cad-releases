@@ -15716,7 +15716,8 @@ async function exportCurrentProject(type) {
       if (forDwg) drawing = drawing.map(entity => entity.type === "rectangle"
         ? { ...entity, type: "polyline", closed: true, points: rectangleCorners(entity) } : entity);
       const options = { annotationScale: project.annotationScale, measurementSettings: project.measurementSettings,
-        customLineLayers: project.customLineLayers, lockedLayers: project.lockedLayers, layerStyles: project.layerStyles };
+        customLineLayers: project.customLineLayers, lockedLayers: project.lockedLayers, layerStyles: project.layerStyles,
+        nativeAnnotations: !revit };
       return revit ? buildRevitDxf(drawing, options) : buildDxf(drawing, options);
     };
     const backup = () => JSON.stringify(project, null, 2);

@@ -1,7 +1,8 @@
 // Unmodified npm @node-projects/acad-ts@3.9.0 ESM bundle (MIT).
 // Source: https://github.com/node-projects/acad-ts
 // SHA-256: a4356a398d3b8a90cbfc84aa6a513266507dd6896e567ba7652a6e8a3de74c54
-import { ACadVersion, DwgReader, DwgWriter, DxfReader, DxfWriter } from "./vendor/acad-ts-3.9.0/index.js";
+import { ACadVersion, DwgReader, DxfReader, DxfWriter } from "./vendor/acad-ts-3.9.0/index.js";
+import { writeDwgDocument } from "./dwg-compat.js";
 
 function repairCurrentTableEntries(document) {
   const { header, layers, lineTypes, textStyles, dimensionStyles } = document;
@@ -22,7 +23,7 @@ export function convertDwg(operation, bytes) {
     const document = DxfReader.readFromStream(bytes);
     document.header.version = ACadVersion.AC1032;
     repairCurrentTableEntries(document);
-    return DwgWriter.writeToBuffer(document);
+    return writeDwgDocument(document);
   }
 
   if (operation !== "dwg-to-dxf") throw new Error("Неизвестная операция DWG");

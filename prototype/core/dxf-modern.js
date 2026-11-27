@@ -9,6 +9,7 @@ import {
 } from "./plan-annotations.js";
 import { formatProjectAngle, formatProjectLength, normalizeMeasurementSettings, projectUnit } from "./project-settings.js";
 import { expandDrawingBlocks, isReusableBlock } from "./reusable-blocks.js";
+import { encodeMText } from "./cad-text.js";
 
 const POINT_EPSILON = 1e-6;
 const MAX_LAYER_NAME = 255;
@@ -142,6 +143,43 @@ function appendPlanLeader(out, entity, layer) {
       offsetPoint(corner, width, labelHeight), offsetPoint(corner, 0, labelHeight)] }, layer, true);
   }
   appendCenteredTextLines(out, center, lines, height, layer);
+}
+
+function appendNativeMText(out, entity, layer, owner, handle, centered = false) {
+  const layout = textBlockLayout(entity);
+  const { height, width, lines } = layout;
+  const angle = (entity.rotation || 0) * Math.PI / 180;
+  const anchor = centered ? entity : offsetPoint(entity, Math.sin(angle) * height, -Math.cos(angle) * height);
+  appendEntityStart(out, "MTEXT", handle, owner, layer);
+  out.push(100, "AcDbMText", ...pointFields(10, anchor), 40, height, 41, width,
+    71, centered ? 5 : 1, 72, 1, ...pointFields(11, { x: Math.cos(angle), y: Math.sin(angle) }),
+    42, width, 43, (1.22 + (lines.length - 1) * DXF_LINE_SPACING) * height,
+    7, STYLE, 73, 2, 44, 0.84, ...(entity.textFrame ? [90, 16] : []));
+  const text = [...encodeMText(entity.text || "")];
+  for (let start = 0; start < text.length; start += 250) {
+    out.push(start + 250 < text.length ? 3 : 1, text.slice(start, start + 250).join(""));
+  }
+  if (!text.length) out.push(1, "");
+}
+
+function appendNativeLeader(out, entity, layer, owner, nextHandle) {
+  const arrow = { x: entity.x1, y: entity.y1 };
+  const label = { x: entity.x2, y: entity.y2 };
+  if (![arrow.x, arrow.y, label.x, label.y].every(Number.isFinite)) return;
+  const height = leaderTextHeight(entity);
+  const lines = annotationTextLines(entity.text);
+  const textWidth = annotationTextWidth(lines, height);
+  const { line, frame } = leaderAppearance(entity);
+  const size = leaderFrameSize(height, textWidth, lines.length, frame, DXF_LINE_SPACING);
+  const path = leaderPlanPath(arrow, { x: label.x - size.width / 2, y: label.y - size.height / 2, ...size }, line,
+    1.1 * height, leaderElbowPoint(entity));
+  const textHandle = nextHandle();
+  appendEntityStart(out, "LEADER", nextHandle(), owner, layer);
+  out.push(100, "AcDbLeader", 3, STYLE, 71, 1, 72, 0, 73, 0, 74, 0, 75, 0,
+    40, height, 41, textWidth, 76, path.length);
+  for (const point of path) out.push(...pointFields(10, point));
+  out.push(340, textHandle, 211, 1, 221, 0, 231, 0);
+  appendNativeMText(out, { ...label, text: entity.text, height, textWidth, textFrame: frame }, layer, owner, textHandle, true);
 }
 
 function placeZoneLabel(geometry, anchor, width, height, occupied) {
@@ -343,12 +381,13 @@ function appendLayouts(out, nextHandle, modelSpace, paperSpace) {
   out.push(0, "ENDSEC");
 }
 
-export function writeModernDxf(entities, { profile, annotationScale, measurementSettings, customLineLayers, lockedLayers = [], layerStyles = {} } = {}) {
+export function writeModernDxf(entities, { profile, annotationScale, measurementSettings, customLineLayers, lockedLayers = [], layerStyles = {}, nativeAnnotations = false } = {}) {
   if (profile === "revit") entities = expandDrawingBlocks(entities);
   const display = normalizeMeasurementSettings(measurementSettings);
   const model = [];
   const dimensions = [];
   const annotations = [];
+  const native = [];
   const inserts = [];
   const zones = [];
   const options = { profile, preserveLinePrecision: true, modern: true };
@@ -379,6 +418,7 @@ export function writeModernDxf(entities, { profile, annotationScale, measurement
       const dimension = radialDimension(entity, dimensionLayer, annotationScale, display);
       if (dimension) dimensions.push(dimension);
     } else if (entity?.type === "line" && entity.dimensionKind === "leader") {
+      if (nativeAnnotations) { native.push({ entity, layer: layerNames.get(entity.layer) || textLayer }); continue; }
       const records = [];
       appendPlanLeader(records, entity, textLayer);
       annotations.push({ records });
@@ -386,6 +426,7 @@ export function writeModernDxf(entities, { profile, annotationScale, measurement
       const dimension = linearDimension(entity, dimensionLayer, annotationScale, display);
       if (dimension) dimensions.push(dimension);
     } else if (entity?.type === "text") {
+      if (nativeAnnotations) { native.push({ entity, layer: layerNames.get(entity.layer) || textLayer }); continue; }
       const records = [];
       appendPlanText(records, entity, layerNames.get(entity.layer) || textLayer);
       annotations.push({ records });
@@ -482,6 +523,10 @@ export function writeModernDxf(entities, { profile, annotationScale, measurement
     appendPrimitiveEntities(out, annotation.records, modelSpace.handle, nextHandle, annotation.trueColor);
   }
   for (const annotation of annotations) appendPrimitiveEntities(out, annotation.records, modelSpace.handle, nextHandle, annotation.trueColor);
+  for (const { entity, layer } of native) {
+    if (entity.type === "text") appendNativeMText(out, entity, layer, modelSpace.handle, nextHandle());
+    else appendNativeLeader(out, entity, layer, modelSpace.handle, nextHandle);
+  }
   for (const dimension of dimensions) appendDimension(out, dimension, modelSpace.handle, nextHandle);
   out.push(0, "ENDSEC");
   appendLayouts(out, nextHandle, modelSpace, paperSpace);
