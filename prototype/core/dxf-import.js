@@ -2,6 +2,7 @@ import { normalizeAnglePositive } from "./geometry.js";
 import { DEFAULT_LINE_LAYER, MAX_CUSTOM_LINE_LAYERS, MAX_LINE_LAYER_NAME_LENGTH } from "./line-layers.js";
 import { isLinePoint, MAX_LINE_COORDINATE } from "./line-edits.js";
 import { validStoredEntity } from "./project-format.js";
+import { decodeCadText } from "./cad-text.js";
 import {
   createReusableBlockInstance, expandReusableBlock, MAX_REUSABLE_BLOCKS, normalizeBlockName,
 } from "./reusable-blocks.js";
@@ -173,16 +174,62 @@ function importArc(record, scale) {
 
 function importText(record, scale) {
   const multiLine = record.type === "MTEXT";
-  const text = record.fields.filter(([code]) => code === 1 || (multiLine && code === 3)).map(([, value]) => value).join("")
-    .replace(/\\U\+([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
-    .replace(/%%([dpc])/gi, (_, glyph) => ({ d: "°", p: "±", c: "⌀" })[glyph.toLowerCase()])
-    .replace(multiLine ? /\\P/g : /\r?\n/g, "\n").replace(multiLine ? /\\[ACFHQTW][^;]*;|[{}]/gi : /$^/, "")
-    .trim().slice(0, 4096);
+  const raw = record.fields.filter(([code]) => code === 1 || (multiLine && code === 3)).map(([, value]) => value).join("");
+  const text = decodeCadText(raw, multiLine).slice(0, 4096);
   const aligned = !multiLine && (numberOf(record, 72, 0) || numberOf(record, 73, 0));
   const point = pointOf(record, scale, aligned ? 11 : 10);
   const height = numberOf(record, 40) * scale;
-  const rotation = -numberOf(record, 50, 0);
-  return text && height > 0 && height <= MAX_LINE_COORDINATE ? { type: "text", ...point, text, height, rotation } : null;
+  const directionX = numberOf(record, 11);
+  const directionY = numberOf(record, 21);
+  let rotation = -numberOf(record, 50, 0);
+  if (multiLine) {
+    // MTEXT accepts radians or a direction vector; the last supplied one wins.
+    // Later code-50 values in column data are heights, not rotation angles.
+    const columns = record.fields.findIndex(([code]) => code === 75);
+    const fields = columns < 0 ? record.fields : record.fields.slice(0, columns);
+    const angleIndex = fields.findLastIndex(([code]) => code === 50);
+    const directionIndex = fields.findLastIndex(([code]) => code === 11 || code === 21);
+    rotation = angleIndex > directionIndex ? -Number(fields[angleIndex][1]) * 180 / Math.PI :
+      Number.isFinite(directionX) && Number.isFinite(directionY) && Math.hypot(directionX, directionY) > 0
+        ? -Math.atan2(directionY, directionX) * 180 / Math.PI : 0;
+  }
+  if (!text.trim() || !(height > 0 && height <= MAX_LINE_COORDINATE)) return null;
+  const entity = { type: "text", ...point, text, height, rotation };
+  if (multiLine) {
+    const width = numberOf(record, 41) * scale;
+    if (width > 0 && width <= MAX_LINE_COORDINATE) entity.textWidth = width;
+    if (flagOf(record, 90, 16)) entity.textFrame = true;
+    const attachment = Math.max(1, Math.min(9, numberOf(record, 71, 1)));
+    const boxWidth = numberOf(record, 42, width / scale) * scale;
+    const boxHeight = numberOf(record, 43, 0) * scale || height * (1 + (text.split("\n").length - 1) * 1.4);
+    const dx = -((attachment - 1) % 3) * (Number.isFinite(boxWidth) ? boxWidth : 0) / 2;
+    const dy = height - Math.floor((attachment - 1) / 3) * boxHeight / 2;
+    const angle = rotation * Math.PI / 180;
+    entity.x += Math.cos(angle) * dx - Math.sin(angle) * dy;
+    entity.y += Math.sin(angle) * dx + Math.cos(angle) * dy;
+  }
+  return entity;
+}
+
+function importLeader(record, scale, annotations) {
+  if (numberOf(record, 71, 1) !== 1 || numberOf(record, 72, 0) !== 0 || numberOf(record, 210, 0) || numberOf(record, 220, 0) || numberOf(record, 230, 1) !== 1) return null;
+  const vertices = lightweightVertices(record, scale).map(vertex => vertex.point);
+  if (vertices.length < 2 || vertices.length > 3 || !vertices.every(isLinePoint)) return null;
+  const handle = valueOf(record, 340).toUpperCase();
+  const annotation = annotations.get(handle);
+  const label = annotation && importText(annotation, scale);
+  // Other annotation types cannot be represented by a text leader in Zamer.
+  if (handle && handle !== "0" && !label) return null;
+  const end = label && annotation.type === "MTEXT" && numberOf(annotation, 71, 1) === 5
+    ? pointOf(annotation, scale) : label || vertices.at(-1);
+  if (vertices.length === 3 && Math.abs(vertices[1].y - end.y) > 1e-6) return null;
+  const textHeight = label?.height || numberOf(record, 40, 0) * scale || 200;
+  if (!(textHeight > 0 && textHeight <= MAX_LINE_COORDINATE)) return null;
+  const entity = { ...lineBetween(vertices[0], end), dimensionKind: "leader", text: label?.text || "",
+    textHeight,
+    leaderLine: vertices.length === 3 ? "bent" : "straight", leaderFrame: Boolean(label?.textFrame),
+    ...(vertices.length === 3 && { leaderElbow: vertices[1] }) };
+  return validStoredEntity({ ...entity, id: "leader", layer: "text" }) ? { entity, annotationHandle: label ? handle : null } : null;
 }
 
 function lineBetween(start, end) {
@@ -314,13 +361,21 @@ export function importDxf(bytes, name = "Импорт") {
   const scale = unitMillimeters[unit] || 1;
   const { layers, visibleLayers, lockedLayers, getLayer } = dxfLayerState(sections.get("TABLES") || []);
   const blocks = blockRecords(sections.get("BLOCKS") || [], scale, getLayer);
+  const drawing = [...drawingRecords(sections.get("ENTITIES"), scale)];
+  const annotations = new Map(drawing.filter(({ record }) => ["MTEXT", "TEXT"].includes(record.type) &&
+    numberOf(record, 67, 0) !== 1 && valueOf(record, 410, "Model").toUpperCase() === "MODEL")
+    .map(({ record }) => [valueOf(record, 5).toUpperCase(), record]).filter(([handle]) => handle));
+  const leaders = new Map(drawing.filter(({ record }) => record.type === "LEADER" && numberOf(record, 67, 0) !== 1 &&
+    valueOf(record, 410, "Model").toUpperCase() === "MODEL").map(({ record }) => [record, importLeader(record, scale, annotations)]));
+  const leaderLabels = new Set([...leaders.values()].map(leader => leader?.annotationHandle).filter(Boolean));
   const entities = [];
   const reusableBlocks = [];
   const usedBlockNames = new Set();
   let skipped = 0;
   let index = 0;
-  for (const { record, vertices } of drawingRecords(sections.get("ENTITIES"), scale)) {
+  for (const { record, vertices } of drawing) {
     if (numberOf(record, 67, 0) === 1 || valueOf(record, 410, "Model").toUpperCase() !== "MODEL") continue;
+    if (["MTEXT", "TEXT"].includes(record.type) && leaderLabels.has(valueOf(record, 5).toUpperCase())) continue;
     const id = `dxf-${index++}`;
     const layerName = valueOf(record, 8, "0");
     if (record.type === "INSERT" && entities.length < maxImportedEntities) {
@@ -337,13 +392,13 @@ export function importDxf(bytes, name = "Импорт") {
         continue;
       }
     }
-    const converted = importEntity(record, scale, vertices);
+    const converted = record.type === "LEADER" ? leaders.get(record)?.entity : importEntity(record, scale, vertices);
     if (!converted || entities.length >= maxImportedEntities) {
       skipped += 1;
       continue;
     }
     const layer = record.type === "DIMENSION" ? "dimensions" :
-      converted.type === "text" && layerName === "0" ? "text" : getLayer(layerName);
+      (converted.type === "text" || converted.dimensionKind === "leader") && layerName === "0" ? "text" : getLayer(layerName);
     const entity = { ...converted, id, layer };
     if (validStoredEntity(entity)) entities.push(entity);
     else skipped += 1;
