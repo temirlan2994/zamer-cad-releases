@@ -25,6 +25,14 @@ async function openCirculationMission(page, id) {
   }, `[data-analysis-fold="${id}"]`);
 }
 
+async function waitAnchorFocus(page, end) {
+  try { await page.waitForFunction((end) => document.activeElement?.dataset.circulationAnchor === end, end); }
+  catch (error) {
+    const focus = await page.evaluate(() => ({ tag: document.activeElement?.tagName, id: document.activeElement?.id, data: { ...document.activeElement?.dataset } }));
+    throw new Error(`${error.message}; active control: ${JSON.stringify(focus)}`, { cause: error });
+  }
+}
+
 describe('движение и проходы', () => {
   let app;
   let ids;
@@ -95,7 +103,7 @@ describe('движение и проходы', () => {
         .find((entry) => entry.scenarioId === 'SCN015' && entry.routeId === 'delivery_to_unpack');
       return binding?.from?.anchorType === 'opening' && binding.from.anchorId === openingId;
     }, ids.portalId);
-    await page.waitForFunction(() => document.activeElement?.dataset.circulationAnchor === 'from');
+    await waitAnchorFocus(page, 'from');
 
     await page.focus(to);
     await page.selectOption(to, `item:${ids.tableId}`);
@@ -104,7 +112,7 @@ describe('движение и проходы', () => {
         .find((entry) => entry.scenarioId === 'SCN015' && entry.routeId === 'delivery_to_unpack');
       return binding?.to?.anchorType === 'item' && binding.to.anchorId === itemId;
     }, ids.tableId);
-    await page.waitForFunction(() => document.activeElement?.dataset.circulationAnchor === 'to');
+    await waitAnchorFocus(page, 'to');
 
     const binding = await page.evaluate(() => structuredClone(
       window.__kepler.state.project.layoutBrief.scenarioRouteBindings

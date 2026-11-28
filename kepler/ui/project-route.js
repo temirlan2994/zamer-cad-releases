@@ -607,10 +607,14 @@ function restoreHomePanelState(body, snapshot) {
   // Закрытие native select может вернуть фокус старому, уже удалённому
   // элементу после обработчика change. Восстанавливаем его после кадра,
   // только если пользователь ещё не выбрал другой элемент управления.
+  const view = renderedHomeView(body);
   requestAnimationFrame(() => {
-    if (panelOpen && target.isConnected && document.activeElement === document.body) {
-      target.focus({ preventScroll: true });
-    }
+    if (!panelOpen || renderedHomeView(body) !== view || document.activeElement !== document.body) return;
+    // Панель могла пересчитаться ещё раз до этого кадра: ищем контрол по
+    // сохранённой идентичности, а не по уже отсоединённому DOM-узлу.
+    const current = [...body.querySelectorAll(identity.tagName.toLocaleLowerCase('en-US'))]
+      .find((candidate) => matchesHomeControl(candidate, identity));
+    current?.focus({ preventScroll: true });
   });
 }
 
