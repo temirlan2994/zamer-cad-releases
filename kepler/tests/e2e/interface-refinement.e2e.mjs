@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openSample, pickWorkspaceView, startApp } from './helpers.mjs';
+import { openSample, pickWorkspaceView, startApp, settleCanvas } from './helpers.mjs';
 
 describe('компактная аналитика и управляемые вкладки', () => {
   let app;
@@ -228,7 +228,7 @@ describe('компактная аналитика и управляемые вк
     const viewId = `analysis:light:${encodeURIComponent(levelId)}`;
     await pickWorkspaceView(page, 'analytics', viewId);
     await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, viewId);
-    assert.equal(await page.getAttribute(`[data-workspace-view="${viewId}"]`, 'aria-selected'), 'true');
+    await page.waitForFunction((id) => document.querySelector(`.wv-tabs [data-workspace-view="${id}"]`)?.getAttribute('aria-selected') === 'true', viewId);
 
     await page.evaluate(async () => { (await import('./ui/files.js')).newProject(); });
     await page.locator('#projectRoutePanel').waitFor({ state: 'hidden' });
@@ -258,7 +258,6 @@ describe('компактная аналитика и управляемые вк
     });
     const canvas = await page.locator('#canvas').boundingBox();
     const head = { x: canvas.x + ui.head.x, y: canvas.y + ui.head.y };
-    const line = { x: canvas.x + ui.line.x, y: canvas.y + ui.line.y };
     await page.mouse.move(head.x, head.y);
     await page.mouse.down();
     await page.mouse.move(head.x + 70, head.y + 35);
@@ -266,9 +265,15 @@ describe('компактная аналитика и управляемые вк
     assert.equal(await page.evaluate(() => window.__kepler.state.project.grids[0].at), 0);
     assert.equal(await page.evaluate(() => window.__kepler.state.selection?.type), 'grid');
 
-    await page.mouse.move(line.x, line.y);
+    await settleCanvas(page);
+    const selectedLine = await page.evaluate(() => {
+      const grid = window.__kepler.state._gridUI[0];
+      const box = document.getElementById('canvas').getBoundingClientRect();
+      return { x: box.x+(grid.A.x+grid.B.x)/2, y: box.y+(grid.A.y+grid.B.y)/2 };
+    });
+    await page.mouse.move(selectedLine.x, selectedLine.y);
     await page.mouse.down();
-    await page.mouse.move(line.x + 70, line.y);
+    await page.mouse.move(selectedLine.x + 70, selectedLine.y);
     await page.mouse.up();
     assert.notEqual(await page.evaluate(() => window.__kepler.state.project.grids[0].at), 0);
   });
@@ -333,7 +338,7 @@ describe('компактная аналитика на телефоне', () => 
 
     await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, viewId);
     assert.equal(await page.isHidden('#projectRoutePanel'), true);
-    assert.equal(await page.getAttribute(`[data-workspace-view="${viewId}"]`, 'aria-selected'), 'true');
+    await page.waitForFunction((id) => document.querySelector(`.wv-tabs [data-workspace-view="${id}"]`)?.getAttribute('aria-selected') === 'true', viewId);
     await page.evaluate(() => window.__kepler.fitView());
     const expected = await page.evaluate(() => window.__kepler.state.project.rooms
       .filter((room) => room.type !== 'shaft').map((room) => room.id).sort());

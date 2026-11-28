@@ -247,7 +247,5 @@ export function dxfProxyOnly() {
   return L.join('\n');
 }
 
-// Сначала выполняется запрошенная отрисовка, затем читаются её ручки/координаты.
-export async function settleCanvas(page) {
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-}
+// Единый способ дождаться актуального положения холста и его ручек.
+export { settleView as settleCanvas };
