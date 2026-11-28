@@ -106,12 +106,14 @@ function dxfLayerState(records) {
   const visibleLayers = new Set([DEFAULT_LINE_LAYER, "dimensions", "text", "areas", "elevations"]);
   const lockedLayers = [];
   const names = new Map([["0", DEFAULT_LINE_LAYER]]);
+  const sourceNames = new Map([[DEFAULT_LINE_LAYER, "0"]]);
   function getLayer(name, record = null) {
     const key = name.toUpperCase();
     if (names.has(key)) return names.get(key);
     if (layers.length >= MAX_CUSTOM_LINE_LAYERS) return DEFAULT_LINE_LAYER;
     const id = `line-layer-dxf-${layers.length + 1}`;
     layers.push({ id, name: cleanName(name), color: dxfColor(record) });
+    sourceNames.set(id, name);
     names.set(key, id);
     if (numberOf(record, 62, 7) >= 0 && !flagOf(record, 70, 1)) visibleLayers.add(id);
     if (flagOf(record, 70, 4)) lockedLayers.push(id);
@@ -120,7 +122,7 @@ function dxfLayerState(records) {
   for (const record of records) {
     if (record.type === "LAYER") getLayer(valueOf(record, 2, "0"), record);
   }
-  return { layers, visibleLayers, lockedLayers, getLayer };
+  return { layers, visibleLayers, lockedLayers, getLayer, sourceNames };
 }
 
 function pointOf(record, scale, code = 10) {
@@ -252,7 +254,9 @@ function importDimension(record, scale) {
     const projection = (second.x - first.x) * vx + (second.y - first.y) * vy;
     if (Math.abs(projection) <= 1e-6) return null;
     return { ...lineBetween(first, second), offset: (base.y - first.y) * vx - (base.x - first.x) * vy,
-      dimX1: base.x - projection * vx, dimY1: base.y - projection * vy, dimX2: base.x, dimY2: base.y };
+      dimX1: base.x - projection * vx, dimY1: base.y - projection * vy, dimX2: base.x, dimY2: base.y,
+      ...(kind === 1 ? { measurementType: "aligned" } : Math.abs(vy) < 1e-8 ? { measurementType: "linear", measurementAxis: "x" } :
+        Math.abs(vx) < 1e-8 ? { measurementType: "linear", measurementAxis: "y" } : {}) };
   }
   if (kind === 5) return { type: "line", dimensionKind: "angular", vertex: last, arm1: first, arm2: second,
     arcRadius: Math.hypot(last.x - base.x, last.y - base.y) };
@@ -359,7 +363,7 @@ export function importDxf(bytes, name = "Импорт") {
   const unitIndex = header.findIndex(([code, value]) => code === 9 && value.trim().toUpperCase() === "$INSUNITS");
   const unit = unitIndex >= 0 && header[unitIndex + 1]?.[0] === 70 ? Number(header[unitIndex + 1][1]) : 0;
   const scale = unitMillimeters[unit] || 1;
-  const { layers, visibleLayers, lockedLayers, getLayer } = dxfLayerState(sections.get("TABLES") || []);
+  const { layers, visibleLayers, lockedLayers, getLayer, sourceNames } = dxfLayerState(sections.get("TABLES") || []);
   const blocks = blockRecords(sections.get("BLOCKS") || [], scale, getLayer);
   const drawing = [...drawingRecords(sections.get("ENTITIES"), scale)];
   const annotations = new Map(drawing.filter(({ record }) => ["MTEXT", "TEXT"].includes(record.type) &&
@@ -369,6 +373,7 @@ export function importDxf(bytes, name = "Импорт") {
     valueOf(record, 410, "Model").toUpperCase() === "MODEL").map(({ record }) => [record, importLeader(record, scale, annotations)]));
   const leaderLabels = new Set([...leaders.values()].map(leader => leader?.annotationHandle).filter(Boolean));
   const entities = [];
+  const bindings = [];
   const reusableBlocks = [];
   const usedBlockNames = new Set();
   let skipped = 0;
@@ -383,6 +388,7 @@ export function importDxf(bytes, name = "Импорт") {
       const insert = importBlock(record, blocks, scale, id, layer);
       if (insert && validStoredEntity(insert.entity)) {
         entities.push(insert.entity);
+        bindings.push({ id, handle: valueOf(record, 5).toUpperCase(), type: record.type, layer: layerName });
         skipped += insert.source.unsupported;
         const key = insert.source.name.toUpperCase();
         if (reusableBlocks.length < MAX_REUSABLE_BLOCKS && !usedBlockNames.has(key)) {
@@ -400,13 +406,16 @@ export function importDxf(bytes, name = "Импорт") {
     const layer = record.type === "DIMENSION" ? "dimensions" :
       (converted.type === "text" || converted.dimensionKind === "leader") && layerName === "0" ? "text" : getLayer(layerName);
     const entity = { ...converted, id, layer };
-    if (validStoredEntity(entity)) entities.push(entity);
+    if (validStoredEntity(entity)) {
+      entities.push(entity);
+      bindings.push({ id, handle: valueOf(record, 5).toUpperCase(), type: record.type, layer: layerName });
+    }
     else skipped += 1;
   }
   if (!entities.length) throw new Error("В файле нет поддерживаемых объектов модели");
   return {
     project: { version: 2, name, theme: "dark", entities, customLineLayers: layers, reusableBlocks,
       visibleLayers: [...visibleLayers], lockedLayers, annotationLayers: 1 },
-    skipped,
+    skipped, bindings, unitScale: scale, sourceLayers: [...sourceNames],
   };
 }

@@ -511,11 +511,14 @@
             <select id="exportScope"><option value="visible">Видимые слои</option><option value="all">Все слои</option></select>
           </div>
           <p id="exportSummary" class="export-summary"></p>
+          <p id="exportSourceHint" class="export-summary" hidden>DWG вносит правки в исходный чертёж, независимо от видимости слоёв. Исходник доступен отдельно. При несовместимости можно выгрузить копию объектов Замера.</p>
           <div class="export-grid">
             <button type="button" class="export-card ready" data-export="pdf"><strong>PDF</strong><span>план A4 и ведомость</span></button>
             <button type="button" class="export-card ready" data-export="zamer"><strong>ZAMER</strong><span>полная резервная копия</span></button>
             <button type="button" class="export-card ready" data-export="dxf"><strong>DXF</strong><span>редактируемая геометрия</span></button>
             <button type="button" class="export-card ready" data-export="dwg"><strong>DWG</strong><span>чертёж AutoCAD 2018 и новее</span></button>
+            <button type="button" class="export-card ready" data-export="original-cad" id="exportOriginalCad" hidden><strong>Исходный DWG</strong><span>файл без изменений</span></button>
+            <button type="button" class="export-card ready" data-export="dwg-copy" id="exportDwgCopy" hidden><strong>Копия DWG</strong><span>только объекты Замера</span></button>
             <button type="button" class="export-card ready" data-export="revit-dxf"><strong>Revit DXF</strong><span>слои ZAMER · мм</span></button>
             <button type="button" class="export-card ready" data-export="zip"><strong>Комплект ZIP</strong><span>PDF, DXF и копия .zamer</span></button>
           </div>
@@ -723,7 +726,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=342"></script>
+    <script type="module" src="./app.js?v=343"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

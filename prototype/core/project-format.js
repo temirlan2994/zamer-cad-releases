@@ -5,6 +5,7 @@ import { validPolylinePoints } from "./polyline.js";
 import { normalizePlanAnnotation } from "./plan-annotations.js";
 import { CUSTOM_LINE_LAYER_PREFIX, DEFAULT_LINE_LAYER, normalizeLineLayerColor, normalizeLineLayerSettings, normalizeLineType, normalizeLineWeight } from "./line-layers.js";
 import { expandReusableBlock, isReusableBlock, normalizeReusableBlocks } from "./reusable-blocks.js";
+import { validateCadSource } from "./cad-source.js";
 
 export const MAX_ZAMER_FILE_BYTES = 32 * 1024 * 1024;
 
@@ -95,6 +96,7 @@ function validPolylineDraft(draft) {
 
 function validateDrawing(drawing, label, customLayerIds) {
   if (!plainObject(drawing) || !Array.isArray(drawing.entities)) throw new Error(`${label}: отсутствует список объектов`);
+  if (drawing.cadSource !== undefined) validateCadSource(drawing.cadSource, validStoredEntity);
   const ids = new Set();
   for (const [index, entity] of drawing.entities.entries()) {
     if (!validStoredEntity(entity) || ids.has(entity.id)) throw new Error(`${label}: повреждён объект ${index + 1}`);
