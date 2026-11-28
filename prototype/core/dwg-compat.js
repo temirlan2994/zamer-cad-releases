@@ -3,7 +3,7 @@ import { DwgObjectWriter, DwgReferenceType, DwgWriter } from "./vendor/acad-ts-3
 // acad-ts 3.9.0 writes a null annotation handle for LEADER even when its
 // associatedAnnotation is resolved. Repair only that pointer during a write;
 // keep the vendored bundle unchanged and restore its methods afterwards.
-export function writeDwgDocument(document) {
+export function writeDwgDocument(document, configuration = null, onNotification = null) {
   const prototype = DwgObjectWriter.prototype;
   const writeLeader = prototype._writeLeader;
   prototype._writeLeader = function(entity) {
@@ -20,6 +20,6 @@ export function writeDwgDocument(document) {
     try { return writeLeader.call(this, entity); }
     finally { stream.handleReferenceTyped = reference; }
   };
-  try { return DwgWriter.writeToBuffer(document); }
+  try { return DwgWriter.writeToBuffer(document, configuration, onNotification); }
   finally { prototype._writeLeader = writeLeader; }
 }

@@ -115,7 +115,8 @@ export function normalizeSurvey(value) {
       room.nextRecordNumber = Math.max(room.nextRecordNumber, entry.nextRecordNumber);
     }
     if (Array.isArray(entry.drawing?.entities)) {
-      room.drawing = { entities: entry.drawing.entities, view: entry.drawing.view, draft: entry.drawing.draft };
+      room.drawing = { entities: entry.drawing.entities, view: entry.drawing.view, draft: entry.drawing.draft,
+        ...(entry.drawing.cadSource ? { cadSource: entry.drawing.cadSource } : {}) };
     }
     rooms.push(room);
     roomIds.add(room.id);

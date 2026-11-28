@@ -1,3 +1,6 @@
+import { cadSourceBytes, validateCadSource } from "./cad-source.js";
+import { validStoredEntity } from "./project-format.js";
+
 function inputBytes(input) {
   if (typeof input === "string") return new TextEncoder().encode(input);
   if (input instanceof ArrayBuffer) return new Uint8Array(input);
@@ -5,12 +8,12 @@ function inputBytes(input) {
   throw new TypeError("Не удалось прочитать данные чертежа");
 }
 
-async function convert(operation, input) {
+async function convert(operation, input, options) {
   const bytes = inputBytes(input);
   if (!bytes.length) throw new Error("Файл чертежа пуст");
   if (typeof Worker === "undefined") {
     const { convertDwg } = await import("./dwg-worker.js");
-    return convertDwg(operation, bytes);
+    return convertDwg(operation, bytes, options);
   }
 
   return new Promise((resolve, reject) => {
@@ -32,7 +35,7 @@ async function convert(operation, input) {
     };
     worker.onerror = () => fail("Не удалось запустить обработку DWG");
     worker.onmessageerror = () => fail("Не удалось прочитать результат обработки DWG");
-    worker.postMessage({ operation, bytes: data }, [data.buffer]);
+    worker.postMessage({ operation, bytes: data, options }, [data.buffer]);
   });
 }
 
@@ -42,4 +45,11 @@ export function dxfToDwg(input) {
 
 export function dwgToDxf(input) {
   return convert("dwg-to-dxf", input);
+}
+
+export async function saveSourceDwg(source, drawing) {
+  validateCadSource(source, validStoredEntity);
+  const fields = ["entities", "customLineLayers", "layerStyles", "lockedLayers", "annotationScale", "measurementSettings"];
+  const current = Object.fromEntries(fields.filter(key => drawing[key] !== undefined).map(key => [key, drawing[key]]));
+  return convert("save-source-dwg", cadSourceBytes(source), { source: { ...source, data: undefined }, drawing: current });
 }

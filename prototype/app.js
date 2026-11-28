@@ -26,6 +26,7 @@ import { driveProjectStamp, googleAccountForToken, googleDriveProjects, syncDriv
 import { DEFAULT_LINE_LAYER, DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT, LINE_TYPE_VALUES, LINE_WEIGHT_VALUES, MAX_CUSTOM_LINE_LAYERS, MAX_LINE_LAYER_NAME_LENGTH, normalizeActiveLineLayer, normalizeLineLayerColor, normalizeLineLayerName, normalizeLineLayerSettings, normalizeLineType, normalizeLineWeight, resolveLineStyle } from "./core/line-layers.js";
 import { buildProjectPreview } from "./core/project-preview.js";
 import { projectStorageInfo } from "./core/project-storage.js";
+import { createCadSource, cadSourceBytes } from "./core/cad-source.js";
 import { describeSurveyRecord, measureSurveyContour, normalizeSurvey, normalizeSurveyRecord, surveyMarkers, surveyRoom } from "./core/survey.js";
 import { bindSurveyPanel } from "./core/survey-panel.js";
 import { createSurveyLaser } from "./core/survey-laser.js";
@@ -359,6 +360,7 @@ function apkCreateProject(body = {}, owner) {
     reusableBlocks: normalizeReusableBlocks(source.reusableBlocks),
 
     entities: Array.isArray(source.entities) ? source.entities : [],
+    ...(source.cadSource ? { cadSource: source.cadSource } : {}),
     thumbnail: source.thumbnail || null,
   };
 }
@@ -3034,14 +3036,28 @@ async function importProjectFileContent(file) {
   const cad = extension === "dwg" || extension === "dxf";
   let project;
   let skipped = 0;
+  let sourceWarning = "";
   if (cad) {
     showProjectMessage("Открываю чертёж…");
     let bytes = await file.arrayBuffer();
+    const original = bytes;
     if (extension === "dwg") {
       const { dwgToDxf } = await import("./core/dwg.js");
       bytes = await dwgToDxf(bytes);
     }
-    ({ project, skipped } = importDxf(bytes, fileName));
+    const imported = importDxf(bytes, fileName);
+    ({ project, skipped } = imported);
+    if (extension === "dwg") {
+      try {
+        project.cadSource = createCadSource(original, file.name, imported);
+        validateZamerProject(project);
+        if (new TextEncoder().encode(JSON.stringify(project)).length > MAX_ZAMER_FILE_BYTES - 65536) throw new Error("Исходник не помещается в проект");
+      } catch (error) {
+        delete project.cadSource;
+        sourceWarning = "Исходный DWG не удалось включить в проект. Будут импортированы только поддерживаемые объекты; при экспорте получится отдельная копия.";
+        console.warn("Cannot retain original DWG", error);
+      }
+    }
     project.theme = shell.dataset.theme;
   } else {
     try { project = JSON.parse((await file.text()).replace(/^\uFEFF/, "")); }
@@ -3053,8 +3069,9 @@ async function importProjectFileContent(file) {
     const name = await showProjectDialog({
       title: "Название импортируемого проекта", value: project.name || fileName, inputLabel: "Название проекта",
       confirmText: "Импортировать", message: [
-        "Это импорт в проект Замера. Полное сохранение исходного DWG/DXF при обратном экспорте пока не поддерживается.",
-        skipped ? `Пропущено объектов, которые Zamer не смог открыть — ${skipped}.` : "",
+        project.cadSource ? "Исходный DWG сохранится вместе с проектом. Экспорт DWG внесёт правки в исходную структуру с проверкой сохранности прочитанных данных. Совместимость с AutoCAD пока неполная." :
+          sourceWarning || "Это импорт в проект Замера. Полное сохранение исходного DWG/DXF при обратном экспорте пока не поддерживается.",
+        skipped ? `Не отображается объектов, которые Zamer не смог открыть — ${skipped}.` : "",
       ].filter(Boolean).join("\n"),
     });
     if (!name) return;
@@ -3140,6 +3157,7 @@ function serializableProjectContent() {
     ...(state.reusableBlocks.length ? { reusableBlocks: state.reusableBlocks } : {}),
 
     entities: JSON.parse(JSON.stringify(state.entities)),
+    ...(state.cadSource ? { cadSource: state.cadSource } : {}),
   };
 }
 
@@ -3209,6 +3227,7 @@ function restoreProject(project) {
   persistence.restoring = true;
   try {
     state.entities = restoredEntities;
+    state.cadSource = project.cadSource || null;
     state.quickMeasure = null;
     state.reusableBlocks = normalizeReusableBlocks(project.reusableBlocks);
     state.blockPlacement = null;
@@ -15595,6 +15614,12 @@ function dimensionExportNotes(entities) {
 }
 
 function syncExportOptions() {
+  const hasSource = Boolean(state.cadSource);
+  document.getElementById("exportOriginalCad").hidden = !hasSource;
+  document.getElementById("exportDwgCopy").hidden = !hasSource;
+  document.getElementById("exportSourceHint").hidden = !hasSource;
+  document.querySelector('[data-export="dwg"] span').textContent = hasSource
+    ? "правки в исходном чертеже" : "чертёж AutoCAD 2018 и новее";
   const details = exportDetails();
   const entities = selectedExportGeometry(state.entities, details, state.visibleLayers);
   const layers = new Set(entities.map((entity) => entity.layer || "measure"));
@@ -15722,7 +15747,10 @@ async function exportCurrentProject(type) {
     };
     const backup = () => JSON.stringify(project, null, 2);
     let file;
-    if (type === "zamer") {
+    if (type === "original-cad") {
+      if (!project.cadSource) throw new Error("В проекте нет исходного DWG");
+      file = await downloadFile(project.cadSource.name || `${name}-исходный.dwg`, cadSourceBytes(project.cadSource), "application/acad");
+    } else if (type === "zamer") {
       file = await downloadFile(`${name}-${stamp}.zamer`, backup(), "application/json");
     } else if (type === "pdf") {
       file = await downloadFile(`${planName}-${stamp}.pdf`, await pdf(), "application/pdf");
@@ -15735,10 +15763,11 @@ async function exportCurrentProject(type) {
         { name: `${name}.zamer`, data: backup() },
       ]);
       file = await downloadFile(`${planName}-${stamp}.zip`, bundle, "application/zip");
-    } else if (type === "dwg") {
-      const cad = dxf(false, true);
-      const { dxfToDwg } = await import("./core/dwg.js");
-      file = await downloadFile(`${planName}-${stamp}.dwg`, await dxfToDwg(cad), "application/acad");
+    } else if (type === "dwg" || type === "dwg-copy") {
+      const { dxfToDwg, saveSourceDwg } = await import("./core/dwg.js");
+      const preserving = type === "dwg" && project.cadSource;
+      const bytes = preserving ? await saveSourceDwg(project.cadSource, { ...project, entities: project.entities.filter(entity => entity.layer !== TRACE_LAYER) }) : await dxfToDwg(dxf(false, true));
+      file = await downloadFile(`${planName}${type === "dwg-copy" ? "-копия" : ""}-${stamp}.dwg`, bytes, "application/acad");
     } else {
       const isRevit = type === "revit-dxf";
       const suffix = isRevit ? "-revit-mm" : "";
@@ -17004,12 +17033,14 @@ function switchSurveyRoom(roomId) {
   const nextRoom = state.survey.rooms.find((room) => room.id === roomId);
   const previousRoom = activeSurveyRoom();
   if (!nextRoom || nextRoom === previousRoom) return;
-  previousRoom.drawing = { entities: state.entities, view: { ...state.view }, draft: acceptedSurveyDraft() };
+  previousRoom.drawing = { entities: state.entities, view: { ...state.view }, draft: acceptedSurveyDraft(),
+    ...(state.cadSource ? { cadSource: state.cadSource } : {}) };
   const drawing = nextRoom.drawing;
   state.drawing = null;
   setTool("select");
   setSelection(null);
   state.entities = (drawing?.entities || []).map(cloneProjectEntity).filter(Boolean);
+  state.cadSource = drawing?.cadSource || null;
   state.view = {
     scale: Number.isFinite(drawing?.view?.scale) ? clampScale(drawing.view.scale) : DEFAULT_VIEW_SCALE,
     panX: Number.isFinite(drawing?.view?.panX) ? drawing.view.panX : 92,

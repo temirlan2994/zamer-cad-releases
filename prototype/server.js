@@ -677,6 +677,7 @@ function defaultProjectPayload(client, body = {}) {
     survey: source.survey,
     draft: source.draft,
     reusableBlocks: normalizeReusableBlocks(source.reusableBlocks),
+    ...(source.cadSource ? { cadSource: source.cadSource } : {}),
     entities,
     thumbnail: source.thumbnail || null,
   };
