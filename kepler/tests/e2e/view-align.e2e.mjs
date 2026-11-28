@@ -37,6 +37,7 @@ describe('поворот вида', () => {
 
   it('угол вида «Плана» из поля: крутится камера, данные дома те же', async () => {
     const { page } = app;
+    await settleView(page);
     const s0 = await snap(page);
     await page.click('#viewBtn');
     await page.fill('#viewsAngleInput', '25');
@@ -45,7 +46,7 @@ describe('поворот вида', () => {
     const s1 = await snap(page);
     assert.equal(s1.angles?.plan, 25);
     assert.ok(Math.abs(s1.view + 25) < 0.01, `вид ${s1.view}`);
-    assert.equal(s1.data, s0.data, 'дом, комнаты и участок не изменились');
+    assert.deepEqual(JSON.parse(s1.data), JSON.parse(s0.data), 'дом, комнаты и участок не изменились');
     assert.equal(await page.$eval('#viewBtn', (n) => n.classList.contains('active')), true);
   });
 
