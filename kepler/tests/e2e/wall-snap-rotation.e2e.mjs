@@ -5,10 +5,14 @@ import assert from 'node:assert/strict';
 import { openNew, startApp, settleCanvas } from './helpers.mjs';
 
 async function planClient(page, point) {
-  const box = await page.locator('#canvas').boundingBox();
-  const p = await page.evaluate((point) => window.__kepler.planToScreen(point.x, point.y), point);
-  return { x: box.x + p.x, y: box.y + p.y };
+  await settleCanvas(page);
+  return page.evaluate((point) => {
+    const box = document.getElementById('canvas').getBoundingClientRect();
+    const p = window.__kepler.planToScreen(point.x, point.y);
+    return { x: box.x+p.x, y: box.y+p.y };
+  }, point);
 }
+
 const near = (a, b, label) => assert.ok(Math.abs(a - b) < 0.15, `${label}: ${a} / ${b}`);
 
 describe('привязки стены при повёрнутом доме и виде', () => {
@@ -79,8 +83,8 @@ describe('привязки стены при повёрнутом доме и в
       rotateViewTo(8 * Math.PI / 180); requestDraw();
     });
     await settleCanvas(page);
-    const start = await planClient(page, { x: 0, y: 0 });
     await page.keyboard.press('w');
+    const start = await planClient(page, { x: 0, y: 0 });
     await page.mouse.click(start.x, start.y);
     await page.mouse.move(start.x + 210, start.y + 30);
     let p = await page.evaluate(() => {
@@ -92,13 +96,18 @@ describe('привязки стены при повёрнутом доме и в
       const { snapSettings } = await import('./ui/draw-snap-ui.js');
       Object.assign(snapSettings(), { ortho: false, polar: true, polarStep: 45 });
     });
-    await page.mouse.move(start.x + 160, start.y - 159);
+    const anchor = await page.evaluate(() => ({ ...window.__kepler.state.tool.start }));
+    const origin = await planClient(page, anchor);
+    const box = await page.locator('#canvas').boundingBox();
+    const directionY = origin.y-159 < box.y+20 ? 1 : -1;
+    await page.mouse.move(origin.x + 160, origin.y + directionY*159);
     await settleCanvas(page);
     p = await page.evaluate(() => {
       const { tool } = window.__kepler.state;
       return [window.__kepler.planToScreen(tool.start.x, tool.start.y), window.__kepler.planToScreen(tool.cursor.x, tool.cursor.y)];
     });
-    near(p[1].x - p[0].x, p[0].y - p[1].y, 'полярка 45° на экране');
+    assert.ok(p[1].x-p[0].x > 150, 'указатель действительно переместился');
+    near(p[1].x-p[0].x, directionY*(p[1].y-p[0].y), 'полярка 45° на экране');
   });
 
   it('привязки к участку и точкам стены используют координаты дома', async () => {

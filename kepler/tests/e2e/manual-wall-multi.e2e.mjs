@@ -1,12 +1,16 @@
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew } from './helpers.mjs';
+import { startApp, openNew, settleCanvas } from './helpers.mjs';
 
 async function client(page, x, y) {
-  const box = await page.locator('#canvas').boundingBox();
-  const p = await page.evaluate(([x, y]) => window.__kepler.planToScreen(x, y), [x, y]);
-  return { x: box.x + p.x, y: box.y + p.y };
+  await settleCanvas(page);
+  return page.evaluate(([x, y]) => {
+    const box = document.getElementById('canvas').getBoundingClientRect();
+    const p = window.__kepler.planToScreen(x, y);
+    return { x: box.x+p.x, y: box.y+p.y };
+  }, [x, y]);
 }
+
 async function drag(page, a, b) {
   await page.mouse.move(a.x, a.y);
   await page.mouse.down();
