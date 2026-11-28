@@ -1,7 +1,8 @@
 // Проект как файл: новый, пример, открыть, сохранить, экспорт.
 
-import { buildProjectDxf, buildSitePlanDxf, buildStructuredExport } from '../core/export.js';
+import { buildProjectDxf, buildSitePlanDxf } from '../core/export.js';
 import { buildIfc } from '../core/ifc.js';
+import { ensureConcept } from '../core/concept-data.js';
 import { buildLandscapeCsv } from '../core/landscape-report.js';
 import { autoNumberGrids } from '../core/grid-axes.js';
 import { createProject, levelProject, serializeProject } from '../core/model.js';
@@ -21,7 +22,7 @@ import { buildCurrentSheetPng, buildSheetsPdf } from './sheet.js';
 import { state } from './state.js';
 import { GUEST_STORAGE_SCOPE, getStorageScope } from './storage-scope.js';
 import {
-  afterChange, flushAutosave, pushHistory, refreshDerived, restoreFrom, snapshotIfContent,
+  afterChange, flushAutosave, mutate, pushHistory, refreshDerived, restoreFrom, snapshotIfContent,
 } from './store.js';
 import { fitView } from './view.js';
 
@@ -56,6 +57,7 @@ function historyDownloadWarning({ partial }) {
 export function handleExport(kind) {
   refs.exportDropdown.hidden = true;
   document.getElementById('exportBtn').setAttribute('aria-expanded', 'false');
+  if (['project', 'json'].includes(kind) && !state.project.concept?.projectId) mutate(() => ensureConcept(state.project));
   if (kind === 'project') {
     const filename = `${safeFileName()}.kepler.json`;
     if (state.pid || state.project.fileHistoryId) toast('Собираем файл проекта с историей…');
@@ -65,8 +67,12 @@ export function handleExport(kind) {
       else toast(result.count ? `Файл проекта сохранён с историей · версий: ${result.count}` : 'Файл проекта сохраняется (.kepler.json)');
     }).catch((error) => toast(`Не удалось скачать файл: ${error.message}`, true));
   } else if (kind === 'json') {
-    download(`${safeFileName()}.export.json`, JSON.stringify(buildStructuredExport(state.project), null, 2), 'application/json');
-    toast('Структурированный JSON для Revit-плагина');
+    const project = state.project, filename = `${safeFileName()}.export.json`;
+    return import('../core/concept-handoff.js').then(async ({ buildConceptJson }) => {
+      const data = await buildConceptJson(project);
+      await download(filename, JSON.stringify(data, null, 2), 'application/json');
+      toast('JSON для Revit: модель, дополнительная геометрия и контрольная сумма');
+    }).catch((error) => toast(`Не удалось подготовить JSON: ${error.message}`, true));
   } else if (kind === 'dxf') {
     download(`${safeFileName()}.dxf`, buildProjectDxf(state.project), 'application/dxf');
     toast('DXF сохраняется');

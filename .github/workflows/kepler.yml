@@ -3,9 +3,9 @@ name: Kepler Plan
 on:
   push:
     branches: [main]
-    paths: ['kepler/**', 'shared/cad/**', '.github/workflows/kepler.yml']
+    paths: ['kepler/**', 'shared/cad/**', 'firestore.rules', 'firebase.review-test.json', '.github/workflows/kepler.yml']
   pull_request:
-    paths: ['kepler/**', 'shared/cad/**', '.github/workflows/kepler.yml']
+    paths: ['kepler/**', 'shared/cad/**', 'firestore.rules', 'firebase.review-test.json', '.github/workflows/kepler.yml']
   workflow_dispatch:
 
 permissions:
@@ -71,3 +71,57 @@ jobs:
 
       - name: e2e (Playwright)
         run: node --test --test-concurrency=1 --test-shard=${{ matrix.shard }}/4 tests/e2e/*.e2e.mjs
+
+  revit:
+    name: Revit API ${{ matrix.version }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [2025, 2026]
+    defaults:
+      run:
+        working-directory: kepler/revit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Сборка надстройки
+        run: dotnet build -c Release -p:RevitVersion=${{ matrix.version }}
+      - name: Установочные файлы для приёмки в Revit
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kepler-Revit-${{ matrix.version }}
+          if-no-files-found: error
+          path: |
+            kepler/revit/bin/Release/net8.0-windows/KeplerRevit.dll
+            kepler/revit/KeplerImport.addin
+            kepler/revit/README.md
+
+  review-rules:
+    name: Firestore review permissions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: kepler
+    env:
+      KEPLER_FIREBASE_TEST_ROOT: /tmp/kepler-review-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Зависимости интеграционного теста
+        run: npm install --prefix "$KEPLER_FIREBASE_TEST_ROOT" firebase-tools@15.37.0 @firebase/rules-unit-testing@6.0.0 firebase@13.4.0
+      - name: Изоляция снимков, неизменяемость, ответы и отзыв
+        run: >-
+          "$KEPLER_FIREBASE_TEST_ROOT/node_modules/.bin/firebase" emulators:exec
+          --project demo-kepler-concept --only firestore --config ../firebase.review-test.json
+          "node --test tests/integration/review-sharing.emulator.mjs"

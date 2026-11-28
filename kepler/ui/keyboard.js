@@ -106,6 +106,7 @@ export function bindKeyboard() {
     if (btn && event.detail > 0 && document.activeElement === btn) btn.blur();
   });
   window.addEventListener('keydown', (event) => {
+    if (document.querySelector('#conceptDialog[open]')) return;
     if (state.editLocked && !event.target?.closest?.('#editLockScreen')) return;
     // Модальный световой отчёт — снимок проекта. Пока он открыт, даже
     // Ctrl+Z/Y не должны менять модель под уже рассчитанной таблицей.

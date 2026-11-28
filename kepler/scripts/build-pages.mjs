@@ -8,7 +8,10 @@ const developmentFiles = new Set(['node_modules', 'dist', 'tests']);
 rmSync(output, { recursive: true, force: true });
 cpSync(ROOT, output, {
   recursive: true,
-  filter: (source) => !developmentFiles.has(relative(ROOT, source).split(sep)[0]),
+  filter: (source) => {
+    const parts = relative(ROOT, source).split(sep);
+    return !developmentFiles.has(parts[0]) && !(parts[0] === 'revit' && ['bin', 'obj'].includes(parts[1]));
+  },
 });
 
 for (const file of pwaFiles()) {

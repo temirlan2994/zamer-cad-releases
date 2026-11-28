@@ -496,6 +496,16 @@ function requestRender() {
   requestAnimationFrame(render);
 }
 
+// Нижняя палитра закреплена к окну браузера, подсказка — к 3D-холсту.
+// Учитываем реальные боковые панели, чтобы их центры совпадали.
+function alignRouteTo3d() {
+  if (!active) return;
+  const route = el('projectRoute');
+  const rect = el('view3d').getBoundingClientRect();
+  route?.style.setProperty('--v3-route-left', `${rect.left + 12}px`);
+  route?.style.setProperty('--v3-route-right', `${window.innerWidth - rect.right + 12}px`);
+}
+
 function houseBounds() {
   const isHouse = (face) => ['wall', 'floor', 'mass', 'roof'].includes(face.kind);
   const subjects = faces.some(isHouse) ? isHouse : (face) => face.kind !== 'ground';
@@ -1039,6 +1049,7 @@ export function open3d() {
   el('view3d').hidden = false;
   document.body.classList.add('v3-open');
   syncLibraryOpen();
+  alignRouteTo3d();
   el('view3dBtn')?.classList.add('active');
   syncReliefControl();
   resetMassTool();
@@ -2156,7 +2167,10 @@ export function bind3d() {
     else updateHover(e); // камера изменилась — заново проверяем cutter под курсором
     requestRender();
   }, { passive: false });
-  new ResizeObserver(() => requestRender()).observe(canvas);
+  new ResizeObserver(() => {
+    alignRouteTo3d();
+    requestRender();
+  }).observe(canvas);
 }
 
 // Подпись у курсора (размеры массы при создании и правке).

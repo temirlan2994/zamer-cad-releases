@@ -4,7 +4,7 @@ import { syncFacadeHosts } from '../core/facade.js';
 import { normsReport } from '../core/norms.js';
 import { itemsInRoom } from '../core/furnish.js';
 import {
-  deserializeProject, hasContent, levelBelow, levelProject, projectFromData, serializeProject,
+  attachLevelAccessors, deserializeProject, hasContent, levelBelow, levelProject, projectFromData, serializeProject,
 } from '../core/model.js';
 import { hashText, newId } from '../core/storage.js';
 import { deriveWalls, doorLink, wallRects } from '../core/walls.js';
@@ -292,6 +292,8 @@ export function reflowLayoutChanges(beforeText, { roomIds = [], force = false } 
 export function mutate(fn, { arrange = [], skipHistory = false, reconcile = true } = {}) {
   if (state.editLocked) return false;
   const before = snapshot();
+  const selection = state.selection;
+  try {
   fn();
   if (state.project) captureGroundReference(state.project);
   // Лестница «ведёт на этаж»: подъём — по отметкам этажей (core/slab-openings.js).
@@ -303,6 +305,14 @@ export function mutate(fn, { arrange = [], skipHistory = false, reconcile = true
   if (reconcile && state.project) reconcileEats(state.project);
   refreshDerived();
   reflowLayoutChanges(before, { roomIds: arrange, force: arrange.length > 0 });
+  } catch (error) {
+    // Неуспешная команда не оставляет половину изменений и не добавляется
+    // в историю. Восстановление проходит тем же путём, что обычный Undo.
+    restoreFrom(before, { trustedSnapshot: true, notify: false });
+    state.selection = selection;
+    renderProps(); renderSelectionToolbar(); refresh3d(); requestDraw();
+    throw error;
+  }
   if (!skipHistory) pushHistory(before);
   afterChange();
   return true;
@@ -631,8 +641,12 @@ export function discardAutosave() {
 // Замена проекта текстом или результатом JSON.parse, переданным во владение.
 // Сначала разбираем и считаем стены, затем меняем текущий проект.
 // Ошибка после замены откатывает редактор к прежнему проекту.
-export function restoreFrom(source) {
-  const project = typeof source === 'string' ? parseProjectText(source) : projectFromData(source, { copy: false });
+export function restoreFrom(source, { trustedSnapshot = false, notify = true } = {}) {
+  // Внутренний снимок уже корректен. При откате не добавляем значения
+  // миграции: неуспешная команда должна вернуть ровно прежние данные.
+  const project = trustedSnapshot
+    ? attachLevelAccessors(JSON.parse(source, (_key, value) => typeof value === 'string' && value.startsWith(MEM_REF) ? heavyById.get(value.slice(MEM_REF.length)) ?? null : value))
+    : typeof source === 'string' ? parseProjectText(source) : projectFromData(source, { copy: false });
   const derived = deriveAll(project);
   const prev = {
     project: state.project,
@@ -686,7 +700,7 @@ export function restoreFrom(source) {
   state.layoutVariants.clear();
   try {
     applyModeRotation();
-    afterChange();
+    if (notify) afterChange();
   } catch (error) {
     state.project = prev.project;
     state.selection = prev.selection;

@@ -69,12 +69,30 @@ export function pageAssets(html) {
   return [...html.matchAll(/\s(?:src|href)="\.\/([^"]+)"/g)].map((m) => m[1]);
 }
 
+// Каждая самостоятельная страница имеет собственную точку входа.
+export function applicationPages(root = ROOT) {
+  return ['index.html', 'review.html'].filter((page) => existsSync(join(root, page)));
+}
+
+export function applicationModuleGraph(root = ROOT) {
+  const files = new Set();
+  for (const page of applicationPages(root)) {
+    const html = readFileSync(join(root, page), 'utf8');
+    for (const entry of pageAssets(html).filter((asset) => asset.endsWith('.js'))) {
+      for (const file of moduleGraph(entry, root)) files.add(file);
+    }
+  }
+  return [...files].sort();
+}
+
 export function buildArtifact(outDir, root = ROOT) {
   const html = readFileSync(join(root, 'index.html'), 'utf8');
-  const assets = pageAssets(html);
-  const scripts = assets.filter((a) => a.endsWith('.js'));
-  const files = new Set(assets.filter((a) => !a.endsWith('.js')));
-  for (const entry of scripts) for (const f of moduleGraph(entry, root)) files.add(f);
+  const pages = applicationPages(root);
+  const files = new Set(pages);
+  for (const page of pages) {
+    for (const asset of pageAssets(readFileSync(join(root, page), 'utf8'))) files.add(asset);
+  }
+  for (const file of applicationModuleGraph(root)) files.add(file);
   // Иконки перечислены внутри manifest, а service worker не является import.
   for (const manifest of [...files].filter((f) => /\.webmanifest$/i.test(f))) {
     const data = JSON.parse(readFileSync(join(root, manifest), 'utf8'));

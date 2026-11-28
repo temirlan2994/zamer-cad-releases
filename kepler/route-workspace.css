@@ -134,6 +134,13 @@
   box-shadow: 0 10px 32px rgb(15 26 35 / .18); backdrop-filter: blur(14px);
   pointer-events: auto;
 }
+@media (min-width: 641px) {
+  body.v3-open #projectRoute {
+    left: var(--v3-route-left, 12px);
+    right: var(--v3-route-right, 12px);
+  }
+  body.v3-open #projectRoute .project-route-bar { max-width: 100%; }
+}
 /* Этапы сжимаются и листаются вбок: на узком телефоне девять кнопок не
    влезают в палитру, и без min-width: 0 последние уходили за край экрана. */
 #projectRoute .project-route-steps {

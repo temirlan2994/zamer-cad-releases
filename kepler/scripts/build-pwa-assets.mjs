@@ -8,15 +8,17 @@ import {
 } from 'node:fs';
 import { join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ROOT, assetSource, moduleGraph, pageAssets } from './build-artifact.mjs';
+import { ROOT, assetSource, applicationPages, applicationModuleGraph, pageAssets } from './build-artifact.mjs';
 
 const clean = (path) => posix.normalize(String(path).replace(/^\.\//, ''));
 
 export function pwaFiles(root = ROOT) {
-  const html = readFileSync(join(root, 'index.html'), 'utf8');
-  const files = new Set(['index.html', 'sw.js', 'pwa-assets.js']);
-  for (const asset of pageAssets(html)) files.add(clean(asset));
-  for (const file of moduleGraph('app.js', root)) files.add(clean(file));
+  const pages = applicationPages(root);
+  const files = new Set([...pages, 'sw.js', 'pwa-assets.js']);
+  for (const page of pages) {
+    for (const asset of pageAssets(readFileSync(join(root, page), 'utf8'))) files.add(clean(asset));
+  }
+  for (const file of applicationModuleGraph(root)) files.add(clean(file));
   for (const manifest of [...files].filter((file) => /\.webmanifest$/i.test(file))) {
     const data = JSON.parse(readFileSync(join(root, manifest), 'utf8'));
     for (const icon of data.icons || []) {

@@ -284,6 +284,74 @@ service cloud.firestore {
       }
     }
 
+    // Согласование: адрес содержит случайные 256 бит. Общего списка нет;
+    // посетитель читает только неизменяемый готовый снимок до срока/отзыва.
+    match /conceptReviews/{reviewId} {
+      function reviewOwner() { return signedIn() && resource.data.ownerUid == request.auth.uid; }
+      function publicReview(data) { return data.ready == true && data.revoked == false && data.expiresAt > request.time; }
+      function validReview() {
+        let d = request.resource.data;
+        return reviewId.matches('^[a-f0-9]{64}$')
+          && d.keys().hasOnly(['schema','ownerUid','createdAt','expiresAt','revoked','ready','digest','snapshotId','parts','bytes','title'])
+          && d.keys().hasAll(['schema','ownerUid','createdAt','expiresAt','revoked','ready','digest','snapshotId','parts','bytes','title'])
+          && d.schema == 1 && d.ownerUid == request.auth.uid && d.createdAt == request.time
+          && d.expiresAt is timestamp && d.expiresAt > request.time && d.expiresAt <= request.time + duration.value(30, 'd')
+          && d.revoked == false && d.ready == false
+          && d.digest is string && d.digest.matches('^[a-f0-9]{64}$')
+          && d.snapshotId is string && d.snapshotId.size() <= 100
+          && d.parts is int && d.parts > 0 && d.parts <= 160
+          && d.bytes is int && d.bytes > 0 && d.bytes <= 25165824
+          && d.title is string && d.title.size() <= 200;
+      }
+      allow get: if reviewOwner() || publicReview(resource.data);
+      allow list: if false;
+      allow create: if signedIn() && validReview();
+      allow update: if reviewOwner()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ready','revoked'])
+        && request.resource.data.ready is bool && request.resource.data.revoked is bool
+        && (resource.data.ready == false || request.resource.data.ready == true)
+        && (resource.data.revoked == false || request.resource.data.revoked == true);
+      allow delete: if reviewOwner() && resource.data.revoked == true;
+
+      match /parts/{partId} {
+        function parentReview() { return get(/databases/$(database)/documents/conceptReviews/$(reviewId)).data; }
+        function owner() { return signedIn() && parentReview().ownerUid == request.auth.uid; }
+        allow get: if owner() || publicReview(parentReview());
+        allow list: if false;
+        allow create: if owner() && parentReview().ready == false && parentReview().revoked == false
+          && request.resource.data.keys().hasOnly(['text','index'])
+          && request.resource.data.index is int && request.resource.data.index >= 0 && request.resource.data.index < parentReview().parts
+          && partId == string(request.resource.data.index)
+          && request.resource.data.text is string && request.resource.data.text.size() <= 180000;
+        allow update: if false;
+        allow delete: if owner() && parentReview().revoked == true;
+      }
+      match /responses/{responseId} {
+        function parentReview() { return get(/databases/$(database)/documents/conceptReviews/$(reviewId)).data; }
+        function owner() { return signedIn() && parentReview().ownerUid == request.auth.uid; }
+        function validResponse() {
+          let envelope = request.resource.data;
+          let d = envelope.response;
+          return envelope.keys().hasOnly(['response','authorUid','receivedAt'])
+            && envelope.authorUid == request.auth.uid && envelope.receivedAt == request.time
+            && d is map && d.keys().hasOnly(['schema','id','snapshotId','digest','author','action','message','createdAt','point','target'])
+            && d.keys().hasAll(['schema','id','snapshotId','digest','author','action','message','createdAt','point','target'])
+            && d.schema == 'kepler-review-response/1' && d.id == responseId
+            && d.snapshotId == parentReview().snapshotId && d.digest == parentReview().digest
+            && d.author is string && d.author.size() > 0 && d.author.size() <= 120
+            && d.action in ['comment','approve','revise']
+            && d.message is string && d.message.size() <= 4000
+            && (d.action == 'approve' || d.message.size() > 0)
+            && d.createdAt is string && d.createdAt.size() <= 40
+            && (d.point == null || (d.point is map && d.point.keys().hasOnly(['x','y','z']) && d.point.x is number && d.point.y is number && d.point.z is number))
+            && (d.target == null || (d.target is map && d.target.keys().hasOnly(['id','type','levelId']) && d.target.id is string && d.target.id.size() <= 200 && d.target.type is string && d.target.type.size() <= 40 && d.target.levelId is string && d.target.levelId.size() <= 100));
+        }
+        allow get, list: if owner();
+        allow create: if signedIn() && publicReview(parentReview()) && validResponse();
+        allow update, delete: if false;
+      }
+    }
+
     // Глобальные публикации намеренно выключены для Firebase: задача этого
     // backend — только личные файлы. Это исключает чтение недоверенных
     // проектов и расход общей квоты чужими публикациями.

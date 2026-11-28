@@ -124,7 +124,9 @@ describe('ландшафт: подпорная стенка и отметки у
     await page.evaluate(() => window.__kepler.select({ type: 'landscape', ids: ['pv'] }));
     await setField(page, '#lsElev', 750);
     const raised = (await objects(page)).find((o) => o.id === stair.id);
-    assert.deepEqual([raised.elevTo, raised.height, raised.h, raised.y - raised.h / 2], [750, 750, 1500, -500]);
+    assert.deepEqual([raised.elevTo, raised.height, raised.h, raised.y - raised.h / 2], [750, 750, 900, -500]);
+    assert.ok(raised.height / raised.meta.steps <= 200, 'подступенок остаётся допустимым при сохранении концов лестницы');
+    assert.ok(raised.meta.tread >= 200, 'проступь не сжимается ниже предела');
     await setField(page, '#lsElev', 450);
   });
 
@@ -148,7 +150,7 @@ describe('ландшафт: подпорная стенка и отметки у
     const { page } = app;
     const top = await page.evaluate(async () => {
       const M = await import('./core/mesh3d-landscape.js');
-      const f = M.landscapeFaces(window.__kepler.state.project);
+      const f = M.landscapeFaces(window.__kepler.state.project).filter((face) => face.landscapeKind === 'retaining-wall');
       return Math.max(...f.flatMap((x) => x.pts.map((q) => q.z)));
     });
     assert.equal(top, 1500 + 60, 'стенка 1500 + капа 60');

@@ -8,6 +8,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
+using System.Text;
+using System.Security.Cryptography;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
 using Autodesk.Revit.DB.Structure;
@@ -18,8 +21,11 @@ namespace Kepler.Revit
     {
         private readonly Document _doc;
         private readonly ImportReport _report;
-        private readonly Dictionary<long, WallType> _wallTypes = new();
+        private readonly Dictionary<string, WallType> _wallTypes = new();
         private readonly Dictionary<string, FamilySymbol> _symbols = new();
+        private SourceTracking _source = null!;
+        private bool _synchronize;
+        private List<WallLayerDto> _layers = new();
 
         public KeplerImporter(Document doc, ImportReport report)
         {
@@ -32,30 +38,47 @@ namespace Kepler.Revit
         // Точка плана Kepler → точка Revit (Y меняет знак).
         private static XYZ P(Pt p, double z = 0) => new XYZ(Mm(p.X), Mm(-p.Y), z);
 
-        public void Import(KeplerExport model)
+        public void Import(KeplerExport model, bool synchronize = true)
         {
+            _synchronize = synchronize;
+            _layers = model.Concept?.Construction?.Config?.Layers ?? new();
+            var identity = !string.IsNullOrWhiteSpace(model.Concept?.ProjectId) ? model.Concept.ProjectId : $"legacy:{model.Name}";
+            if (!synchronize) identity += ":" + Guid.NewGuid().ToString("N");
+            _source = new SourceTracking(_doc, identity);
             foreach (var dto in model.Levels.OrderBy(l => l.Elevation))
             {
                 var level = FindOrCreateLevel(dto);
                 var hosts = new List<(WallDto Dto, Wall Wall)>();
                 foreach (var w in dto.Walls)
                 {
-                    var wall = CreateWall(w.From, w.To, w.Thickness, level, dto.Height, w.Type == "bearing");
+                    var wall = CreateWall($"wall/{dto.Id}/{w.Id}", w.From, w.To, w.Thickness, level, w.Height ?? dto.Height, w.Type != "partition", w.BaseOffset, w.Type == "exterior");
                     if (wall != null) hosts.Add((w, wall));
                 }
-                foreach (var fw in dto.FreeWalls) CreateWall(fw.From, fw.To, fw.Thickness, level, dto.Height, false);
+                foreach (var fw in dto.FreeWalls) CreateWall($"free-wall/{dto.Id}/{fw.Id}", fw.From, fw.To, fw.Thickness, level, dto.Height, false);
                 _doc.Regenerate();
-                foreach (var o in dto.Openings) PlaceOpening(o, hosts, level);
-                foreach (var c in dto.Columns) PlaceColumn(c, level);
+                foreach (var o in dto.Openings) PlaceOpening(o, hosts, level, dto.Id);
+                foreach (var c in dto.Columns) PlaceColumn(c, level, dto.Id);
                 _doc.Regenerate();
-                foreach (var r in dto.Rooms) PlaceRoom(r, level);
+                foreach (var r in dto.Rooms) PlaceRoom(r, level, dto.Id);
             }
+            foreach (var shape in model.ConceptGeometry) PlaceConceptGeometry(shape);
+            if (!model.ConceptGeometry.Any()) _report.Warn("Дополнительной геометрии нет: используйте JSON из «Комплекта передачи» для кровли, плит, лестниц и мебели");
+            if (_synchronize) _source.RemoveMissing(_report, model.Concept?.GeometryComplete == true);
             SetTrueNorth(model.Building);
         }
 
         private Level FindOrCreateLevel(LevelDto dto)
         {
             var elevation = Mm(dto.Elevation);
+            var sourceKey = $"level/{dto.Id}";
+            var own = _source.Find<Level>(sourceKey);
+            _source.Find<ViewPlan>($"plan/{dto.Id}");
+            if (own != null)
+            {
+                if (Math.Abs(own.Elevation-elevation) > Mm(.1)) { own.Elevation = elevation; _report.Updated++; }
+                _source.Track(own, sourceKey, new { dto.Elevation, dto.Name });
+                return own;
+            }
             var existing = new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>()
                 .FirstOrDefault(l => Math.Abs(l.Elevation - elevation) < Mm(1));
             if (existing != null) return existing;
@@ -69,27 +92,33 @@ namespace Kepler.Revit
             // План этажа, чтобы уровень сразу был виден в диспетчере проекта.
             var planType = new FilteredElementCollector(_doc).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>()
                 .FirstOrDefault(t => t.ViewFamily == ViewFamily.FloorPlan);
-            if (planType != null) ViewPlan.Create(_doc, planType.Id, level.Id);
+            if (planType != null) _source.Track(ViewPlan.Create(_doc, planType.Id, level.Id), $"plan/{dto.Id}", new { dto.Id });
+            _source.Track(level, sourceKey, new { dto.Elevation, dto.Name });
             _report.Levels++;
             return level;
         }
 
-        private WallType? WallTypeFor(double thickness)
+        private WallType? WallTypeFor(double thickness, bool exterior)
         {
-            var key = (long)Math.Round(thickness);
+            var layered = exterior && _layers.Count > 0 && Math.Abs(_layers.Sum(layer=>layer.Thickness)-thickness)<1;
+            var key = Math.Round(thickness).ToString()+(layered?":"+JsonSerializer.Serialize(_layers):"");
             if (_wallTypes.TryGetValue(key, out var cached)) return cached;
             var basic = new FilteredElementCollector(_doc).OfClass(typeof(WallType)).Cast<WallType>()
                 .Where(t => t.Kind == WallKind.Basic).ToList();
-            var match = basic.FirstOrDefault(t => Math.Abs(t.Width - Mm(thickness)) < Mm(1));
+            var match = !layered ? basic.FirstOrDefault(t => Math.Abs(t.Width - Mm(thickness)) < Mm(1)) : null;
             if (match == null && basic.Count > 0)
             {
-                var name = $"Kepler {key} мм";
+                var suffix = layered ? " " + string.Join("+",_layers.Select(layer=>layer.Material)) : "";
+                var name = $"Kepler {Math.Round(thickness)} мм{suffix}";
+                foreach(var invalid in new[]{"{","}","[","]","|",";","<",">","?"}) name=name.Replace(invalid,"_");
+                if(name.Length>160)name=name.Substring(0,160);
+                if(layered)name+=" "+Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).Substring(0,12);
                 match = basic.FirstOrDefault(t => t.Name == name);
                 if (match == null)
                 {
                     match = (WallType)basic[0].Duplicate(name);
-                    var cs = CompoundStructure.CreateSingleLayerCompoundStructure(
-                        MaterialFunctionAssignment.Structure, Mm(thickness), ElementId.InvalidElementId);
+                    var cs = layered ? CompoundStructure.CreateSimpleCompoundStructure(_layers.Select(layer=>new CompoundStructureLayer(Mm(layer.Thickness),layer.Bearing?MaterialFunctionAssignment.Structure:MaterialFunctionAssignment.Finish1,MaterialFor(layer.Material))).ToList())
+                        : CompoundStructure.CreateSingleLayerCompoundStructure(MaterialFunctionAssignment.Structure, Mm(thickness), ElementId.InvalidElementId);
                     match.SetCompoundStructure(cs);
                 }
             }
@@ -97,19 +126,44 @@ namespace Kepler.Revit
             return match;
         }
 
-        private Wall? CreateWall(Pt from, Pt to, double thickness, Level level, double height, bool bearing)
+        private ElementId MaterialFor(string name)
         {
-            var a = P(from, level.Elevation);
-            var b = P(to, level.Elevation);
+            foreach(var invalid in new[]{"{","}","[","]","|",";","<",">","?",":"}) name=name.Replace(invalid,"_");
+            if(string.IsNullOrWhiteSpace(name))name="Kepler материал";
+            var material=new FilteredElementCollector(_doc).OfClass(typeof(Material)).Cast<Material>().FirstOrDefault(m=>m.Name==name);
+            if(material!=null)return material.Id;
+            return Material.Create(_doc,name);
+        }
+
+        private Wall? CreateWall(string sourceKey, Pt from, Pt to, double thickness, Level level, double height, bool bearing, double baseOffset = 0, bool exterior = false)
+        {
+            var a = P(from, level.Elevation + Mm(baseOffset));
+            var b = P(to, level.Elevation + Mm(baseOffset));
             if (a.DistanceTo(b) < Mm(10)) return null;
-            var type = WallTypeFor(thickness);
+            var type = WallTypeFor(thickness,exterior);
             if (type == null)
             {
                 _report.Warn("В проекте нет базовых типов стен — стены не созданы");
                 return null;
             }
-            var wall = Wall.Create(_doc, Line.CreateBound(a, b), type.Id, level.Id, Mm(height), 0, false, bearing);
-            _report.Walls++;
+            var fingerprint = new { from, to, thickness, height, bearing, baseOffset, level = level.UniqueId, type = type.UniqueId };
+            var wall = _source.Find<Wall>(sourceKey);
+            if (wall != null && _source.Unchanged(wall, fingerprint)) { _report.Unchanged++; return wall; }
+            if (wall == null)
+            {
+                wall = Wall.Create(_doc, Line.CreateBound(a, b), type.Id, level.Id, Mm(height), Mm(baseOffset), false, bearing);
+                _report.Walls++;
+            }
+            else
+            {
+                wall.ChangeTypeId(type.Id);
+                if (wall.Location is LocationCurve curve) curve.Curve = Line.CreateBound(a,b);
+                wall.get_Parameter(BuiltInParameter.WALL_BASE_CONSTRAINT)?.Set(level.Id);
+                wall.get_Parameter(BuiltInParameter.WALL_BASE_OFFSET)?.Set(Mm(baseOffset));
+                wall.get_Parameter(BuiltInParameter.WALL_USER_HEIGHT_PARAM)?.Set(Mm(height));
+                _report.Updated++;
+            }
+            _source.Track(wall, sourceKey, fingerprint);
             return wall;
         }
 
@@ -167,23 +221,42 @@ namespace Kepler.Revit
             return symbol;
         }
 
-        private void PlaceOpening(OpeningDto o, List<(WallDto Dto, Wall Wall)> hosts, Level level)
+        private void PlaceOpening(OpeningDto o, List<(WallDto Dto, Wall Wall)> hosts, Level level, string levelKey)
         {
             var isDoor = o.Kind == "door";
-            if (isDoor && o.Type == "none") return; // проём без двери — просто разрыв
             var host = HostFor(o, hosts);
             if (host == null || o.Center == null)
             {
                 _report.Warn($"{(isDoor ? "Дверь" : "Окно")} {o.Id}: не найдена стена-хозяин");
                 return;
             }
-            var symbol = SymbolFor(isDoor ? BuiltInCategory.OST_Doors : BuiltInCategory.OST_Windows, o.Width, o.Height);
+            var sourceKey = $"opening/{levelKey}/{o.Id}/{o.Part}/{o.WallKey}";
+            var fingerprint = new { o, level = level.UniqueId, host = host.UniqueId };
+            if (o.Part == "upper" || isDoor && o.Type == "none")
+            {
+                var old = _source.Find<Opening>(sourceKey);
+                if (old != null && _source.Unchanged(old, fingerprint)) { _report.Unchanged++; return; }
+                if (old != null) _doc.Delete(old.Id);
+                var tangent = ((LocationCurve)host.Location).Curve.ComputeDerivatives(.5,true).BasisX.Normalize();
+                var center = P(o.Center,level.Elevation+Mm(o.Sill));
+                var cut = _doc.Create.NewOpening(host, center-tangent*Mm(o.Width/2), center+tangent*Mm(o.Width/2)+XYZ.BasisZ*Mm(o.Height));
+                _source.Track(cut,sourceKey,fingerprint); _report.Voids++; return;
+            }
+            var fullHeight = o.Part == "lower" && o.SpanTop.HasValue ? o.SpanTop.Value-o.Sill : o.Height;
+            var symbol = SymbolFor(isDoor ? BuiltInCategory.OST_Doors : BuiltInCategory.OST_Windows, o.Width, fullHeight);
             if (symbol == null)
             {
                 _report.Warn($"В проекте нет семейств {(isDoor ? "дверей" : "окон")} — загрузите их и повторите импорт");
                 return;
             }
-            var instance = _doc.Create.NewFamilyInstance(P(o.Center, level.Elevation), symbol, host, level, StructuralType.NonStructural);
+            var instance = _source.Find<FamilyInstance>(sourceKey);
+            if (instance != null && _source.Unchanged(instance,fingerprint)) { _report.Unchanged++; return; }
+            if (instance != null && instance.Host?.Id != host.Id)
+            {
+                _report.Warn($"Проём {o.Id}: стена-хозяин изменилась. Перенесите экземпляр в Revit и повторите обновление."); return;
+            }
+            if (instance == null) instance = _doc.Create.NewFamilyInstance(P(o.Center, level.Elevation), symbol, host, level, StructuralType.NonStructural);
+            else { instance.Symbol=symbol; if (instance.Location is LocationPoint location) location.Point=P(o.Center,level.Elevation+Mm(o.Sill)); _report.Updated++; }
             if (!isDoor)
             {
                 var sill = instance.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
@@ -194,9 +267,15 @@ namespace Kepler.Revit
             {
                 _report.Doors++;
             }
+            if (isDoor)
+            {
+                if (o.HingeStart.HasValue && instance.CanFlipHand && instance.HandFlipped != !o.HingeStart.Value) instance.flipHand();
+                if (o.SwingIn.HasValue && instance.CanFlipFacing && instance.FacingFlipped != !o.SwingIn.Value) instance.flipFacing();
+            }
+            _source.Track(instance,sourceKey,fingerprint);
         }
 
-        private void PlaceColumn(ColumnDto c, Level level)
+        private void PlaceColumn(ColumnDto c, Level level, string levelKey)
         {
             var symbol = new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(BuiltInCategory.OST_Columns)
                 .Cast<FamilySymbol>().FirstOrDefault();
@@ -207,22 +286,34 @@ namespace Kepler.Revit
             }
             if (!symbol.IsActive) symbol.Activate();
             var point = P(c.Center, level.Elevation);
-            var instance = _doc.Create.NewFamilyInstance(point, symbol, level, StructuralType.NonStructural);
-            if (Math.Abs(c.RotationDeg) > 0.01)
+            var sourceKey=$"column/{levelKey}/{c.Id}";
+            var fingerprint=new { c, level=level.UniqueId };
+            var instance=_source.Find<FamilyInstance>(sourceKey);
+            if(instance!=null && _source.Unchanged(instance,fingerprint)){_report.Unchanged++;return;}
+            if(instance==null) instance = _doc.Create.NewFamilyInstance(point, symbol, level, StructuralType.NonStructural);
+            else { if(instance.Location is LocationPoint lp) lp.Point=point; _report.Updated++; }
+            if (instance.Location is LocationPoint)
             {
                 // По часовой на плане Kepler = против часовой в Revit.
                 var axis = Line.CreateBound(point, point + XYZ.BasisZ);
-                ElementTransformUtils.RotateElement(_doc, instance.Id, axis, -c.RotationDeg * Math.PI / 180);
+                var current = instance.Location is LocationPoint lp ? lp.Rotation : 0;
+                ElementTransformUtils.RotateElement(_doc, instance.Id, axis, -c.RotationDeg * Math.PI / 180-current);
             }
             _report.Columns++;
+            _source.Track(instance,sourceKey,fingerprint);
         }
 
-        private void PlaceRoom(RoomDto r, Level level)
+        private void PlaceRoom(RoomDto r, Level level, string levelKey)
         {
-            if (r.Polygon.Count == 0) return;
-            var cx = r.Polygon.Average(p => p.X);
-            var cy = r.Polygon.Average(p => p.Y);
-            var room = _doc.Create.NewRoom(level, new UV(Mm(cx), Mm(-cy)));
+            if (r.Void || r.Polygon.Count == 0) return;
+            var cx = r.LabelPoint?.X ?? r.Polygon.Average(p => p.X);
+            var cy = r.LabelPoint?.Y ?? r.Polygon.Average(p => p.Y);
+            var sourceKey=$"room/{levelKey}/{r.Id}";
+            var fingerprint=JsonSerializer.Serialize(new {r, level=level.UniqueId});
+            var room = _source.Find<Room>(sourceKey);
+            if(room!=null && _source.Unchanged(room,fingerprint)){_report.Unchanged++;return;}
+            if(room==null) room = _doc.Create.NewRoom(level, new UV(Mm(cx), Mm(-cy)));
+            else if(room.Location is LocationPoint location) { location.Move(new XYZ(Mm(cx),Mm(-cy),level.Elevation)-location.Point); _report.Updated++; }
             if (room == null)
             {
                 _report.Warn($"Помещение «{r.Name}»: не удалось создать");
@@ -236,6 +327,40 @@ namespace Kepler.Revit
             var top = room.get_Parameter(BuiltInParameter.ROOM_UPPER_OFFSET);
             if (top != null && !top.IsReadOnly && r.CeilingHeight > 0) top.Set(Mm(r.CeilingHeight));
             _report.Rooms++;
+            _source.Track(room,sourceKey,fingerprint);
+        }
+
+        private void PlaceConceptGeometry(ConceptGeometryDto dto)
+        {
+            var sourceKey=$"geometry/{dto.Id}";
+            var existing=_source.Find<DirectShape>(sourceKey);
+            if(existing!=null && _source.Unchanged(existing,dto)){_report.Unchanged++;return;}
+            using var sub=new SubTransaction(_doc);
+            sub.Start();
+            try
+            {
+                var builder=new TessellatedShapeBuilder { Target=TessellatedShapeBuilderTarget.AnyGeometry, Fallback=TessellatedShapeBuilderFallback.Mesh };
+                builder.OpenConnectedFaceSet(false);
+                foreach(var face in dto.Faces)
+                {
+                    if(face.Count<3)continue;
+                    var vertices=face.Select(p=>new XYZ(Mm(p.X),Mm(-p.Y),Mm(p.Z))).Reverse().ToList();
+                    var tessellated=new TessellatedFace(vertices,ElementId.InvalidElementId);
+                    if(builder.DoesFaceHaveEnoughLoopsAndVertices(tessellated))builder.AddFace(tessellated);
+                }
+                builder.CloseConnectedFaceSet();builder.Build();
+                var category=dto.Category switch {"floor"=>BuiltInCategory.OST_Floors,"roof"=>BuiltInCategory.OST_Roofs,"stairs"=>BuiltInCategory.OST_Stairs,"furniture"=>BuiltInCategory.OST_Furniture,_=>BuiltInCategory.OST_GenericModel};
+                var categoryId=new ElementId(category);
+                if(!DirectShape.IsValidCategoryId(categoryId,_doc))categoryId=new ElementId(BuiltInCategory.OST_GenericModel);
+                var geometry=builder.GetBuildResult().GetGeometricalObjects();
+                if(geometry.Count==0)throw new InvalidOperationException("Нет допустимых граней");
+                var shape=existing??DirectShape.CreateElement(_doc,categoryId);
+                shape.ApplicationId="Kepler";shape.ApplicationDataId=dto.Id;
+                shape.SetShape(geometry);
+                _source.Track(shape,sourceKey,dto);_report.Shapes++;if(existing!=null)_report.Updated++;
+                sub.Commit();
+            }
+            catch(Exception error){sub.RollBack();_report.Warn($"Геометрия {dto.Id}: {error.Message}");}
         }
 
         // Истинный север: в Kepler — угол по часовой от «вверх» плана дома.
@@ -243,7 +368,7 @@ namespace Kepler.Revit
         // проекта (против часовой положителен), поэтому знак меняется.
         private void SetTrueNorth(BuildingDto? building)
         {
-            if (building == null || Math.Abs(building.TrueNorthDeg) < 0.01) return;
+            if (building == null) return;
             var location = _doc.ActiveProjectLocation;
             var position = location.GetProjectPosition(XYZ.Zero);
             var angle = -building.TrueNorthDeg * Math.PI / 180;

@@ -36,7 +36,7 @@ describe('единый маршрут дома', () => {
       'site', 'program', 'flows', 'engineering', 'circulation',
       'climate', 'review', 'envelope', 'deliverables',
     ]);
-    assert.ok(initial.statuses.every((status) => ['checked', 'attention', 'blocked', 'unknown'].includes(status)));
+    assert.ok(initial.statuses.every((status) => ['checked', 'attention', 'blocked', 'unknown', 'pending'].includes(status)));
     assert.equal(await page.locator('#projectHomeProgram').count(), 0);
 
     await openRouteView(page, 'program');

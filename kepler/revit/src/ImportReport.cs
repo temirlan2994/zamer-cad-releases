@@ -6,7 +6,7 @@ namespace Kepler.Revit
 {
     public sealed class ImportReport
     {
-        public int Levels, Walls, Doors, Windows, Rooms, Columns;
+        public int Levels, Walls, Doors, Windows, Rooms, Columns, Updated, Unchanged, Removed, Shapes, Voids;
         public List<string> Warnings { get; } = new();
 
         public void Warn(string text)
@@ -18,6 +18,7 @@ namespace Kepler.Revit
         {
             var sb = new StringBuilder();
             sb.AppendLine($"Этажей: {Levels}, стен: {Walls}, дверей: {Doors}, окон: {Windows}, помещений: {Rooms}, колонн: {Columns}.");
+            sb.AppendLine($"Обновлено: {Updated}; без изменений: {Unchanged}; удалено прежних: {Removed}; концептуальная геометрия: {Shapes}; дополнительные вырезы: {Voids}.");
             if (Warnings.Count > 0)
             {
                 sb.AppendLine();

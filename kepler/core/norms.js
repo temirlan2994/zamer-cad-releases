@@ -23,6 +23,7 @@ import { eatFailText, overlapVerdicts, trimByBridge } from './v7/eat-bridge.js';
 import { LIVING_TYPES } from './schedule.js';
 import { deriveWalls, openingOwnerId } from './walls.js';
 import { wallsInsideRooms } from './bound-rooms.js';
+import { regulationContext } from './concept-regulations.js';
 
 export const SP55 = {
   // Спальни (в т. ч. детская и гостевая) — 8 м², общая комната — 12 м²,
@@ -85,6 +86,11 @@ const windowGlass = (project, roomId, walls, openings) => {
 // без ложных замечаний.
 export function roomChecks(project, room, level, walls = null, options = {}) {
   const out = [];
+  const profile = regulationContext(project);
+  if (!profile.reference && !profile.applicable) return out;
+  const custom = profile.applicable ? profile.config.limits : null;
+  const lightRatio = custom ? custom.daylightRatio : SP55.lightRatio;
+  const minHeight = custom ? custom.ceiling : SP55.minClearHeight;
   const kinds = options.kinds instanceof Set ? options.kinds : null;
   const wants = (kind) => !kinds || kinds.has(kind);
   const title = roomType(room.type)?.title || room.name;
@@ -93,14 +99,16 @@ export function roomChecks(project, room, level, walls = null, options = {}) {
   const zone = room.parentId || isShaft(room) ? [room] : openPlanZone(project, room, walls || (needWalls ? deriveWalls(project) : null));
   // Кухня в открытой планировке с гостиной (кухня-ниша) — площадь по зоне.
   const kitchenNiche = room.type === 'kitchen' && zone.some((r) => r.type === 'living' || r.type === 'kitchen-living');
-  const minArea = kitchenNiche ? 0 : SP55.minArea[room.type];
+  const minArea = kitchenNiche ? 0 : custom
+    ? room.type === 'living' ? custom.livingArea : room.type === 'kitchen' ? custom.kitchenArea : roomType(room.type)?.living ? custom.bedroomArea : null
+    : SP55.minArea[room.type];
   if (wants('area') && minArea) {
     out.push({
       kind: 'area', ok: area >= minArea - 1e-9,
       text: `Площадь ${fmt(area)} м² ${area >= minArea - 1e-9 ? '≥' : '<'} ${minArea} м² (${title.toLowerCase()})`,
     });
   }
-  const minWidth = roomType(room.type)?.wc ? bathroomMinWidth(project, room) : SP55.minWidth[room.type];
+  const minWidth = custom ? room.type === 'corridor' ? custom.corridorWidth : null : roomType(room.type)?.wc ? bathroomMinWidth(project, room) : SP55.minWidth[room.type];
   if (wants('width') && minWidth) {
     // Г/контур: ширина основной части (самый широкий из прямоугольников формы),
     // а не габарит — иначе узкий рукав маскируется широким габаритом.
@@ -110,7 +118,7 @@ export function roomChecks(project, room, level, walls = null, options = {}) {
       text: `Ширина ${fmt(width / 1000, 2)} м ${width >= minWidth ? '≥' : '<'} ${fmt(minWidth / 1000, 2)} м`,
     });
   }
-  if (wants('light') && SP55.lightTypes.has(room.type) && area > 0) {
+  if (wants('light') && lightRatio && SP55.lightTypes.has(room.type) && area > 0) {
     // Окна ручных стен (host) — по помещению со стороны дома (hostOpeningRoom).
     // Открытая планировка (скрытые общие стены) — свет общий: окна и
     // площадь всей зоны (кухня-ниша без своего окна у гостиной с окнами).
@@ -119,19 +127,19 @@ export function roomChecks(project, room, level, walls = null, options = {}) {
     const shared = zone.length > 1;
     const glass = shared ? zone.reduce((s, r) => s + (r.id === room.id ? own : windowGlass(project, r.id, walls, openings)), 0) : own;
     const zoneArea = shared ? zone.reduce((s, r) => s + (r.id === room.id ? area : roomNetAreaM2(project, r)), 0) : area;
-    const ok = zoneArea > 0 && glass / zoneArea >= SP55.lightRatio - 1e-9;
+    const ok = zoneArea > 0 && glass / zoneArea >= lightRatio - 1e-9;
     out.push({
       kind: 'light', ok,
-      text: glass
+      text: custom ? `Окна ${fmt(glass,2)} м²; отношение к полу ${fmt(glass/zoneArea,3)} ${ok ? '≥' : '<'} ${lightRatio} (пользовательский профиль)` : glass
         ? `Окна ${fmt(glass, 2)} м² = 1:${fmt(zoneArea / glass)} пола${shared ? ' (общая зона)' : ''} ${ok ? '(норма 1:8)' : '— меньше 1:8'}`
         : 'Нет окон — нужен естественный свет (окна ≥ 1:8 площади пола)',
     });
   }
-  if (wants('height') && SP55.lightTypes.has(room.type) && level) {
+  if (wants('height') && minHeight && SP55.lightTypes.has(room.type) && level) {
     const clear = roomCeiling(room, level);
     out.push({
-      kind: 'height', ok: clear >= SP55.minClearHeight,
-      text: `Высота ≈ ${fmt(clear / 1000, 2)} м ${clear >= SP55.minClearHeight ? '≥' : '<'} 2,5 м`,
+      kind: 'height', ok: clear >= minHeight,
+      text: `Высота ≈ ${fmt(clear / 1000, 2)} м ${clear >= minHeight ? '≥' : '<'} ${fmt(minHeight/1000,1)} м`,
     });
   }
   return out;
@@ -260,5 +268,7 @@ export function normsReport(project, options = {}) {
     for (const o of levelOverlaps) overlaps.push({ levelId: level.id, lowerId: o.lower.id, upperId: o.upper.id, rects: o.rects, areaM2: o.areaM2 });
   }
   const problems = rooms.flatMap((r) => r.checks.filter((c) => !c.ok).map((c) => ({ ...c, room: r })));
-  return { insolation, rooms, problems, overlaps, flagged, ok: insolation.ok && !problems.length };
+  const profile = regulationContext(project);
+  const regulatoryUnknown = (on('norms') || on('light')) && !profile.reference && (!profile.applicable || Object.values(profile.config.limits).some((value) => value == null));
+  return { insolation, rooms, problems, overlaps, flagged, regulatoryUnknown, regulationProfile: profile.config.profile, ok: !regulatoryUnknown && insolation.ok && !problems.length };
 }

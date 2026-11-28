@@ -36,13 +36,14 @@ import {
   contours, formatElevation, houseTerrain, terrainModel, terrainSummary,
 } from './terrain.js';
 import { groundLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
-import { roomContainsPoint, roomPolygon, roomShapeArea } from './room-shape.js';
+import { roomContainsPoint, roomLabelPoint, roomPolygon, roomShapeArea } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
 import { tepReport } from './tep.js';
 import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
 import { analyzeEarthworks } from './earthworks.js';
 import { deriveFoundation } from './foundation-system.js';
 import { deriveEntrances } from './entrance.js';
+import { wallZRange } from './wall-z-range.js';
 
 // Один этаж: помещения, стены, проёмы, мебель и связи (project — вид на этаже).
 function buildLevelExport(project, level) {
@@ -62,6 +63,7 @@ function buildLevelExport(project, level) {
     parent: room.parentId || null,
     ...(room.linkedRoof === false ? { linked_roof: false } : {}),
     polygon: roomPolygon(room),
+    label_point: roomLabelPoint(room),
     size: { w: room.w, h: room.h },
     ceiling_height: roomCeiling(room, level), // чистая высота, мм
     area_m2: Number((roomShapeArea(room) / 1_000_000).toFixed(3)),
@@ -76,7 +78,11 @@ function buildLevelExport(project, level) {
     } : {}),
   }));
 
-  const wallsOut = walls.filter((w) => !w.hidden && w.kind !== 'joint' && w.kind !== 'chamfer').map((wall, index) => ({
+  const wallOrdinals = new Map();
+  const wallsOut = walls.filter((w) => !w.hidden && w.kind !== 'joint' && w.kind !== 'chamfer').map((wall) => {
+    const index = wallOrdinals.get(wall.key) || 0; wallOrdinals.set(wall.key, index+1);
+    const z = wallZRange(project, wall, level.height);
+    return {
     id: `${wall.key}#${index}`,
     key: wall.key,
     shared: wall.kind === 'shared',
@@ -84,6 +90,8 @@ function buildLevelExport(project, level) {
     to: { x: wall.center.x2, y: wall.center.y2 },
     thickness: wall.thickness,
     type: wall.wallType,
+    height: z.z1-z.z0,
+    base_offset: z.z0,
     // Несущая: внутренняя несущая и наружная; перегородка — нет.
     load_bearing: wall.wallType !== 'partition',
     rooms: wall.rooms,
@@ -96,7 +104,7 @@ function buildLevelExport(project, level) {
       z0: wall.z0,
       z1: wall.z1,
     } : {}),
-  }));
+  }; });
 
   const openings = levelWindowOpenings(project, walls).map((opening) => {
     const placed = openingRect(project, opening, walls);
@@ -115,6 +123,8 @@ function buildLevelExport(project, level) {
       wallKey: placed ? placed.wall.key : null,
       type: opening.type || (opening.kind === 'door' ? 'single' : 'standard'),
       height: openingHeight(opening, level),
+      part: opening.spanPart || null,
+      top_from_owner_floor: opening.spanTop ?? null,
       ...(opening.spanPart ? { owner_level: opening.spanOwnerLevelId, top_level: opening.span.levelId,
         part: opening.spanPart, top_from_owner_floor: opening.spanTop } : {}),
       sill: openingSill(opening, level),
@@ -213,6 +223,8 @@ export function buildStructuredExport(project) {
   }
   return {
     schema: 'kepler-export/2',
+    concept: { project_id: project.concept?.projectId || '', variant_id: project.concept?.activeVariantId || null, digest: null, geometry_complete: false, construction: null },
+    concept_geometry: [],
     units: 'mm',
     axes: 'x-right, y-down',
     // Помещения, стены, проёмы, мебель — в осях дома (frame: building);

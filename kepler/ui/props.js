@@ -31,6 +31,7 @@ import { CORNER_PRESET, cornerWindowGeometry } from '../core/corner-windows.js';
 import { glazedOpeningMinWidth, isGlazedAssembly, resizeGlazedOpening } from '../core/glazed-openings.js';
 import { bindGlazedOpeningFields, glazedElevationMarkup, glazedOpeningFields } from './glazed-opening-props.js';
 import { wallZRange } from '../core/wall-z-range.js';
+import { changeLevelGeometry } from '../core/level-changes.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { setWallDefaults } from '../core/wall-thickness.js';
 import { canvas, escapeHtml, refs, toast } from './dom.js';
@@ -264,6 +265,7 @@ function renderProjectProps(panel) {
         <label class="prop-field"><span>Высота этажа, м</span>
           <input id="levelHeight" type="number" step="0.05" min="2" value="${(level.height / 1000).toFixed(2)}"></label>
       </div>
+      <label class="check-row"><input id="levelElevationsLinked" type="checkbox" ${state.project.settings.linkLevelElevations !== false ? 'checked' : ''}><span>Сдвигать верхние этажи при изменении отметки или высоты</span></label>
       <div class="prop-grid">
         <label class="prop-field"><span>Чистая высота, м</span>
           <input value="${(defaultCeiling() / 1000).toFixed(2)}" disabled></label>
@@ -331,16 +333,20 @@ function renderProjectProps(panel) {
     if (name) mutate(() => { level.name = name; });
   });
   panel.querySelector('#levelElev').addEventListener('change', (e) => {
-    mutate(() => { level.elevation = Math.round((Number(e.target.value) || 0) * 1000); });
+    try {
+      let result; mutate(() => { result = changeLevelGeometry(state.project, level.id, { elevation: Math.round(Number(e.target.value)*1000) }); });
+      if (result?.detached.length) toast(`Фасадные элементы, потерявшие опору: ${result.detached.length}. Они удалены; Ctrl+Z вернёт прежнее состояние.`, true);
+    }
+    catch (error) { toast(error.message, true); renderProps(); }
   });
   panel.querySelector('#levelHeight').addEventListener('change', (e) => {
-    mutate(() => {
-      level.height = Math.max(2000, Math.round((Number(e.target.value) || 3) * 1000));
-      setLevelTallWindowOffsets(level, {
-        bottom: level.tallWindowBottomOffset,
-        top: level.tallWindowTopOffset,
-      });
-    });
+    try {
+      let result; mutate(() => { result = changeLevelGeometry(state.project, level.id, { height: Math.max(2000, Math.round((Number(e.target.value) || 3)*1000)) }); });
+      if (result?.detached.length) toast(`Фасадные элементы, потерявшие опору: ${result.detached.length}. Они удалены; Ctrl+Z вернёт прежнее состояние.`, true);
+    } catch (error) { toast(error.message, true); renderProps(); }
+  });
+  panel.querySelector('#levelElevationsLinked').addEventListener('change', (e) => {
+    mutate(() => { state.project.settings.linkLevelElevations = e.target.checked; });
   });
   panel.querySelector('#slabThickness').addEventListener('change', (e) => {
     const next = Math.round((Number(e.target.value) || 0.3) * 1000);

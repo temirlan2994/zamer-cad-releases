@@ -33,6 +33,8 @@ namespace Kepler.Revit
         [JsonPropertyName("type")] public string Type { get; set; } = "";
         [JsonPropertyName("name")] public string Name { get; set; } = "";
         [JsonPropertyName("polygon")] public List<Pt> Polygon { get; set; } = new();
+        [JsonPropertyName("label_point")] public Pt? LabelPoint { get; set; }
+        [JsonPropertyName("void")] public bool Void { get; set; }
         [JsonPropertyName("ceiling_height")] public double CeilingHeight { get; set; }
     }
 
@@ -44,6 +46,8 @@ namespace Kepler.Revit
         [JsonPropertyName("to")] public Pt To { get; set; } = new();
         [JsonPropertyName("thickness")] public double Thickness { get; set; }
         [JsonPropertyName("type")] public string? Type { get; set; }
+        [JsonPropertyName("height")] public double? Height { get; set; }
+        [JsonPropertyName("base_offset")] public double BaseOffset { get; set; }
     }
 
     public sealed class OpeningDto
@@ -56,6 +60,10 @@ namespace Kepler.Revit
         [JsonPropertyName("sill")] public double Sill { get; set; }
         [JsonPropertyName("center")] public Pt? Center { get; set; }
         [JsonPropertyName("wallKey")] public string? WallKey { get; set; }
+        [JsonPropertyName("part")] public string? Part { get; set; }
+        [JsonPropertyName("top_from_owner_floor")] public double? SpanTop { get; set; }
+        [JsonPropertyName("swingIn")] public bool? SwingIn { get; set; }
+        [JsonPropertyName("hingeStart")] public bool? HingeStart { get; set; }
     }
 
     public sealed class FreeWallDto
@@ -92,6 +100,8 @@ namespace Kepler.Revit
     {
         [JsonPropertyName("schema")] public string Schema { get; set; } = "";
         [JsonPropertyName("name")] public string Name { get; set; } = "";
+        [JsonPropertyName("concept")] public ConceptDto? Concept { get; set; }
+        [JsonPropertyName("concept_geometry")] public List<ConceptGeometryDto> ConceptGeometry { get; set; } = new();
         [JsonPropertyName("building")] public BuildingDto? Building { get; set; }
         [JsonPropertyName("levels")] public List<LevelDto> Levels { get; set; } = new();
 
@@ -103,5 +113,42 @@ namespace Kepler.Revit
                 throw new InvalidDataException($"Это не экспорт Kepler Plan (schema «{model.Schema}»). Экспорт → «Структурированный JSON».");
             return model;
         }
+    }
+
+    public sealed class ConceptDto
+    {
+        [JsonPropertyName("project_id")] public string ProjectId { get; set; } = "";
+        [JsonPropertyName("digest")] public string? Digest { get; set; }
+        [JsonPropertyName("variant_id")] public string? VariantId { get; set; }
+        [JsonPropertyName("geometry_complete")] public bool GeometryComplete { get; set; }
+        [JsonPropertyName("construction")] public ConstructionReportDto? Construction { get; set; }
+    }
+    public sealed class ConstructionReportDto
+    {
+        [JsonPropertyName("config")] public ConstructionConfigDto? Config { get; set; }
+    }
+    public sealed class ConstructionConfigDto
+    {
+        [JsonPropertyName("layers")] public List<WallLayerDto> Layers { get; set; } = new();
+    }
+    public sealed class WallLayerDto
+    {
+        [JsonPropertyName("material")] public string Material { get; set; } = "";
+        [JsonPropertyName("thickness")] public double Thickness { get; set; }
+        [JsonPropertyName("bearing")] public bool Bearing { get; set; }
+    }
+    public sealed class Point3Dto
+    {
+        [JsonPropertyName("x")] public double X { get; set; }
+        [JsonPropertyName("y")] public double Y { get; set; }
+        [JsonPropertyName("z")] public double Z { get; set; }
+    }
+    public sealed class ConceptGeometryDto
+    {
+        [JsonPropertyName("id")] public string Id { get; set; } = "";
+        [JsonPropertyName("category")] public string Category { get; set; } = "generic";
+        [JsonPropertyName("level_id")] public string? LevelId { get; set; }
+        [JsonPropertyName("kind")] public string Kind { get; set; } = "";
+        [JsonPropertyName("faces")] public List<List<Point3Dto>> Faces { get; set; } = new();
     }
 }

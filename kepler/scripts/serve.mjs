@@ -25,7 +25,7 @@ function isPreviewAsset(file) {
   if (!Object.hasOwn(TYPES, path.extname(file)) || file.split('/').some((part) => part.startsWith('.'))) return false;
   if (file.includes('/')) return PREVIEW_DIRS.includes(file.split('/')[0]);
   return file.endsWith('.css') || file.endsWith('.webmanifest')
-    || ['index.html', 'app.js', 'render.js', 'firebase-config.js', 'pwa-assets.js'].includes(file);
+    || ['index.html', 'review.html', 'app.js', 'render.js', 'firebase-config.js', 'pwa-assets.js'].includes(file);
 }
 
 export function createServer(root = ROOT, { preview = false } = {}) {

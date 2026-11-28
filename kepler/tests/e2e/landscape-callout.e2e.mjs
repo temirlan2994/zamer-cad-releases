@@ -135,7 +135,7 @@ describe('ландшафт: выноски и ведомость растени�
       const M = await import('./core/mesh3d-landscape.js');
       const p = window.__kepler.state.project;
       const only = { ...p, site: { ...p.site, landscape: { objects: p.site.landscape.objects.filter((o) => o.kind === 'callout') } } };
-      return { dxf: E.buildSitePlanDxf(p).includes('LANDSCAPE_NOTES'), faces: M.landscapeFaces(only).length };
+      return { dxf: E.buildSitePlanDxf(p).includes('LANDSCAPE_NOTES'), faces: M.landscapeFaces(only).filter((face) => only.site.landscape.objects.some((object) => object.id === face.landscapeId)).length };
     });
     assert.deepEqual(res, { dxf: true, faces: 0 });
     await page.click('#view3dBtn');

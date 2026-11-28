@@ -24,6 +24,7 @@ import {
   layoutBriefIsEmpty, normalizeCatalogItemMetadata, normalizeLayoutBrief,
 } from './layout-brief.js';
 import { createEnvelope, envelopeHasUserInput, normalizeEnvelope } from './envelope.js';
+import { normalizeConcept } from './concept-data.js';
 
 export { SCHEMA };
 
@@ -569,6 +570,7 @@ function cleanSite(site) {
 // Заполняет необязательные поля текущей схемы значениями по умолчанию и
 // чистит содержимое этажей и участка от битых элементов.
 export function normalizeProject(data) {
+  if (data.concept && typeof data.concept === 'object') data.concept = normalizeConcept(data.concept);
   data.name = normalizeProjectName(data.name);
   data.revision = Number(data.revision) || 0;
   delete data.projectHistory;

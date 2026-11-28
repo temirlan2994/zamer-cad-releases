@@ -49,6 +49,7 @@ import { shouldUseRemoteProject } from './ui/startup-cloud.js';
 import { syncProjectNameUi } from './ui/project-name.js';
 import { bindPwa } from './ui/pwa.js';
 import { bindProjectRoute, renderProjectRoute } from './ui/project-route.js';
+import { bindConceptWorkspace } from './ui/concept-workspace.js';
 
 // Firebase восстанавливает Google-сессию асинхронно. До чтения локального
 // черновика узнаём UID, чтобы на общем компьютере один человек не увидел
@@ -73,6 +74,7 @@ import { bindProjectRoute, renderProjectRoute } from './ui/project-route.js';
   bindSolarReport(); // сезонная сводка по помещениям и экспорт CSV/JSON
   bindPwa(); // установка на телефон, офлайн-копия и автоматические обновления
   bindProjectRoute(); // этапы подготовки участка, паспорт и карта возможностей
+  bindConceptWorkspace();
 
   const account = await prepareAccount();
   const previousScope = getStorageScope();

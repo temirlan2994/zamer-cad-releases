@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ROOT, PAGE, moduleGraph, artifactPage, buildArtifact } from '../scripts/build-artifact.mjs';
+import { ROOT, PAGE, moduleGraph, applicationPages, applicationModuleGraph, artifactPage, buildArtifact } from '../scripts/build-artifact.mjs';
 
 const html = readFileSync(join(ROOT, 'index.html'), 'utf8');
 
@@ -18,8 +18,8 @@ test('номер версии совпадает с package.json и виден �
   for (const badge of badges) assert.equal(badge[1], `v${version}`);
 });
 
-test('все модули ui/ достижимы из app.js (нет забытых файлов)', () => {
-  const graph = new Set(moduleGraph('app.js'));
+test('все модули ui/ достижимы из точек входа страниц', () => {
+  const graph = new Set(applicationModuleGraph());
   for (const f of readdirSync(join(ROOT, 'ui'))) assert.ok(graph.has(`ui/${f}`), `ui/${f} не подключён`);
   for (const f of ['render.js', 'core/model.js', 'core/migrate.js', 'core/zamer/geometry.js']) assert.ok(graph.has(f), f);
   assert.ok(graph.has('workers/layout-worker.js'), 'module Worker не попал в граф');
@@ -49,7 +49,7 @@ test('страница артефакта — фрагмент из index.html',
 
 test('каждый id, который ищет код, создаётся страницей или панелью', () => {
   const ids = new Set();
-  const templates = [html];
+  const templates = applicationPages().map((page) => readFileSync(join(ROOT, page), 'utf8'));
   for (const f of readdirSync(join(ROOT, 'ui'))) {
     const code = readFileSync(join(ROOT, 'ui', f), 'utf8');
     templates.push(code);
@@ -70,6 +70,7 @@ test('сборка кладёт страницу, стили, модули и м
       assert.ok(files.includes(style[1]), style[1]);
       assert.ok(readFileSync(join(out, PAGE), 'utf8').includes(style[0]));
     }
+    for (const file of ['review.html', 'review.css', 'ui/review-client.js', 'ui/review-document.js']) assert.ok(files.includes(file), file);
     assert.ok(files.includes('workers/layout-worker.js'));
     assert.ok(files.includes('assets/garden-villa.png'));
     for (const module of ['geometry.js', 'blocks.js', 'dxf-writer.js']) {

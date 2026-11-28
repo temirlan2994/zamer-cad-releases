@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Kepler · Согласование дома</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./review.css">
+</head>
+<body class="review-page">
+  <header class="review-header"><div><strong>kep•ler 3D</strong><h1 id="reviewTitle">Согласование дома</h1></div><span id="reviewVariant"></span><button type="button" id="reviewOpenFile">Открыть снимок JSON</button></header>
+  <p id="reviewStatus" class="review-status" role="status">Открываем снимок…</p>
+  <main id="reviewWorkspace" hidden>
+    <section class="review-model" id="view3d" aria-label="Модель для просмотра">
+      <canvas id="reviewCanvas" tabindex="0" aria-label="3D-модель. Тяните для вращения, колесо для приближения. Для прогулки выберите человечка и точку на поверхности."></canvas>
+      <div class="review-controls"><label>Этаж<select id="reviewLevel"><option value="all">Все этажи</option></select></label><label><input type="checkbox" id="reviewRoof" checked>Крыша</label><button type="button" id="reviewFit">Вписать</button><button type="button" id="reviewPlacePin">Указать место замечания</button></div>
+      <button type="button" id="v3Walk" aria-label="Прогулка" aria-pressed="false" title="Прогулка от первого лица · рост 1,7 м"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="4" r="2"/><path d="M12 7v7m-5-3 5-4 5 4m-5 3-4 7m4-7 4 7"/></svg></button>
+      <span id="reviewPin" class="review-pin" hidden aria-hidden="true"></span>
+      <p id="reviewModelHint" class="review-model-hint">Тяните для вращения · Колесо — масштаб</p>
+      <details id="v3WalkSettings" class="v3-walk-settings"><summary>Настройки прогулки</summary><div class="v3-walk-settings-panel"><label for="v3WalkSensitivity">Чувствительность мыши <output id="v3WalkSensitivityValue" for="v3WalkSensitivity">1,00×</output></label><input id="v3WalkSensitivity" type="range" min="0.25" max="3" step="0.05"></div></details>
+      <div id="v3WalkHud" class="v3-walk-hud" hidden><span class="v3-walk-reticle" aria-hidden="true"></span><p id="v3WalkHelp" class="v3-walk-help" role="status"></p><div class="v3-walk-pad" role="group" aria-label="Движение в прогулке"><button type="button" data-walk-key="KeyW" aria-label="Идти вперёд">↑</button><button type="button" data-walk-key="KeyA" aria-label="Идти влево">←</button><button type="button" data-walk-key="KeyS" aria-label="Идти назад">↓</button><button type="button" data-walk-key="KeyD" aria-label="Идти вправо">→</button></div></div>
+    </section>
+    <aside class="review-feedback" aria-label="Решение по снимку"><h2>Ваше решение</h2><p>Этот снимок доступен для просмотра. Геометрия дома здесь не редактируется.</p><div id="reviewBudget"></div>
+      <form id="reviewResponseForm"><label>Ваше имя<input name="author" maxlength="120" required autocomplete="name"></label><label>Решение<select name="action"><option value="comment">Замечание</option><option value="revise">Нужна доработка</option><option value="approve">Согласовано</option></select></label><label>Комментарий<textarea name="message" maxlength="4000" rows="4"></textarea></label><p id="reviewPointDescription">Место не указано</p><button type="button" id="reviewClearPin">Убрать отметку</button><label class="review-check"><input name="confirm" type="checkbox">Подтверждаю решение по этому снимку</label><div class="review-response-actions"><button type="submit" id="reviewSend">Скачать ответ JSON</button><button type="button" id="reviewSignIn" hidden>Войти через Google</button><button type="button" id="reviewDownloadResponse">Скачать ответ файлом</button></div></form>
+      <p class="review-note">Имя в файле указывается участником. Для отправки через облако нужен вход Google. Согласование снимка не заменяет инженерную приёмку.</p>
+      <details><summary>Сведения о снимке</summary><p id="reviewCreatedAt"></p><code id="reviewDigest"></code></details>
+    </aside>
+  </main>
+  <script type="module" src="./ui/review-client.js"></script>
+</body>
+</html>
