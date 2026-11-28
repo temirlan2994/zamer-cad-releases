@@ -70,7 +70,11 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: e2e (Playwright)
-        run: node --test --test-concurrency=1 --test-shard=${{ matrix.shard }}/4 tests/e2e/*.e2e.mjs
+        run: >-
+          node --test --test-concurrency=1 --test-shard=${{ matrix.shard }}/4
+          --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=./scripts/test-github-reporter.mjs --test-reporter-destination=stdout
+          tests/e2e/*.e2e.mjs
 
   revit:
     name: Revit API ${{ matrix.version }}
