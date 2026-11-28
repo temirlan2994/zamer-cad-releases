@@ -3,6 +3,7 @@
 // SHA-256: a4356a398d3b8a90cbfc84aa6a513266507dd6896e567ba7652a6e8a3de74c54
 import { ACadVersion, DwgReader, DxfReader, DxfWriter } from "./vendor/acad-ts-3.9.0/index.js";
 import { writeDwgDocument } from "./dwg-compat.js";
+import { saveCadDocument } from "./cad-document.js";
 
 function repairCurrentTableEntries(document) {
   const { header, layers, lineTypes, textStyles, dimensionStyles } = document;
@@ -18,7 +19,8 @@ function repairCurrentTableEntries(document) {
   }
 }
 
-export function convertDwg(operation, bytes) {
+export function convertDwg(operation, bytes, options) {
+  if (operation === "save-source-dwg") return saveCadDocument(bytes, options);
   if (operation === "dxf-to-dwg") {
     const document = DxfReader.readFromStream(bytes);
     document.header.version = ACadVersion.AC1032;
@@ -41,9 +43,9 @@ export function convertDwg(operation, bytes) {
 }
 
 if (typeof WorkerGlobalScope !== "undefined" && globalThis instanceof WorkerGlobalScope) {
-  globalThis.onmessage = ({ data: { operation, bytes } }) => {
+  globalThis.onmessage = ({ data: { operation, bytes, options } }) => {
     try {
-      const result = convertDwg(operation, bytes);
+      const result = convertDwg(operation, bytes, options);
       globalThis.postMessage({ bytes: result }, [result.buffer]);
     } catch (error) {
       globalThis.postMessage({ error: error?.message || "Не удалось преобразовать файл чертежа" });

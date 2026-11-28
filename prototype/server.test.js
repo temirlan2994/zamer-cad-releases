@@ -107,6 +107,20 @@ test("server keeps project revisions safe across conflicts and restart", { timeo
     const activeStatus = await jsonRequest(`${baseUrl}/api/auth/status`, { headers: { Cookie: activeCookie } });
     assert.equal(activeStatus.payload.user.login, login);
 
+    const { buildDxf } = await import("./core/dxf.js");
+    const { dxfToDwg, dwgToDxf } = await import("./core/dwg.js");
+    const { importDxf } = await import("./core/dxf-import.js");
+    const { createCadSource } = await import("./core/cad-source.js");
+    const originalCad = await dxfToDwg(buildDxf([{ id: "cad-line", type: "line", layer: "measure", x1: 0, y1: 0, x2: 500, y2: 0 }]));
+    const importedCad = importDxf(await dwgToDxf(originalCad));
+    const cadSource = createCadSource(originalCad, "retained.dwg", importedCad);
+    const cadCreated = await jsonRequest(`${baseUrl}/api/projects`, {
+      method: "POST", headers: { Cookie: activeCookie },
+      body: JSON.stringify({ name: "DWG с исходником", project: { ...importedCad.project, cadSource } }),
+    });
+    assert.equal(cadCreated.response.status, 200);
+    assert.deepEqual(cadCreated.payload.project.cadSource, cadSource);
+
     const created = await jsonRequest(`${baseUrl}/api/projects`, {
       method: "POST",
       headers: { Cookie: activeCookie },
@@ -170,6 +184,8 @@ test("server keeps project revisions safe across conflicts and restart", { timeo
     assert.equal(restored.response.status, 200);
     assert.equal(restored.payload.project.revision, 2);
     assert.equal(restored.payload.project.entities[0].id, "line-safe");
+    const cadRestored = await jsonRequest(`${baseUrl}/api/projects/${cadCreated.payload.project.projectId}`, { headers: { Cookie: activeCookie } });
+    assert.deepEqual(cadRestored.payload.project.cadSource, cadSource);
 
     const versionDir = path.join(dataDir, "project-versions", activeStatus.payload.user.id, projectId);
     assert.ok(fs.readdirSync(versionDir).some((name) => name.endsWith(".json")));
