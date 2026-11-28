@@ -2,7 +2,7 @@
 // Проверяем реальное черчение, подпись у курсора и ввод точной длины.
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, startApp } from './helpers.mjs';
+import { openNew, startApp, settleCanvas } from './helpers.mjs';
 
 async function planClient(page, point) {
   const box = await page.locator('#canvas').boundingBox();
@@ -75,9 +75,10 @@ describe('привязки стены при повёрнутом доме и в
   it('произвольный угол вида задаёт экранные направления орто и полярки', async () => {
     const { page } = app;
     await page.evaluate(async () => {
-      const { rotateViewTo } = await import('./ui/view.js');
-      rotateViewTo(8 * Math.PI / 180);
+      const { rotateViewTo, requestDraw } = await import('./ui/view.js');
+      rotateViewTo(8 * Math.PI / 180); requestDraw();
     });
+    await settleCanvas(page);
     const start = await planClient(page, { x: 0, y: 0 });
     await page.keyboard.press('w');
     await page.mouse.click(start.x, start.y);
@@ -92,6 +93,7 @@ describe('привязки стены при повёрнутом доме и в
       Object.assign(snapSettings(), { ortho: false, polar: true, polarStep: 45 });
     });
     await page.mouse.move(start.x + 160, start.y - 159);
+    await settleCanvas(page);
     p = await page.evaluate(() => {
       const { tool } = window.__kepler.state;
       return [window.__kepler.planToScreen(tool.start.x, tool.start.y), window.__kepler.planToScreen(tool.cursor.x, tool.cursor.y)];

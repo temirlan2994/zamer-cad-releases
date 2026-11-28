@@ -604,6 +604,14 @@ function restoreHomePanelState(body, snapshot) {
     try { target.setSelectionRange(identity.selectionStart, identity.selectionEnd); } catch { /* не текстовое поле */ }
   }
   if (panel) panel.scrollTop = snapshot.scrollTop;
+  // Закрытие native select может вернуть фокус старому, уже удалённому
+  // элементу после обработчика change. Восстанавливаем его после кадра,
+  // только если пользователь ещё не выбрал другой элемент управления.
+  requestAnimationFrame(() => {
+    if (panelOpen && target.isConnected && document.activeElement === document.body) {
+      target.focus({ preventScroll: true });
+    }
+  });
 }
 
 function primaryMissionSections(body) {

@@ -246,3 +246,8 @@ export function dxfProxyOnly() {
   L.push(...pair(0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES', 0, 'LINE', 10, 0, 20, 0, 11, 1, 21, 0, 0, 'ENDSEC', 0, 'EOF'));
   return L.join('\n');
 }
+
+// Сначала выполняется запрошенная отрисовка, затем читаются её ручки/координаты.
+export async function settleCanvas(page) {
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}

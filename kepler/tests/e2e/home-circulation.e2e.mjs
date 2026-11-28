@@ -95,7 +95,7 @@ describe('движение и проходы', () => {
         .find((entry) => entry.scenarioId === 'SCN015' && entry.routeId === 'delivery_to_unpack');
       return binding?.from?.anchorType === 'opening' && binding.from.anchorId === openingId;
     }, ids.portalId);
-    assert.equal(await page.evaluate(() => document.activeElement?.dataset.circulationAnchor), 'from');
+    await page.waitForFunction(() => document.activeElement?.dataset.circulationAnchor === 'from');
 
     await page.focus(to);
     await page.selectOption(to, `item:${ids.tableId}`);
@@ -104,7 +104,7 @@ describe('движение и проходы', () => {
         .find((entry) => entry.scenarioId === 'SCN015' && entry.routeId === 'delivery_to_unpack');
       return binding?.to?.anchorType === 'item' && binding.to.anchorId === itemId;
     }, ids.tableId);
-    assert.equal(await page.evaluate(() => document.activeElement?.dataset.circulationAnchor), 'to');
+    await page.waitForFunction(() => document.activeElement?.dataset.circulationAnchor === 'to');
 
     const binding = await page.evaluate(() => structuredClone(
       window.__kepler.state.project.layoutBrief.scenarioRouteBindings

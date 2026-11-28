@@ -234,8 +234,14 @@ describe('мышь и клавиши: повторный клик, окна по
     await app.page.waitForTimeout(80);
     const after1 = await pos();
     assert.notDeepEqual(after1, before1, 'поле сдвинулось');
-    const expect = await app.page.evaluate(() => { const a = window.__kepler.state.dimEdit.anchor; return window.__kepler.planToScreen(a.x, a.y); });
-    assert.ok(Math.abs(after1.x - expect.x) < 1 && Math.abs(after1.y - expect.y) < 1, 'поле у своей подписи');
+    // Читаем подпись и поле в одном кадре: между двумя evaluate масштаб
+    // успевает измениться ещё раз из-за плавного приближения.
+    await app.page.waitForFunction(() => {
+      const input = document.getElementById('dimInput'), anchor = window.__kepler.state.dimEdit?.anchor;
+      if (!anchor) return false;
+      const point = window.__kepler.planToScreen(anchor.x, anchor.y);
+      return Math.abs(parseFloat(input.style.left)-point.x)<1 && Math.abs(parseFloat(input.style.top)-point.y)<1;
+    });
     await app.page.keyboard.press('Escape');
     await app.page.evaluate(() => window.__kepler.fitView());
   });
@@ -243,6 +249,7 @@ describe('мышь и клавиши: повторный клик, окна по
   it('П-17: Del, R и стрелки не правят план под справкой; в 3D Delete удаляет выбранное', async () => {
     await select(app.page, { type: 'room', id: ids.a });
     const r0 = await roomOf(app.page, ids.a);
+    await app.page.evaluate(() => document.activeElement?.blur?.());
     await app.page.keyboard.press('F1');
     assert.equal(await app.page.isVisible('#helpScreen'), true);
     for (const key of ['Delete', 'r', 'ArrowRight']) await app.page.keyboard.press(key);

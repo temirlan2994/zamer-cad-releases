@@ -3,7 +3,7 @@
 // Ctrl+Z одним шагом; ручки вершин и середин и перенос тела — как раньше.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample, worldToClient } from './helpers.mjs';
+import { startApp, openSample, worldToClient, settleCanvas } from './helpers.mjs';
 
 const AT = { x: 12000, y: -3500 };
 const W = 120; // полуширина площадки на экране, px
@@ -107,6 +107,7 @@ describe('ландшафт: тянуть ребро площадки', () => {
   it('Esc во время жеста — отмена; схлопнуть нельзя — упор', async () => {
     const { page } = app;
     await page.evaluate(() => window.__kepler.select({ type: 'landscape', ids: ['ls-edge-e2e'] }));
+    await settleCanvas(page);
     const undo0 = await undoLen(page);
     let s = await screenPts(page);
     const from = lerp(s[2], s[3], 0.25);
@@ -132,6 +133,7 @@ describe('ландшафт: тянуть ребро площадки', () => {
   it('вершина и середина — как раньше; тело переносится целиком', async () => {
     const { page } = app;
     await page.evaluate(() => window.__kepler.select({ type: 'landscape', ids: ['ls-edge-e2e'] }));
+    await settleCanvas(page);
     let s = await screenPts(page);
     await drag(page, s[0], { x: s[0].x - 30, y: s[0].y - 20 });
     let p = await lawn(page);
@@ -139,6 +141,7 @@ describe('ландшафт: тянуть ребро площадки', () => {
     assert.deepEqual(p.slice(1), p0.slice(1), 'остальные на месте');
     await page.keyboard.press('Control+z');
     await page.evaluate(() => window.__kepler.select({ type: 'landscape', ids: ['ls-edge-e2e'] }));
+    await settleCanvas(page);
     s = await screenPts(page);
     const mid = lerp(s[0], s[1], 0.5);
     await drag(page, mid, { x: mid.x, y: mid.y - 30 });
@@ -147,6 +150,7 @@ describe('ландшафт: тянуть ребро площадки', () => {
     await page.keyboard.press('Control+z');
     assert.deepEqual(await lawn(page), p0);
     await page.evaluate(() => window.__kepler.select({ type: 'landscape', ids: ['ls-edge-e2e'] }));
+    await settleCanvas(page);
     s = await screenPts(page);
     const c = { x: (s[0].x + s[2].x) / 2, y: (s[0].y + s[2].y) / 2 };
     await drag(page, c, { x: c.x + 40, y: c.y + 25 });
